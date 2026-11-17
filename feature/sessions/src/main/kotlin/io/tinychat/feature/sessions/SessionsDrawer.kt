@@ -439,8 +439,7 @@ private fun SessionListBody(
                             onPickSession(item.session.id)
                         }
                     },
-                    onLongClick = { if (!state.selectionMode) onRename(item.session) },
-                    onRename = { onRename(item.session) },
+                                        onRename = { onRename(item.session) },
                     onTogglePin = {
                         onTogglePin(item.session)
                         // 置顶后滚到顶部，否则被列表位置锚定顶到屏幕外，看着像没生效
@@ -460,7 +459,7 @@ private fun SessionItem(
     selectionMode: Boolean,
     checked: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+
     onRename: () -> Unit,
     onTogglePin: () -> Unit,
     onDelete: () -> Unit,
@@ -474,7 +473,7 @@ private fun SessionItem(
             .padding(horizontal = 8.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (selected && !selectionMode) palette.selector else Color.Transparent)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(onClick = onClick, onLongClick = { if (!selectionMode) menuOpen = true })
             .heightIn(min = 44.dp)
             .padding(start = if (selectionMode) 12.dp else 8.dp),
         verticalAlignment = Alignment.CenterVertically,
