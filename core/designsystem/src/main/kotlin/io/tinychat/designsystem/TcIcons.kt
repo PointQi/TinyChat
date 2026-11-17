@@ -114,4 +114,9 @@ object TcIcons {
     val ChevronUp: ImageVector by lazy { strokeIcon("tc_chevron_up", "M7,14 L12,9 L17,14") }
 
     val ChevronRight: ImageVector by lazy { strokeIcon("tc_chevron_right", "M10,7 L15,12 L10,17") }
+
+    /** 搜索步骤卡片用 */
+    val Search: ImageVector by lazy {
+        strokeIcon("tc_search", "M11,4 a7,7 0 1 0 0,14 a7,7 0 1 0 0,-14 Z M16,16 L20.5,20.5")
+    }
 }
