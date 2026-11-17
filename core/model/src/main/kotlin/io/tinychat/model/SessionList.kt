@@ -1,4 +1,4 @@
-﻿package io.tinychat.model
+package io.tinychat.model
 
 import java.time.Instant
 import java.time.LocalDate
@@ -29,6 +29,73 @@ enum class SessionGroup(val label: String) {
 }
 
 data class SessionSection(val group: SessionGroup, val rows: List<SessionRow>)
+
+/**
+ * 抽屉会话搜索的一条命中。
+ *
+ * 正文截成「前段 + 命中词 + 后段」三段：命中那段用主色（黑/白），其余用灰，
+ * 一行里既看得到上下文，也能一眼看到命中位置。
+ */
+data class SessionSearchHit(
+    val sessionId: String,
+    val title: String,
+    val before: String,
+    val match: String,
+    val after: String,
+    /** true = 命中在标题里（正文没有可展示的上下文行） */
+    val matchedInTitle: Boolean = false,
+) {
+    val snippet: String get() = before + match + after
+}
+
+/**
+ * 抽屉的整块状态：列表数据 + 搜索页 + 多选。
+ *
+ * 放在 core:model 是因为 `feature:chat` 的状态机持有它、`feature:sessions` 只负责渲染，
+ * 两边都需要这个类型（不引入 feature 之间的依赖）。
+ */
+data class SessionsUiState(
+    val rows: List<SessionRow> = emptyList(),
+    val selectionMode: Boolean = false,
+    val selected: Set<String> = emptySet(),
+    val searching: Boolean = false,
+    val query: String = "",
+    val results: List<SessionSearchHit> = emptyList(),
+)
+
+/**
+ * 从消息正文里抽一条命中片段（大小写不敏感，只取第一处）。
+ *
+ * @param radius 命中词两侧各保留多少字符
+ * @return 正文里没有命中时返回 null（只在标题里命中的情况由调用方另行处理）
+ */
+fun buildSearchHit(
+    sessionId: String,
+    title: String?,
+    content: String,
+    query: String,
+    radius: Int = 24,
+): SessionSearchHit? {
+    val needle = query.trim()
+    if (needle.isEmpty()) return null
+
+    // 折行会改下标，统一在展平后的文本里定位
+    val flat = content.replace('\n', ' ').replace('\r', ' ')
+    val index = flat.indexOf(needle, ignoreCase = true)
+    if (index < 0) return null
+
+    val start = (index - radius).coerceAtLeast(0)
+    val end = (index + needle.length + radius).coerceAtMost(flat.length)
+
+    return SessionSearchHit(
+        sessionId = sessionId,
+        title = title?.trim()?.takeIf { it.isNotEmpty() } ?: "新对话",
+        before = (if (start > 0) "…" else "") + flat.substring(start, index).trimStart(),
+        match = flat.substring(index, index + needle.length),
+        after = flat.substring(index + needle.length, end).trimEnd() + if (end < flat.length) "…" else "",
+    )
+}
+
 
 /**
  * 按 02 §12.3 分组。

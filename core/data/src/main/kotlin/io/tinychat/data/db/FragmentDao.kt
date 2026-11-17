@@ -41,4 +41,24 @@ interface FragmentDao {
 
     @Query("DELETE FROM fragments WHERE message_id = :messageId")
     suspend fun deleteByMessage(messageId: Long)
+
+    /**
+     * 会话搜索（M1-6b）：在用户提问与 AI 正文里找 `query`，按消息时间倒序。
+     *
+     * 直接 `LIKE` 原始 payload：碎片里就一份 JSON 字符串，正则解析在 SQL 里做不了；
+     * 片段精修（去掉 JSON 噪音、截取上下文）在仓库层用 [io.tinychat.model.buildSearchHit] 完成。
+     */
+    @Query(
+        """
+        SELECT m.session_id AS session_id, s.title AS title, f.payload AS payload, m.inserted_at AS inserted_at
+        FROM fragments f
+        JOIN messages m ON m.id = f.message_id
+        JOIN sessions s ON s.id = m.session_id
+        WHERE f.type IN ('REQUEST', 'RESPONSE')
+          AND s.deleted = 0
+          AND f.payload LIKE '%' || :query || '%'
+        ORDER BY m.inserted_at DESC
+        """,
+    )
+    suspend fun searchPayloads(query: String): List<SearchPayloadRow>
 }

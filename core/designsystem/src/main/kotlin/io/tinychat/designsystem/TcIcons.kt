@@ -79,6 +79,16 @@ object TcIcons {
 
     val ChevronUp: ImageVector by lazy { strokeIcon("tc_chevron_up", "M7,14 L12,9 L17,14") }
 
+    /** 多选（chat-demo 无素材）：方框 + 勾 */
+    val MultiSelect: ImageVector by lazy {
+        strokeIcon("tc_multi_select", "M4,6 H20 V20 H4 Z M8,13 L11,16 L16,10")
+    }
+
+    /** 置顶（chat-demo 无素材）：顶部横线 + 向上箭头 */
+    val Pin: ImageVector by lazy {
+        strokeIcon("tc_pin", "M5,4 H19 M12,20 V8 M7,13 L12,8 L17,13")
+    }
+
     private const val SW = 1.8f
 
     private fun strokeIcon(name: String, pathData: String): ImageVector =

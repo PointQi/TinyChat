@@ -17,6 +17,7 @@ import io.tinychat.model.RequestPayload
 import io.tinychat.model.ResponsePayload
 import io.tinychat.model.Role
 import io.tinychat.model.SessionRow
+import io.tinychat.model.SessionsUiState
 import io.tinychat.model.ThinkPayload
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ToolFindPayload
@@ -24,6 +25,7 @@ import io.tinychat.model.ToolOpenPayload
 import io.tinychat.model.ToolSearchPayload
 import io.tinychat.net.transport.ChatException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -96,8 +98,8 @@ class ChatViewModel(
     var state by mutableStateOf(ChatUiState())
         private set
 
-    /** 抽屉列表数据（真实库，按 `pinned DESC, updated_at DESC`） */
-    var sessions by mutableStateOf<List<SessionRow>>(emptyList())
+    /** 抽屉整块状态：列表 + 搜索页 + 多选 */
+    var sessionsUi by mutableStateOf(SessionsUiState())
         private set
 
     var sessionId: String? by mutableStateOf(null)
@@ -105,6 +107,7 @@ class ChatViewModel(
 
     private var job: Job? = null
     private var observing: Job? = null
+    private var searchJob: Job? = null
 
     val hasApiKey: Boolean get() = apiKey.isNotBlank()
 
@@ -116,7 +119,9 @@ class ChatViewModel(
         }
         viewModelScope.launch {
             repository.observeSessions().collect { rows ->
-                sessions = rows.map { SessionRow(it.id, it.title, it.pinned, it.updatedAt) }
+                sessionsUi = sessionsUi.copy(
+                    rows = rows.map { SessionRow(it.id, it.title, it.pinned, it.updatedAt) },
+                )
             }
         }
     }
@@ -158,6 +163,71 @@ class ChatViewModel(
         viewModelScope.launch {
             repository.deleteSession(id)
             if (id == sessionId) newChat()
+        }
+    }
+
+    // —— 抽屉：搜索 ——
+
+    fun openSearch() {
+        sessionsUi = sessionsUi.copy(searching = true, query = "", results = emptyList())
+    }
+
+    fun closeSearch() {
+        searchJob?.cancel()
+        sessionsUi = sessionsUi.copy(searching = false, query = "", results = emptyList())
+    }
+
+    /** 搜索输入：防抖 150ms，避免每个字都打一次库 */
+    fun onSearchQueryChange(query: String) {
+        sessionsUi = sessionsUi.copy(query = query, results = if (query.isBlank()) emptyList() else sessionsUi.results)
+        searchJob?.cancel()
+        if (query.isBlank()) return
+        searchJob = viewModelScope.launch {
+            delay(150)
+            val hits = repository.searchSessions(query)
+            sessionsUi = sessionsUi.copy(results = hits)
+        }
+    }
+
+    /** 搜索结果点一条：切到那个会话，并让侧栏定位过去 */
+    fun pickSearchResult(id: String) {
+        closeSearch()
+        openSession(id)
+    }
+
+    // —— 抽屉：多选 ——
+
+    fun enterSelection() {
+        sessionsUi = sessionsUi.copy(selectionMode = true, selected = emptySet())
+    }
+
+    fun exitSelection() {
+        sessionsUi = sessionsUi.copy(selectionMode = false, selected = emptySet())
+    }
+
+    fun toggleSelected(id: String) {
+        val selected = sessionsUi.selected
+        sessionsUi = sessionsUi.copy(
+            selected = if (id in selected) selected - id else selected + id,
+        )
+    }
+
+    fun pinSelected() {
+        val ids = sessionsUi.selected.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            ids.forEach { repository.setSessionPinned(it, true) }
+            exitSelection()
+        }
+    }
+
+    fun deleteSelected() {
+        val ids = sessionsUi.selected.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            ids.forEach { repository.deleteSession(it) }
+            if (sessionId in ids) newChat()
+            exitSelection()
         }
     }
 

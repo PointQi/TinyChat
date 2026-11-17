@@ -68,12 +68,9 @@ fun TinyChatApp() {
         gesturesEnabled = true,
         drawerContent = {
             SessionsDrawerContent(
-                sessions = chatViewModel.sessions,
+                state = chatViewModel.sessionsUi,
                 currentSessionId = chatViewModel.sessionId,
-                onNewChat = {
-                    chatViewModel.newChat()
-                    closeDrawer()
-                },
+                isOpen = drawerState.isOpen,
                 onOpenSettings = {
                     closeDrawer()
                     navController.navigate(Routes.SETTINGS)
@@ -85,6 +82,18 @@ fun TinyChatApp() {
                 onRenameSession = chatViewModel::renameSession,
                 onTogglePinSession = chatViewModel::togglePinnedSession,
                 onDeleteSession = chatViewModel::deleteSession,
+                onOpenSearch = chatViewModel::openSearch,
+                onCloseSearch = chatViewModel::closeSearch,
+                onSearchQueryChange = chatViewModel::onSearchQueryChange,
+                onPickSearchResult = { id ->
+                    chatViewModel.pickSearchResult(id)
+                    closeDrawer()
+                },
+                onEnterSelection = chatViewModel::enterSelection,
+                onExitSelection = chatViewModel::exitSelection,
+                onToggleSelected = chatViewModel::toggleSelected,
+                onPinSelected = chatViewModel::pinSelected,
+                onDeleteSelected = chatViewModel::deleteSelected,
             )
         },
     ) {

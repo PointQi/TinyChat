@@ -1,4 +1,4 @@
-package io.tinychat.data.chat
+﻿package io.tinychat.data.chat
 
 import io.tinychat.data.db.MessageEntity
 import io.tinychat.data.db.MessageWithFragments
@@ -7,12 +7,16 @@ import io.tinychat.data.db.TinyChatDatabase
 import io.tinychat.data.db.toDomain
 import io.tinychat.data.db.toEntity
 import io.tinychat.model.Fragment
+import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.PromptMode
 import io.tinychat.model.RequestPayload
+import io.tinychat.model.ResponsePayload
 import io.tinychat.model.Role
+import io.tinychat.model.SessionSearchHit
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.model.buildSearchHit
 import io.tinychat.net.context.ContextRebuilder
 import io.tinychat.net.context.ContextTurn
 import io.tinychat.net.context.ReminderBuilder
@@ -59,6 +63,52 @@ class ChatRepository(
     /** 软删；消息与碎片留给 M6 的清理任务，不在交互路径上做级联删除。 */
     suspend fun deleteSession(sessionId: String) {
         db.sessionDao().softDelete(sessionId, clock())
+    }
+
+    /**
+     * 会话搜索：正文命中或标题命中都算，一条会话最多一条结果（正文命中优先）。
+     *
+     * 正文命中给「上下文 + 高亮」；只有标题命中时没有上下文，只回标题行。
+     */
+    suspend fun searchSessions(query: String, limit: Int = 30): List<SessionSearchHit> {
+        val needle = query.trim()
+        if (needle.isEmpty()) return emptyList()
+
+        val hits = LinkedHashMap<String, SessionSearchHit>()
+
+        db.fragmentDao().searchPayloads(needle).forEach { row ->
+            if (hits.containsKey(row.sessionId)) return@forEach
+            val content = when (val payload = FragmentPayloadCodec.decode(row.payload)) {
+                is RequestPayload -> payload.content
+                is ResponsePayload -> payload.content
+                else -> null
+            } ?: return@forEach
+            buildSearchHit(row.sessionId, row.title, content, needle)?.let { hits[row.sessionId] = it }
+        }
+
+        // 只有标题命中的会话补一条（正文里找不到，就没有灰色上下文行）
+        db.sessionDao().all()
+            .filter { it.title?.contains(needle, ignoreCase = true) == true }
+            .forEach { session -> hits.getOrPut(session.id) { titleHit(session.id, session.title, needle) } }
+
+        return hits.values.take(limit)
+    }
+
+    private fun titleHit(sessionId: String, title: String?, query: String): SessionSearchHit {
+        val titleText = title?.trim()?.takeIf { it.isNotEmpty() } ?: "新对话"
+        val index = titleText.indexOf(query, ignoreCase = true)
+        return if (index < 0) {
+            SessionSearchHit(sessionId, titleText, "", "", "", matchedInTitle = true)
+        } else {
+            SessionSearchHit(
+                sessionId = sessionId,
+                title = titleText,
+                before = titleText.substring(0, index),
+                match = titleText.substring(index, index + query.length),
+                after = titleText.substring(index + query.length),
+                matchedInTitle = true,
+            )
+        }
     }
 
     suspend fun createSession(
