@@ -4,12 +4,12 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +52,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -201,20 +204,43 @@ private fun MessageList(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
 
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) {
-            listState.animateScrollToItem(state.messages.lastIndex)
+    // 用户自己拖离底部就停止跟随，别把人拽回去；拖回底部后恢复。
+    val following = rememberFollowLatest(listState)
+
+    // 上下划消息区时收起输入法（点消息不算拖动，不会误触发）。
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) {
+                focus.clearFocus()
+                keyboard?.hide()
+            }
         }
     }
 
-    val showToBottom by remember { derivedStateOf { listState.canScrollForward } }
+    // 自动跟随：新增消息、正文变长、思考区展开、键盘弹起让视口变矮，都会重新布局，
+    // 因此不再依赖 messages.size —— 流式输出期间也能一直贴着底部。
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo }.collect {
+            if (following.value && !listState.isScrollInProgress) listState.jumpToBottom()
+        }
+    }
+
+    val showToBottom by remember {
+        derivedStateOf { !listState.layoutInfo.isAtLatestBottom() }
+    }
 
     Box(modifier = modifier.fillMaxWidth()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
+            // 四边留白用 Modifier.padding 而不是 contentPadding：后者属于滚动内容，
+            // 滚到底之后还剩 12dp 要再滚一次 —— 动画会分两段，末尾那一下看着像瞬移。
+            // 放在外面，留白照旧，滚到底就是一段顺到底的位移。
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(state.messages, key = { it.id }) { message ->
@@ -236,7 +262,10 @@ private fun MessageList(
                     .shadow(4.dp, CircleShape)
                     .background(TcTheme.palette.bg, CircleShape)
                     .clickable {
-                        scope.launch { listState.animateScrollToItem(state.messages.lastIndex) }
+                        // 只滚，不动输入法：收起键盘会让视口在动画中途变大，
+                        // 输入框还停在旧位置，看起来像画面撕裂。
+                        following.value = true
+                        scope.launch { listState.animateToBottom() }
                     },
                 contentAlignment = Alignment.Center,
             ) {
