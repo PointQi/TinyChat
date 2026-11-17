@@ -388,9 +388,9 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 |---|---|---|
 | M1-0 工程补底 | 进行中 | KSP 2.3.14 + Room 2.8.5 + DataStore 1.3.0 已接；`core:data` 就绪；`core:net` 与 Key 存储待做 |
 | M1-1 Room schema + DAO + 迁移框架 | **完成** | 5 张表、schema v1 已生成入库、28 个单测全绿 |
-| M1-2 `SseReader` | 未开始 | 不依赖 Key |
-| M1-3 请求构建器 | 未开始 | 不依赖 Key（golden JSON） |
-| M1-4 碎片归并 | 未开始 | 不依赖 Key |
+| M1-2 `SseReader` | **完成** | 9 个用例，Spike 固件原样搬入；四类边界全覆盖 |
+| M1-3 请求构建器 | **完成** | 10 条 golden JSON（对照 03 §6.1 原始报文）；`stream` 漏发的坑已修 |
+| M1-4 碎片归并 | **完成** | 12 个用例：6 种块、结果乱序配对、孤儿结果、未配对 WIP、拒答与错误帧 |
 | M1-5 及之后 | 未开始 | 真实联调需要 Key |
 
 **M1-1 的实测发现（已同步进 02 §3.1/3.2）**：
@@ -402,6 +402,15 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 5. `CONTENT_RISK`（4411 条）确认全部是同一句免责声明，**不入库**，导入时直接丢。
 
 **M1-1 与计划的偏差**：DAO 测试用 **Robolectric 4.18 跑 JVM 单测**（`@Config(sdk = [34])`），而不是 `androidTest`，因为 CI 只跑 `testDebugUnitTest`；session 列表索引按 (deleted, pinned, updated_at) **升序**建，混合方向索引 Room 表达不了，几千量级无影响。
+
+**M1-3/M1-4 的实现约定（后续别改坏）**：
+
+1. `MessagesRequest.stream` **不能给默认值** —— 请求体序列化用 `encodeDefaults=false`，带默认值会整字段省掉，请求静默退化成非流式（已由 golden JSON 测试锁死）；
+2. `WireMessage.content` 是 `JsonElement` 而非 `String`，M4 的图片/文件块直接走数组，不用改协议层；
+3. 碎片 `ord` 在**调用块到达时**就分配（不是结果到达时），保证导出顺序 = 流顺序；
+4. 结果块先于调用块到达的极端情况进 `orphanResults` 暂存，调用块到达后立即补配对，**不允许出现重复碎片**；
+5. 未配对的调用在流结束时落成 `WIP` 碎片（用户中途停止的形态）；
+6. `stage_id` 暂用「已出现的思考块数量」近似，只为 M3-4 分组服务，不是协议字段。
 
 ### Step 3 起
 
