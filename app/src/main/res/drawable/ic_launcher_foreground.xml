@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 占位图标：一个对话气泡。决策 15：图标方案暂缓，M0 只用占位 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,34 H72 A10,10 0 0 1 82,44 V64 A10,10 0 0 1 72,74 H52 L38,84 V74 H36 A10,10 0 0 1 26,64 V44 A10,10 0 0 1 36,34 Z" />
+</vector>

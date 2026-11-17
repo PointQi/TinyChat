@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 designsystem 的 LightPalette.bg 保持一致，避免冷启动闪一下别的颜色 -->
+    <color name="tc_window_bg">#FFFFFFFF</color>
+    <color name="tc_icon_bg">#FF3964FE</color>
+</resources>

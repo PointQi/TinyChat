@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK platform
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble + unit tests + lint
+        run: ./gradlew --no-daemon --stacktrace assembleDebug testDebugUnitTest lint
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinychat-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7

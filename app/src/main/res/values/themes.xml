@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      决策 16：没有自建启动页。这里的 windowBackground 只是为了抹平
+      「系统 SplashScreen 结束后 → Compose 首帧」之间的闪烁，不承载任何欢迎内容。
+    -->
+    <style name="Theme.TinyChat" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/tc_window_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

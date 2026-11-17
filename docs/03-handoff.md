@@ -1,0 +1,430 @@
+# 交接与续作指引（上下文压缩后先读本文）
+
+> 用途：**上下文一旦被压缩/新开 session，先读这一篇**，再按需跳转 01 / 02。
+> 本文只写"不可丢失的事实 + 一手报文 + 下一步动作"，不重复论证。
+> 最后更新：2026-11-17
+
+---
+
+## 1. 当前状态
+
+| 项 | 状态 |
+|---|---|
+| 调研 | ✅ 完成（结论见 01 号文档） |
+| 决策 | ✅ **19 项**全部拍板（见 §3，17 + Spike 新增 2） |
+| 规划 | ✅ 开发计划 + 交互设计完成（02 号文档） |
+| Spike | ✅ **3/4 完成**（SSE 离线 40/40、导出包 PASS、渲染定 API、公式图表定 WebView）；只剩在线 SSE 待 Key |
+| 代码 | ✅ **M0 已完成**：7 个模块的空壳 App 能编译、双主题可跑、单测与 lint 全绿 |
+| 阻塞项 | **一个 DeepSeek API Key**（只影响 M1 真实联调，不阻塞 M1 编码） |
+
+**下一步第一条命令**：不是 `gradle init`，而是先做 **Spike（3 天）**，见 §7。
+
+---
+
+## 2. 文件地图（含一手参考物）
+
+```
+E:\code\TinyChat\
+├── docs\
+│   ├── 01-feasibility-and-plan.md     调研、可行性、API 能力、决策
+│   ├── 02-dev-plan-and-ux-spec.md     WBS 60 项、SQL schema、协议映射、交互规格
+│   ├── 03-handoff.md                  ← 本文
+│   ├── 04-spike-report.md             ⭐ Spike 实测结论（工具链版本 / 渲染 API / 选型证据）
+│   └── screenshots\                   M0 实拍：浅色/深色/抽屉/设置
+├── app\                               M0：单 Activity + NavHost + 抽屉
+├── core\model\                        纯 Kotlin 领域模型（Provider/Capabilities）
+├── core\designsystem\                 色板 / 字体 / 形状 / 主题 / 占位图标
+├── core\ui\                           通用 Compose 组件
+├── feature\{chat,sessions,settings}\  M0 各一个页面
+├── gradle\libs.versions.toml          版本目录（工具链版本已由 Spike 钉死）
+├── .github\workflows\ci.yml           assemble + unit test + lint
+├── .gitignore                         temp-doc/ 与构建产物已排除
+├── temp-doc\                          ⚠️ 不进 git（outline 备注 4）
+│   ├── outline.md                     原始需求（77 行）
+│   ├── app-preview\                   10 张官方 App 截图（UI 唯一视觉基准）
+│   ├── deepseek_data-2026-11-16.zip   官方导出样本：3340 会话 / 23580 消息 / 79 图 / 87MB
+│   ├── base.apk                       官方 App 2.8.0(297)，**建议不用**（见 §5）
+│   └── chat-demo-ref\                 ⭐ 官方演示客户端源码（MIT），最重要的实现参考
+└── （仓库外）E:\code\TinyChat-spike\   Spike 丢弃型工程，含 out\sse.txt / out\zip.txt 原始输出
+```
+
+**必须钉住的版本**：`deepseek-ai/chat-demo` @ **`5d5dd754ebc1948e977ddb880a9eb5aa25f37b4c`**（`v0.1.1`, 2026-11-13, 155 个源文件）。
+若该目录丢失，用一条命令重建：
+
+```bash
+git clone --depth 1 https://github.com/deepseek-ai/chat-demo.git temp-doc/chat-demo-ref
+```
+
+**查实现细节时按这个顺序看 chat-demo**：
+
+| 要找什么 | 文件 |
+|---|---|
+| 请求体怎么拼 | `src/services/chat/store.ts`（`streamReply`，约 960–1010 行）+ `src/services/api/types.ts` |
+| SSE 怎么解析 | `src/services/api/sse.ts`、`parseEvent.ts` |
+| 事件怎么并成消息 | `src/services/chat/reply.ts`（`applyEvent` / `settleReply`） |
+| 上下文怎么回传 | `src/services/chat/reply.ts`（`toRequestMessages` / `toAssistantParam`） |
+| 导入导出 | `src/services/chat/history/*.ts`（`schema.ts` 是校验真值） |
+| 文案 | `src/i18n/zh.ts`（172 行） |
+| 设计令牌 | `src/app/theme.css`（12KB，浅/深两套完整色板） |
+| 缩写/结构 | `src/services/chat/history/README.md`（讲清了导入导出的所有边界） |
+
+---
+
+## 3. 17 项决策（速查，勿重新讨论）
+
+| # | 决策 |
+|---|---|
+| 1 | 品牌 **TinyChat** + 自绘图标；保留设计语言（色板/圆角/字号/布局），**不出现 DeepSeek 名称与鲸鱼** |
+| 2 | 服务商：**DeepSeek 官方 + 通用 OpenAI 兼容**（后者降级）；OpenCode Go 推迟 v1.1 |
+| 3 | TTS **只用官方 2 音色** `stella`/`tide`；不接系统 TTS、不接第三方 |
+| 4 | Token **启发式估算**（中文×0.6 / 其他×0.3）+ 上轮真实值校准；**不内嵌 tokenizer** |
+| 5 | **不做** 客户端侧搜索；非 DeepSeek 服务商把搜索置灰 |
+| 6 | 发布：**GitHub Releases 直发 APK**；不上 Google Play |
+| 7 | 导出默认 **兼容模式**（纯 v3，提示词/用量不随包走） |
+| 8 | 提示词入口**只在** `设置 → 应用 → 系统提示词` |
+| 9 | 预设 **5 个**：默认（官方）/ 无提示词 / 角色扮演骨架 / 翻译润色 / 学习辅导 |
+| 10 | 全局改提示词 **不影响已有会话**（会话创建时快照，只读） |
+| 11 | **不做**「纯对话模式」，**不暴露** `temperature` |
+| 12 | 角色扮演预设 = **中性骨架**（人设/世界观/风格/禁止事项四槽位 + `{{}}` 占位） |
+| 13 | `恢复默认` = 一键还原官方原文；默认预设只读、不可删改 |
+| 14 | **附件图标用回形针**（不改成 ⊕ 圆加号） |
+| 15 | **图标方案暂缓定稿**；核心 12 个中 9 个借 chat-demo（MIT），其余去 Material Symbols 找；M0 先用占位 |
+| 16 | **没有启动页**：冷启动直达主界面；无 Key 用行内提示条，不做引导页/onboarding |
+| 17 | 首页中心图标**可省略**（鲸鱼不可用，自家图标未定）；M0–M2 先只放问候语 |
+| 18 | Markdown 流式**只用** `rememberStreamingMarkdownState` + `append()`；禁用 `Markdown(String)` 重载与"逐帧换 state 驱动"（实测 42–61 次高度回缩，见 04 §3） |
+| 19 | 公式与图表统一走 **WebView 宿主 + 离线 KaTeX / mermaid.js**（共用一套高度回传与深色主题；纯 Compose LaTeX 库已排除） |
+| 20 | **界面文案禁用「·」作分隔符**（改用逗号/空格/竖线或拆行）；设置里系统提示词那行显示 `当前预设：默认` / `当前预设：自定义`，不写"5 个预设"这类说明 |
+
+---
+
+## 4. 证据分级（**防止续写时把推断当事实**）
+
+### 4.1 一手证实（可直接照做）
+
+| 结论 | 依据 |
+|---|---|
+| 官方演示客户端的 system prompt 只有一句：`该助手为DeepSeek，由深度求索公司创造。` | chat-demo `store.ts:38`（全仓库唯一 system 字符串） |
+| 主链路端点 `POST https://api.deepseek.com/anthropic/v1/messages`，鉴权 `x-api-key` 或 `Bearer` | 官方文档 + chat-demo `client.ts` |
+| 服务端工具：`tools:[{type:"deepseek_web_search",name:...},{type:"deepseek_read_url",name:...}]`；搜索与抓取**都在服务端执行** | 官方 [联网工具](https://api-docs.deepseek.com/zh-cn/guides/web_tools) |
+| 扩展能力（搜索/读链接/文件/图片/标题）**仅 `deepseek-flash` 支持**，`deepseek-v4-pro` 不支持 | 官方文档两处均写"请使用 deepseek-flash" |
+| 思考强度：Messages 用 `output_config:{effort:low/high/max}` | 官方 [思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode) |
+| 声明了工具 / `safety_check:high` / `title` 后，`temperature`、`top_p`、`stop_sequences` 等**被忽略** | 官方 [被忽略的参数](https://api-docs.deepseek.com/zh-cn/guides/build_a_chatbot#ignored-parameters) |
+| 模型上下文 1M、最大输出 384K；价格与峰谷时段 | 官方 [模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing) |
+| 导出格式 `export_format_version: 3`，条目顺序与字段 | chat-demo `history/format.ts` + 样本 ZIP 实测 |
+| 导入时 **任何未识别 ZIP 条目 → 整包失败**；**session JSON 内未知字段 → 静默丢弃** | chat-demo `importArchive.ts` / `schema.ts` 源码 |
+| `pinned` 在 chat-demo 导入时被硬编码为 `false` | `schema.ts` 中 `readSessionIndex` / `readSessionFile` |
+| OpenCode Go 必须带 `x-opencode-session`（缺失 400 `MissingSessionID`）、base URL `/inference/go`、UA 用自己的 | 官方 + AstrBot PR #10005 + dsh-opencode-go |
+
+### 4.2 推断 / 未验证（**不要当结论用**）
+
+| 事项 | 状态 |
+|---|---|
+| 官方 App 是否另有更长的 system prompt | **未知**。导出数据不含 system；只能逆向，不做 |
+| 网传"DeepSeek 系统提示词全文"（繁体 20 条规则、V2/R1 英文版） | **不可信**，内容与当前事实矛盾（称 128K、知识截止 2024-07） |
+| ~~LaTeX 渲染选型~~ | ✅ **已定稿（04 §4）**：纯 Compose 库依赖链断裂（`latex:latex-base:unspecified` → 404），改用 **WebView + 离线 KaTeX**；Mermaid 共用同一宿主 |
+| Mermaid 纯 Kotlin 方案 `huarangmeng/diagram` | 仓库无 LICENSE，不可依赖（方案已改 WebView） |
+| `io.github.huarangmeng:codehighlight:1.0.7` | 可用候选（Maven 上已到 1.0.7），**M2-4 开工时验证** |
+| Messages 协议下原生 JSON Output 与联网工具的兼容性 | 文档未写，需实测（v1.1 议题） |
+
+### 4.3 环境事实（已在本机核对 + Spike 实测修正）
+
+**机器**：JDK 21.0.4 Dragonwell · **系统 Gradle 8.4（太旧，别用）** · Android SDK 在 `%LOCALAPPDATA%\Android\Sdk` · `ANDROID_HOME` 未设置（用 `local.properties`）· git 分支 `master` 无提交 · **没有 cmdline-tools / sdkmanager**（也无 Android Studio）· 有模拟器 `Pixel_3a_API_34_extension_level_7_x86_64` 与 system-image android-34。
+
+**Spike 实测可用的一套工具链（M0 照此，见 04 §5）**：
+
+```
+Gradle 9.9.1 · AGP 9.5.1 · Kotlin 2.4.21 · compileSdk 37 · Compose BOM 2026.09.00
+```
+
+必须知道的四条：
+
+1. **AGP 9 起内置 Kotlin 支持**，再应用 `org.jetbrains.kotlin.android` 会直接报错要求移除；
+2. 插件版本全部放 `settings.gradle.kts → pluginManagement.plugins {}`，根工程 `apply false` 统一解析，否则报 `Could not generate a decorated class ... BaseVariant`；
+3. **Compose 1.12.1 强制 compileSdk ≥ 37**；本机原来只有 34/36，`platforms\android-37.0` 是**手工装的**（zip 内顶层目录就叫 `android-37.0`，且 `source.properties` 需改成 `ApiLevel=37` + 补 `MinorApiLevel=0`）——**M0-1 必须补装 cmdline-tools 用 `sdkmanager` 正规装**；
+4. Gradle 分发包下载不稳（`services.gradle.org` 超时、腾讯镜像 zip 被截断），wrapper 要设 `networkTimeout=120000` 并核对 sha256。
+
+---
+
+## 5. 硬约束（写代码时不可违反）
+
+1. **不逆向 `base.apk`**。理由：官方 API 文档 + chat-demo MIT 源码已覆盖全部需求；逆向可能违反其用户协议，且 APK 内含他人账号残留风险。
+2. **导出不得新增 ZIP 条目**，也不得在 session JSON 里塞扩展字段（v1 导出=兼容模式）。
+3. **`READ_LINK.signature` 必须原样回传**，否则多轮丢网页上下文。
+4. **历史 thinking 不回传**（除本轮续写）。
+5. **一旦收到过 `content_block_start` 就不得自动重试**（防重复计费）。
+6. **`stop_reason=refusal` 时丢弃已下发的 thinking/text**，只留工具块。
+7. **不在导出中写 API Key / 设置 / 用量**。
+8. `system` 快照只读；改全局提示词不得回写已有会话。
+9. UI 不得出现 DeepSeek Logo/名称；分享图页脚放 TinyChat + 免责声明。
+10. 不用 `androidx.security-crypto`（已 deprecated）。
+
+---
+
+## 6. 关键报文（原样留存，避免重新翻文档）
+
+### 6.1 一次完整请求（Messages）
+
+```http
+POST https://api.deepseek.com/anthropic/v1/messages
+Content-Type: application/json
+x-api-key: ${DEEPSEEK_API_KEY}
+```
+```json
+{
+  "model": "deepseek-flash",
+  "system": "该助手为DeepSeek，由深度求索公司创造。",
+  "thinking": { "type": "enabled" },
+  "output_config": { "effort": "high" },
+  "tools": [
+    { "type": "deepseek_read_url",   "name": "deepseek_read_url" },
+    { "type": "deepseek_web_search", "name": "deepseek_web_search" }
+  ],
+  "safety_check": { "level": "high" },
+  "title": { "enabled": true },
+  "messages": [
+    { "role": "latest_reminder", "content": "2026-11-17,星期一,浙江,App,中文" },
+    { "role": "user", "content": "DeepSeek V4.1 有哪些更新？" }
+  ],
+  "stream": true
+}
+```
+
+> `latest_reminder` 必须**紧挨在它所属于的 user 消息之前**，`content` 必须是字符串；格式错 → `400`，非字符串 → `422`。`language` 取值必须来自官方 70+ 语言表（**不要自造**，如 `中文`、`English`、`日本語`）。
+
+### 6.2 流式事件顺序（官方示例）
+
+```
+message_start
+content_block_start (thinking) → thinking_delta… → signature_delta → content_block_stop
+content_block_start (server_tool_use)        → content_block_stop
+content_block_start (web_search_tool_result) → content_block_stop
+content_block_start (thinking) … → content_block_stop
+content_block_start (text) → text_delta… → citations_delta → content_block_stop
+content_block_start (text) → text_delta… → content_block_stop
+message_delta
+message_stop
+```
+
+### 6.3 各块的真实形状
+
+```jsonc
+// message_start（usage 只有第一步）
+event: message_start
+data: {"type":"message_start","message":{"id":"b161a9be-...","type":"message","role":"assistant",
+  "model":"deepseek-flash","content":[],"stop_reason":null,"stop_sequence":null,
+  "usage":{"input_tokens":40,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,
+           "output_tokens":0,"service_tier":"standard"}}}
+
+// 服务端工具调用（原子下发，content_block_start 即带完整 input）
+{"type":"content_block_start","index":1,"content_block":{
+  "type":"server_tool_use","id":"srvtoolu_ds_00_b2baebaf...","name":"deepseek_web_search",
+  "input":{"action":"search","queries":["DeepSeek V4.1 new features","..."]},
+  "caller":{"type":"direct"},"kind":"deep_search"}}
+
+// 搜索结果
+{"type":"content_block_start","index":2,"content_block":{
+  "type":"web_search_tool_result","tool_use_id":"srvtoolu_ds_00_...",
+  "content":[{"type":"web_search_result","title":"...","url":"https://...",
+    "encrypted_content":"...","page_age":"2026-10-16T16:00:00+00:00",
+    "snippet":"...","site_name":"DeepSeek","site_icon":"https://cdn.deepseek.com/site-icons/deepseek.com"}],
+  "kind":"deep_search"}}
+
+// 正文 + 引用（引用走 citations_delta，引用后正文另起新 text 块）
+{"type":"content_block_delta","index":15,"delta":{"type":"citations_delta",
+  "citation":{"type":"web_search_result_location","url":"https://...","title":"...",
+              "encrypted_index":"","cited_text":"..."}}}
+
+// 结束（用量以这里为准，不要与 message_start 相加）
+{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"title":"DeepSeek V4.1 更新"},
+ "usage":{"input_tokens":9078,"cache_creation_input_tokens":0,"cache_read_input_tokens":4096,
+   "output_tokens":1686,"service_tier":"standard",
+   "server_tool_use":{"web_search_requests":1,"web_fetch_requests":0,
+                      "tool_search":2,"tool_fetch":0,"tool_image_search":0}}}
+
+// 失败（HTTP 仍是 200，之后不再有 message_delta / message_stop）
+event: error
+data: {"type":"error","error":{"type":"api_error","message":"The model failed to generate a complete response. Please retry."},"usage":{...}}
+
+// 拒答
+{"stop_reason":"refusal","stop_details":{"type":"refusal","category":null,"explanation":null}}
+```
+
+**action → kind 对照**：`search`→`search`/`deep_search`；`open_page`→`deep_search`；`find_in_page`→`deep_search`；`read_link`→`read_link`。图片搜索 kind 为 `image_search` / `deep_image_search`（无 query，结果多一个 `image_url`）。
+
+### 6.4 阅读链接块（**必须回传 signature**）
+
+```jsonc
+{"type":"web_fetch_tool_result","tool_use_id":"srvtoolu_rl_01_9c1d...",
+ "content":{"type":"web_fetch_result","url":"https://example.com/a",
+   "content":{"type":"document","source":{"type":"text","media_type":"text/plain","data":""},
+              "title":"页面标题"},
+   "published_at":"2026-01-01"},
+ "kind":"read_link","signature":"q3J0b1RmZ1c4cE1x..."}
+```
+失败时 `content` 为 `{"type":"web_fetch_tool_result_error","error_code":"url_not_accessible|url_not_allowed|unavailable"}`，且**无 signature**。
+
+### 6.5 文件上传与引用
+
+```http
+POST https://api.deepseek.com/anthropic/v1/files
+x-api-key: ...
+anthropic-beta: files-api-2025-04-14
+Content-Type: multipart/form-data   # purpose 必须排在 file 之前
+```
+`purpose`：`text_recognition`（仅文字）/ `rich_layout_recognition`（含图版式）/ `user_data`（txt/md/csv/json/代码/XLSX/EPUB，不计费）。
+对话中引用（需带 `anthropic-beta: files-api-2025-04-14`）：
+
+```json
+{"role":"user","content":[
+  {"type":"document","source":{"type":"file","file_id":"file-api-xxxxxxxx"}},
+  {"type":"image","source":{"type":"file","file_id":"file-image-xxxxxxxx"}},
+  {"type":"text","text":"总结这份文档的要点。"}
+]}
+```
+纯文本也可不走上传：`{"type":"document","source":{"type":"text","media_type":"text/plain","data":"..."}}`。
+限制：单文件 100MiB / 1000 页；上传 120s、解析 120s；每请求 ≤20 文档且合计 ≤8MiB 文本。
+
+### 6.6 其他端点
+
+| 用途 | 请求 | 要点 |
+|---|---|---|
+| 校验 Key | `GET /models`（`Authorization: Bearer`） | 不计费 |
+| 余额 | `GET /user/balance` | 返回 `is_available` + `balance_infos[{currency,total_balance,granted_balance,topped_up_balance}]`，字符串金额 |
+| ASR | `POST /v1/tools/asr`（multipart `file`） | 16-bit PCM WAV 或 Ogg Opus；≤8MiB、≤120s；返回 `{text,duration_ms}`；不支持流式 |
+| TTS | `POST /v1/tools/tts` | `{text,voice_id:"stella"\|"tide",format:"wav"\|"pcm"}`；wav 或 24k/16bit/mono |
+| TTS 流式 | `wss://api.deepseek.com/v1/tools/tts` | 语音边生成边播；会话 ≤30 分钟 |
+
+### 6.7 计费口径（写 `CostCalculator` 时照此）
+
+```
+cost = input_tokens/1e6 * P_miss
+     + cache_read_input_tokens/1e6 * P_hit
+     + output_tokens/1e6 * P_out
+     + (tool_search + tool_fetch + tool_image_search) * 0.005   // 元/次
+```
+价格（元/百万 token，空闲/高峰）：
+
+| 模型 | 入(命中) | 入(未命中) | 出 |
+|---|---|---|---|
+| deepseek-flash | 0.02 / 0.04 | 1 / 2 | 4 / 8 |
+| deepseek-v4-pro | 0.15 / 0.30 | 4.5 / 9 | 13.5 / 27 |
+
+高峰 = 北京时间周一至周五 09:00–12:00、14:00–18:00（法定节假日除外）；其余为半价。
+`cache_creation_input_tokens` **恒为 0**。搜索按**查询词条数**计费（3 个词 = 3 次）。
+
+### 6.8 导出格式（v3）条目顺序
+
+```
+manifest.json                                   {"export_format_version": 3}   ← 必须是第一条
+user.json                                       （导入时跳过）
+chat_sessions/{session_id}.json                 会话（含消息树，id 会话内自增）
+chat_session_index.json                         [{id,title,pinned,message_count,inserted_at,updated_at}]
+chat_sessions/{session_id}_files/{file_id}_{name}
+```
+碎片枚举：`REQUEST` `RESPONSE` `THINK` `TEMPLATE_RESPONSE` `TIP` `CONTENT_RISK` `PARTIAL_FILE_READ` `TOOL_SEARCH` `TOOL_OPEN` `TOOL_FIND` `READ_LINK` `FILE` `TOOL_IMAGE_SEARCH`。
+消息状态：`WIP` `FINISHED` `CONTENT_FILTER` `FAILED` `INCOMPLETE` `CONTEXT_LENGTH_EXCEEDED` `TIMEOUT`。
+**样本实测分布**：`CONTENT_RISK` 4411 条全部是同一句英文免责声明（直接丢弃）；`TOOL_SEARCH` 1503 / `TOOL_OPEN` 2366 / `THINK` 13063。
+
+---
+
+## 7. 下一步动作（按顺序，勿跳步）
+
+### Step 0 — Spike（3 天，丢弃型工程，不进主仓库）— ✅ 已完成 3/4
+
+结果详见 **04-spike-report.md**。原始输出：`E:\code\TinyChat-spike\out\{sse,zip}.txt`。
+
+| # | 验证 | 结果 |
+|---|---|---|
+| 1 | 手写 SSE 解析器 | ✅ 离线固件 **40/40 通过**；在线真打**待 API Key** |
+| 2 | 流式 Markdown 渲染 | ✅ **决定性**：流式状态 API 0 次回缩/1.2× 时长，另两种写法 42–61 次回缩/2.0–2.3× |
+| 3 | 公式 + 图表选型 | ✅ 定稿 **WebView + 离线 KaTeX/mermaid**（纯 Compose LaTeX 库依赖链断裂） |
+| 4 | 87MB 导出包解析 | ✅ **PASS，余量大**：1.07s（限 25s）/ 43MB（限 150MB）/ 0 错误 |
+
+> 唯一遗留：在线 SSE 需要用户提供 DeepSeek API Key，命令见 04 §1.2。
+
+### Step 1 — M0（3.1 人日）— ✅ 已完成（2026-11-17）
+
+产出结构（全部可编译，`./gradlew assembleDebug test lint` 全绿）：
+
+```
+app/                    单 Activity：enableEdgeToEdge + TcTheme + NavHost + 抽屉
+core/model/              纯 Kotlin：Provider / Capabilities / ModelInfo / ThinkingEffort / TtsVoice（含 5 条单测）
+core/designsystem/       色板 / 字体 / 形状 / 主题 / 12 个占位图标
+core/ui/                 顶栏 / 图标按钮 / 列表行 / 分组标题 / 行内提示条
+feature/chat/            会话页（空态 + 输入区占位 + 无 Key 行内提示）
+feature:sessions/        会话抽屉（假数据）
+feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占位页
+```
+
+验收证据（Pixel_3a_API_34 模拟器实拍，见 `docs/screenshots/`）：
+
+- 冷启动**直达会话页**，没有自有启动页/引导页（`m0-chat-light.png` / `m0-chat-dark.png`）
+- 浅色/深色双主题均正常
+- 抽屉可开、设置可进、返回可用（`m0-drawer-light.png` / `m0-drawer.png` / `m0-settings.png`）
+- 未配置 Key 时**只出现行内提示条**，无弹窗、不阻断主界面
+- `:core:model:test` **5/5 通过**；`lint` **0 error**；APK 安装启动无崩溃
+
+**与计划的偏差（需知悉）**：
+
+| 项 | 偏差 | 原因 |
+|---|---|---|
+| M0-7 的 detekt | **暂未接入**，CI 只有 assemble + test + lint | detekt 插件版本未核实，避免在骨架阶段引入不确定依赖；M8 质量门禁再补 |
+| M0-4 图标 | 12 个**自绘占位**（简单几何），非最终视觉 | 决策 15：图标方案暂缓 |
+| M0-5 桌面图标 | 一个对话气泡矢量占位 | 不可用鲸鱼；自家图标未定 |
+| M0-2 签名 | 只有 debug 默认签名 | release 签名属 M9-4，密钥不进仓库 |
+
+### Step 2 — M1（13 人日）← 下一步
+
+顺序：`M1-1 Room` → `M1-2 SseReader` → `M1-3 请求构建` → `M1-4 碎片归并` → `M1-5 状态流转` → `M1-6 会话列表` → `M1-7 发送/停止` → `M1-8 消息树` → `M1-9 继续生成` → `M1-10 上下文重建` → `M1-11 错误映射` → `M1-12 Files 客户端`。
+
+- **M1-2 可直接照 04 号报告 §1 的边界清单实现**（离线固件已有 40 条断言可复用）。
+- 验收需要 Key：连续对话、思维链、停止、重发、版本切换。
+
+### Step 3 起
+
+见 02 §6 的 M2–M9 表格（60 个任务，含依赖与验收）。
+
+---
+
+## 8. 压缩后的自检清单
+
+新 session 开工前，逐条回答：
+
+1. 当前有没有写过代码？（答案应：没有，只有 docs）
+2. 主链路端点是哪个？（`/anthropic/v1/messages`，不是 `/chat/completions`）
+3. 联网搜索是客户端做的吗？（不是，服务端 `deepseek_web_search`）
+4. `deepseek-v4-pro` 能用联网/文件吗？（不能）
+5. 导出能不能加自定义 ZIP 条目？（不能，会整包失败）
+6. 改全局提示词会不会影响老会话？（不会，快照只读）
+7. 有没有暴露 `temperature`？（没有，且不要加）
+8. 品牌能不能用 DeepSeek 名字/鲸鱼？（不能）
+9. 第一个动作是什么？（Spike 四项，不是 `gradle init`）
+10. 还缺什么信息？（**一个 DeepSeek API Key**——Spike 第 1 项与 M1 验收要用；其余信息齐了）
+
+---
+
+## 9. 待用户确认
+
+1. **是否有可用的 DeepSeek API Key**：有则 Spike 四项全跑；没有则先做第 2/3/4 项，第 1 项用 `parseEvent.ts` 离线样本兜底。
+2. **首页中心图标位**：M0–M2 先只放问候语（决策 17），可接受则不必再问。
+
+---
+
+## 10. 官方文档索引（需要原文时直接取）
+
+| 主题 | URL |
+|---|---|
+| 构建 Chatbot（总纲，含被忽略参数表） | `https://api-docs.deepseek.com/zh-cn/guides/build_a_chatbot` |
+| 联网工具（搜索/读链接/块格式/计费） | `https://api-docs.deepseek.com/zh-cn/guides/web_tools` |
+| 思考模式（effort 映射） | `https://api-docs.deepseek.com/zh-cn/guides/thinking_mode` |
+| 文件解析（purpose/限制） | `https://api-docs.deepseek.com/zh-cn/guides/document_parsing` |
+| 用户元信息（latest_reminder + 语言表） | `https://api-docs.deepseek.com/zh-cn/guides/latest_reminder` |
+| 会话标题 | `https://api-docs.deepseek.com/zh-cn/guides/conversation_title` |
+| 内容安全（拒答语义） | `https://api-docs.deepseek.com/zh-cn/guides/safety` |
+| TTS / ASR | `.../guides/tts` · `.../guides/asr` |
+| Anthropic 兼容（字段支持矩阵） | `https://api-docs.deepseek.com/zh-cn/guides/anthropic_api` |
+| 模型与价格 | `https://api-docs.deepseek.com/zh-cn/quick_start/pricing` |
+| 余额 | `https://api-docs.deepseek.com/zh-cn/api/get-user-balance` |
+| 全家桶发布公告 | `https://api-docs.deepseek.com/zh-cn/news/news261113` |
+
+> 小技巧：这些 docusaurus 页面支持直接取 Markdown —— 在 URL 后加 `.md`（如 `.../guides/web_tools.md`），比抓 HTML 干净得多。
