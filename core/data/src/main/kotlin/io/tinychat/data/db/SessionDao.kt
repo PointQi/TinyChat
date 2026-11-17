@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import io.tinychat.model.ThinkingEffort
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -40,6 +41,20 @@ interface SessionDao {
 
     @Query("UPDATE sessions SET updated_at = :now WHERE id = :id")
     suspend fun touch(id: String, now: Long)
+
+    /** 底栏切换模型/强度/搜索时改会话快照（只影响之后的请求） */
+    @Query(
+        "UPDATE sessions SET thinking_enabled = :thinking, search_enabled = :search, " +
+            "effort = :effort, model = :model, updated_at = :now WHERE id = :id",
+    )
+    suspend fun updateSettings(
+        id: String,
+        thinking: Boolean,
+        search: Boolean,
+        effort: ThinkingEffort?,
+        model: String,
+        now: Long,
+    )
 
     @Query("SELECT COUNT(*) FROM sessions WHERE deleted = 0")
     suspend fun count(): Int

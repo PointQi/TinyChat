@@ -78,6 +78,24 @@ class ChatRepository(
      * 发送一条用户消息并流式接收回复。**取消即停止**：
      * 上层 cancel 协程 → 传输层断流 → 状态落 INCOMPLETE、已生成内容保留。
      */
+    /** 底栏切模型/强度/搜索：只改会话快照，不影响已有消息 */
+    suspend fun updateSettings(
+        sessionId: String,
+        thinkingEnabled: Boolean,
+        searchEnabled: Boolean,
+        effort: ThinkingEffort?,
+        model: String,
+    ) {
+        db.sessionDao().updateSettings(
+            id = sessionId,
+            thinking = thinkingEnabled,
+            search = searchEnabled,
+            effort = effort,
+            model = model,
+            now = clock(),
+        )
+    }
+
     suspend fun send(sessionId: String, text: String, apiKey: String): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val modelInfo = KnownProviders.deepSeek.model(session.model) ?: KnownProviders.flash

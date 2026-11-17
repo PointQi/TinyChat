@@ -86,4 +86,32 @@ object TcIcons {
                 "M5.6,5.6 L7.8,7.8 M16.2,16.2 L18.4,18.4 M18.4,5.6 L16.2,7.8 M7.8,16.2 L5.6,18.4",
         )
     }
+
+    // —— M1 补：底栏与思维链要用的几个 ——
+
+    /**
+     * 思维链 / 深度思考：**原子图标**，移植自 chat-demo（MIT），见 [AtomIcon]。
+     * 之前手画的双圈占位已废弃。
+     */
+    val Think: ImageVector get() = AtomIcon
+
+    /** 智能搜索：地球 */
+    val Globe: ImageVector by lazy {
+        strokeIcon(
+            "tc_globe",
+            "M12,4 a8,8 0 1 0 0,16 a8,8 0 1 0 0,-16 Z M4,12 H20 " +
+                "M12,4 c3.2,2.6 3.2,13.4 0,16 M12,4 c-3.2,2.6 -3.2,13.4 0,16",
+        )
+    }
+
+    /** 新建对话 / 附件：圆圈加号 */
+    val PlusCircle: ImageVector by lazy {
+        strokeIcon("tc_plus_circle", "M12,4 a8,8 0 1 0 0,16 a8,8 0 1 0 0,-16 Z M12,8.5 V15.5 M8.5,12 H15.5")
+    }
+
+    val ChevronDown: ImageVector by lazy { strokeIcon("tc_chevron_down", "M7,10 L12,15 L17,10") }
+
+    val ChevronUp: ImageVector by lazy { strokeIcon("tc_chevron_up", "M7,14 L12,9 L17,14") }
+
+    val ChevronRight: ImageVector by lazy { strokeIcon("tc_chevron_right", "M10,7 L15,12 L10,17") }
 }
