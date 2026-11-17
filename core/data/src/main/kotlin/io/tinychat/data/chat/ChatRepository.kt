@@ -1,4 +1,4 @@
-﻿package io.tinychat.data.chat
+package io.tinychat.data.chat
 
 import io.tinychat.data.db.MessageEntity
 import io.tinychat.data.db.MessageWithFragments
@@ -44,6 +44,22 @@ class ChatRepository(
     fun observeSessions(): Flow<List<SessionEntity>> = db.sessionDao().observeAll()
 
     suspend fun session(sessionId: String): SessionEntity? = db.sessionDao().byId(sessionId)
+
+    /** 冷启动恢复用：最近活跃的一条未删除会话（只看 `updated_at` 倒序，不受置顶影响）。 */
+    suspend fun latestSession(): SessionEntity? = db.sessionDao().latest()
+
+    suspend fun renameSession(sessionId: String, title: String?) {
+        db.sessionDao().rename(sessionId, title?.trim()?.takeIf { it.isNotEmpty() }, clock())
+    }
+
+    suspend fun setSessionPinned(sessionId: String, pinned: Boolean) {
+        db.sessionDao().setPinned(sessionId, pinned, clock())
+    }
+
+    /** 软删；消息与碎片留给 M6 的清理任务，不在交互路径上做级联删除。 */
+    suspend fun deleteSession(sessionId: String) {
+        db.sessionDao().softDelete(sessionId, clock())
+    }
 
     suspend fun createSession(
         thinkingEnabled: Boolean = true,

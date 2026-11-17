@@ -64,9 +64,12 @@ fun TinyChatApp() {
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = drawerState.isOpen,
+        // 会话页向右滑就能拉出抽屉（不必每次点左上角）；抽屉打开后向左滑收起。
+        gesturesEnabled = true,
         drawerContent = {
             SessionsDrawerContent(
+                sessions = chatViewModel.sessions,
+                currentSessionId = chatViewModel.sessionId,
                 onNewChat = {
                     chatViewModel.newChat()
                     closeDrawer()
@@ -75,6 +78,13 @@ fun TinyChatApp() {
                     closeDrawer()
                     navController.navigate(Routes.SETTINGS)
                 },
+                onPickSession = { id ->
+                    chatViewModel.openSession(id)
+                    closeDrawer()
+                },
+                onRenameSession = chatViewModel::renameSession,
+                onTogglePinSession = chatViewModel::togglePinnedSession,
+                onDeleteSession = chatViewModel::deleteSession,
             )
         },
     ) {

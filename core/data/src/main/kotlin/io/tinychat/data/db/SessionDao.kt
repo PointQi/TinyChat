@@ -27,6 +27,10 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE deleted = 0 ORDER BY pinned DESC, updated_at DESC")
     suspend fun all(): List<SessionEntity>
 
+    /** 冷启动恢复：上次活跃的那条（置顶不参与排序，要的是「刚才在聊的」）。 */
+    @Query("SELECT * FROM sessions WHERE deleted = 0 ORDER BY updated_at DESC LIMIT 1")
+    suspend fun latest(): SessionEntity?
+
     /** 软删；附件由 M6 的异步清理任务处理 */
     @Query("UPDATE sessions SET deleted = 1, updated_at = :now WHERE id = :id")
     suspend fun softDelete(id: String, now: Long)

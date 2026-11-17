@@ -1,4 +1,4 @@
-package io.tinychat.feature.chat
+﻿package io.tinychat.feature.chat
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -16,6 +16,7 @@ import io.tinychat.model.MessageStatus
 import io.tinychat.model.RequestPayload
 import io.tinychat.model.ResponsePayload
 import io.tinychat.model.Role
+import io.tinychat.model.SessionRow
 import io.tinychat.model.ThinkPayload
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ToolFindPayload
@@ -71,7 +72,12 @@ data class ChatUiState(
     val error: String? = null,
     val title: String? = null,
     val modelId: String = KnownProviders.flash.id,
-    val effort: ThinkingEffort = ThinkingEffort.HIGH,
+    /**
+     * 默认 `Flash 低`（对齐官方 App 默认设定）。
+     *
+     * 日常问答上更高强度换不来多少质量，却要多花时间与思考 token；需要深想时手动点底栏切。
+     */
+    val effort: ThinkingEffort = ThinkingEffort.LOW,
     val thinkingEnabled: Boolean = true,
     val searchEnabled: Boolean = false,
     /** 非空 = 正在编辑这条用户消息 */
@@ -90,14 +96,69 @@ class ChatViewModel(
     var state by mutableStateOf(ChatUiState())
         private set
 
-    private var sessionId: String? = null
+    /** 抽屉列表数据（真实库，按 `pinned DESC, updated_at DESC`） */
+    var sessions by mutableStateOf<List<SessionRow>>(emptyList())
+        private set
+
+    var sessionId: String? by mutableStateOf(null)
+        private set
+
     private var job: Job? = null
     private var observing: Job? = null
 
     val hasApiKey: Boolean get() = apiKey.isNotBlank()
 
     init {
-        viewModelScope.launch { repository.recoverInterrupted() }
+        viewModelScope.launch {
+            repository.recoverInterrupted()
+            // 冷启动恢复上次会话：没有就停在新对话（会话首次发送才落库）
+            repository.latestSession()?.let { openSession(it.id) }
+        }
+        viewModelScope.launch {
+            repository.observeSessions().collect { rows ->
+                sessions = rows.map { SessionRow(it.id, it.title, it.pinned, it.updatedAt) }
+            }
+        }
+    }
+
+    /** 抽屉里点一条会话 */
+    fun openSession(id: String) {
+        if (id == sessionId) return
+        job?.cancel()
+        sessionId = id
+        state = state.copy(
+            isStreaming = false,
+            error = null,
+            editingMessageId = null,
+            input = "",
+        )
+        observe(id)
+        // 会话保存了自己的模型/强度/开关，切过来要跟着变（一次性读，不跟本地切换打架）
+        viewModelScope.launch {
+            val row = repository.session(id) ?: return@launch
+            state = state.copy(
+                modelId = row.model,
+                effort = row.effort ?: ThinkingEffort.LOW,
+                thinkingEnabled = row.thinkingEnabled,
+                searchEnabled = row.searchEnabled,
+                title = row.title,
+            )
+        }
+    }
+
+    fun renameSession(id: String, title: String) {
+        viewModelScope.launch { repository.renameSession(id, title) }
+    }
+
+    fun togglePinnedSession(id: String, pinned: Boolean) {
+        viewModelScope.launch { repository.setSessionPinned(id, pinned) }
+    }
+
+    fun deleteSession(id: String) {
+        viewModelScope.launch {
+            repository.deleteSession(id)
+            if (id == sessionId) newChat()
+        }
     }
 
     fun onInputChange(text: String) {
