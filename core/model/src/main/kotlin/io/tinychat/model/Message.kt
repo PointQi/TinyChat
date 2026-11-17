@@ -62,4 +62,8 @@ data class Message(
     val usage: Usage? = null,
     val errorKind: ErrorKind? = null,
     val errorMessage: String? = null,
+    /** 该轮 latest_reminder 快照；null = 本轮没发 reminder */
+    val reminderSnapshot: String? = null,
+    /** 本轮思考的 signature，继续生成时要回传 */
+    val thinkingSignature: String? = null,
 )

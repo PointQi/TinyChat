@@ -63,6 +63,8 @@ fun MessageEntity.toDomain(): Message = Message(
     usage = toUsage(),
     errorKind = errorKind,
     errorMessage = errorMessage,
+    reminderSnapshot = reminderSnapshot,
+    thinkingSignature = thinkingSignature,
 )
 
 private fun MessageEntity.toUsage(): Usage? {
@@ -106,6 +108,8 @@ fun Message.toEntity(costMicros: Long? = null): MessageEntity = MessageEntity(
     costMicros = costMicros,
     errorKind = errorKind,
     errorMessage = errorMessage,
+    reminderSnapshot = reminderSnapshot,
+    thinkingSignature = thinkingSignature,
 )
 
 fun FragmentEntity.toDomain(): Fragment = Fragment(

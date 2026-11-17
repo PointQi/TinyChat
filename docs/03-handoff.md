@@ -410,6 +410,25 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 **仍待办**：站点图标目前是**首字母色块**（真 favicon 要等 M2 接 Coil）、引用角标点击与来源抽屉属 M3-3、搜索结果里的日期/摘要还没展示。
 | M1-8 及之后 | 未开始 | M1-10 之前上下文是朴素线性版 |
 
+**M1-10 上下文重建**：`core/net/context/ContextRebuilder.kt` + `ReminderBuilder.kt`，8 个用例。
+
+| 规则 | 状态 |
+|---|---|
+| ① 沿当前分支线性回溯 | 完成（调用方按 root→leaf 传入） |
+| ② 只保留 USER+可用 ASSISTANT 成对轮次 | 完成（孤立 USER、失败轮次整轮跳过） |
+| ③ 可用判定（状态/拒答/模板块/空正文） | 完成 |
+| ④ 历史只回传正文、思考不回传 | **部分**：正文已做，`read_link` 的 `signature` 回传**未做** |
+| ⑤ reminder 快照去重 | 完成（`messages.reminder_snapshot` 落库） |
+| ⑥ 末尾接本轮 USER | 完成（附件块待 M4） |
+| ⑦ 继续生成补未完成 ASSISTANT | 归 M1-9 |
+
+> **规则 ④ 的缺口要补**：现在碎片只存了结果侧（url/title/signature 在 results 里），无法还原
+> `server_tool_use` + `web_fetch_tool_result` 这一对。补法是给 `READ_LINK` 增加
+> `tool_use_id` 与调用块字段（仅本地，导出时仍需与 v3 形状兼容），列为 **M1-13**。
+
+**数据库 v2（已迁移验证）**：`messages` 加 `reminder_snapshot`、`thinking_signature` 两列（仅本地、不导出）。
+`MIGRATION_1_2` 在**带旧数据的模拟器上**实测升库成功、无崩溃，schema `2.json` 已入库。
+
 **M1-1 的实测发现（已同步进 02 §3.1/3.2）**：
 
 1. 真实数据里存在 `TOOL_IMAGE_SEARCH`（3 条），§3.1 原枚举漏了它，**已补为第 10 类**，否则导入这 3 条会丢；

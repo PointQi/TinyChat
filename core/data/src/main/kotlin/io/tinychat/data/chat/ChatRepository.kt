@@ -4,29 +4,31 @@ import io.tinychat.data.db.MessageEntity
 import io.tinychat.data.db.MessageWithFragments
 import io.tinychat.data.db.SessionEntity
 import io.tinychat.data.db.TinyChatDatabase
+import io.tinychat.data.db.toDomain
 import io.tinychat.data.db.toEntity
 import io.tinychat.model.Fragment
-import io.tinychat.model.FragmentPayloadCodec
-import io.tinychat.model.FragmentType
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.PromptMode
 import io.tinychat.model.RequestPayload
-import io.tinychat.model.ResponsePayload
 import io.tinychat.model.Role
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.net.context.ContextRebuilder
+import io.tinychat.net.context.ContextTurn
+import io.tinychat.net.context.ReminderBuilder
 import io.tinychat.net.protocol.ChatCommand
 import io.tinychat.net.protocol.DeepSeekMessagesProtocol
 import io.tinychat.net.protocol.WireMessage
 import io.tinychat.net.transport.ChatTransport
 import kotlinx.coroutines.flow.Flow
+import java.time.LocalDate
 import java.util.UUID
 
 /**
- * 聊天仓库：把「协议 + 传输 + 归并 + 落库」串起来（M1-5/M1-7）。
+ * 聊天仓库：把「协议 + 传输 + 归并 + 落库」串起来（M1-5/M1-7/M1-10）。
  *
- * 上下文重建目前是**朴素线性版**：沿当前分支取 USER/可用 ASSISTANT 的纯文本。
- * M1-10 会补上 latest_reminder、read_link 签名回传、思考裁剪等六条规则。
+ * 上下文按 02 §5.2 的规则重建（见 [ContextRebuilder]）；
+ * 本轮用户元信息按 §5.4 生成（见 [ReminderBuilder]）。
  */
 class ChatRepository(
     private val db: TinyChatDatabase,
@@ -102,6 +104,9 @@ class ChatRepository(
         val history = db.messageDao().withFragments(sessionId)
         val now = clock()
 
+        // 本轮的用户元信息（02 §5.4）；地点暂未接设置项，留空但保留逗号
+        val reminder = ReminderBuilder.build(date = LocalDate.now(), location = null)
+
         val parentId = session.currentMessageId ?: history.lastOrNull()?.message?.id
         val userId = db.messageDao().insert(
             MessageEntity(
@@ -112,6 +117,7 @@ class ChatRepository(
                 thinkingEnabled = session.thinkingEnabled,
                 searchEnabled = session.searchEnabled,
                 insertedAt = now,
+                reminderSnapshot = reminder,
             ),
         )
         db.fragmentDao().insert(Fragment(messageId = userId, ord = 0, payload = RequestPayload(text)).toEntity())
@@ -140,7 +146,15 @@ class ChatRepository(
             effort = session.effort,
             searchEnabled = session.searchEnabled,
             includeTitle = session.title == null,
-            messages = history.toWireMessages() + WireMessage.text(WireMessage.ROLE_USER, text),
+            messages = ContextRebuilder.build(
+                branch = history.map { entry ->
+                    ContextTurn(
+                        message = entry.message.toDomain(),
+                        fragments = entry.orderedFragments.map { it.toDomain() },
+                    )
+                },
+                currentReminder = reminder,
+            ) + WireMessage.text(WireMessage.ROLE_USER, text),
         )
 
         val request = DeepSeekMessagesProtocol.build(
@@ -159,28 +173,4 @@ class ChatRepository(
         return outcome
     }
 
-    private fun List<MessageWithFragments>.toWireMessages(): List<WireMessage> = mapNotNull { entry ->
-        when (entry.message.role) {
-            Role.USER -> {
-                val text = entry.orderedFragments
-                    .filter { it.type == FragmentType.REQUEST.wire }
-                    .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
-                    .joinToString("")
-                text.takeIf { it.isNotBlank() }?.let { WireMessage.text(WireMessage.ROLE_USER, it) }
-            }
-
-            Role.ASSISTANT -> {
-                if (!entry.message.status.isUsableInContext) {
-                    null
-                } else {
-                    val text = entry.orderedFragments
-                        .filter { it.type == FragmentType.RESPONSE.wire }
-                        .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? ResponsePayload)?.content }
-                        .joinToString("")
-                    text.takeIf { it.isNotBlank() }
-                        ?.let { WireMessage.text(WireMessage.ROLE_ASSISTANT, it) }
-                }
-            }
-        }
-    }
 }

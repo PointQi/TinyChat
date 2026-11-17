@@ -52,4 +52,8 @@ data class MessageEntity(
     @ColumnInfo(name = "cost_micros") val costMicros: Long? = null,
     @ColumnInfo(name = "error_kind") val errorKind: ErrorKind? = null,
     @ColumnInfo(name = "error_message") val errorMessage: String? = null,
+    /** v2：该轮 latest_reminder 快照（仅本地，不导出） */
+    @ColumnInfo(name = "reminder_snapshot") val reminderSnapshot: String? = null,
+    /** v2：本轮思考 signature（仅本地，继续生成要回传） */
+    @ColumnInfo(name = "thinking_signature") val thinkingSignature: String? = null,
 )
