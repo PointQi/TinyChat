@@ -88,7 +88,7 @@ git clone --depth 1 https://github.com/deepseek-ai/chat-demo.git temp-doc/chat-d
 | 12 | 角色扮演预设 = **中性骨架**（人设/世界观/风格/禁止事项四槽位 + `{{}}` 占位） |
 | 13 | `恢复默认` = 一键还原官方原文；默认预设只读、不可删改 |
 | 14 | **附件图标用回形针**（不改成 ⊕ 圆加号） |
-| 15 | **图标方案暂缓定稿**；核心 12 个中 9 个借 chat-demo（MIT），其余去 Material Symbols 找；M0 先用占位 |
+| 15 | **图标素材已齐，不再"暂缓"**：chat-demo 的 41 个图标全部机械移植到 `ChatDemoIcons.kt`（路径未改），只有分享、上箭头、返回三个是手绘；总览见 `docs/design/icons-contact-sheet.png` |
 | 16 | **没有启动页**：冷启动直达主界面；无 Key 用行内提示条，不做引导页/onboarding |
 | 17 | 首页中心图标**可省略**（鲸鱼不可用，自家图标未定）；M0–M2 先只放问候语 |
 | 18 | Markdown 流式**只用** `rememberStreamingMarkdownState` + `append()`；禁用 `Markdown(String)` 重载与"逐帧换 state 驱动"（实测 42–61 次高度回缩，见 04 §3） |
