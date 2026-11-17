@@ -24,6 +24,7 @@ import io.tinychat.model.ToolSearchPayload
 import io.tinychat.net.transport.ChatException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -73,6 +74,8 @@ data class ChatUiState(
     val effort: ThinkingEffort = ThinkingEffort.HIGH,
     val thinkingEnabled: Boolean = true,
     val searchEnabled: Boolean = false,
+    /** 非空 = 正在编辑这条用户消息 */
+    val editingMessageId: Long? = null,
 )
 
 /**
@@ -105,7 +108,8 @@ class ChatViewModel(
         val text = state.input.trim()
         if (text.isEmpty() || state.isStreaming) return
 
-        state = state.copy(input = "", isStreaming = true, error = null)
+        val editingId = state.editingMessageId
+        state = state.copy(input = "", isStreaming = true, error = null, editingMessageId = null)
         job = viewModelScope.launch {
             try {
                 val id = sessionId ?: repository.createSession(
@@ -118,7 +122,12 @@ class ChatViewModel(
                 }
 
                 persistSettings(id)
-                val outcome = repository.send(id, text, apiKey)
+                val outcome = if (editingId != null) {
+                    // 编辑重发：在新分支上跑，旧分支留库
+                    repository.editMessage(id, editingId, text, apiKey)
+                } else {
+                    repository.send(id, text, apiKey)
+                }
                 state = state.copy(title = repository.session(id)?.title ?: outcome.title)
             } catch (e: CancellationException) {
                 throw e
@@ -131,6 +140,25 @@ class ChatViewModel(
             }
         }
     }
+
+    /** 点一下用户消息：进入编辑重发 */
+    fun startEdit(message: ChatMessage) {
+        if (message.isUser.not() || state.isStreaming) return
+        state = state.copy(editingMessageId = message.id, input = message.text)
+    }
+
+    fun cancelEdit() {
+        state = state.copy(editingMessageId = null, input = "")
+    }
+
+    /** 复制整个会话（纯文本，用户/AI 交替） */
+    fun conversationText(): String = buildString {
+        state.messages.forEach { message ->
+            if (message.isUser) append("我：")
+            append(message.text.trim())
+            append("\n\n")
+        }
+    }.trim()
 
     fun stop() {
         job?.cancel()
@@ -189,13 +217,33 @@ class ChatViewModel(
     private fun observe(id: String) {
         observing?.cancel()
         observing = viewModelScope.launch {
-            repository.observeMessages(id).collect { rows ->
-                state = state.copy(messages = rows.mapNotNull { it.toChatMessage() })
-            }
+            combine(
+                repository.observeMessages(id),
+                repository.observeSession(id),
+            ) { rows, session -> rows to session }
+                .collect { (rows, session) ->
+                    // 只渲染**当前分支**：从 current_message_id 往回走
+                    val chain = chainOf(rows, session?.currentMessageId)
+                    state = state.copy(
+                        messages = chain.mapNotNull { it.toChatMessage() },
+                        title = session?.title,
+                    )
+                }
         }
-        viewModelScope.launch {
-            state = state.copy(title = repository.session(id)?.title)
+    }
+
+    private fun chainOf(rows: List<MessageWithFragments>, leafId: Long?): List<MessageWithFragments> {
+        if (leafId == null) return emptyList()
+        val byId = rows.associateBy { it.message.id }
+        val path = ArrayDeque<MessageWithFragments>()
+        var cursor: Long? = leafId
+        val guard = HashSet<Long>()
+        while (cursor != null && guard.add(cursor)) {
+            val node = byId[cursor] ?: break
+            path.addFirst(node)
+            cursor = node.message.parentId
         }
+        return path.toList()
     }
 
     private fun MessageWithFragments.toChatMessage(): ChatMessage? {

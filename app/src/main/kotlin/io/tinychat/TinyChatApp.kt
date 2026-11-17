@@ -100,6 +100,9 @@ fun TinyChatApp() {
                         onNewChat = chatViewModel::newChat,
                         onToggleAutoSpeak = { autoSpeak = !autoSpeak },
                         onOpenProviderSettings = { navController.navigate(Routes.PROVIDER) },
+                        onEditMessage = chatViewModel::startEdit,
+                        onCancelEdit = chatViewModel::cancelEdit,
+                        conversationText = chatViewModel::conversationText,
                     )
                 }
                 composable(Routes.SETTINGS) {

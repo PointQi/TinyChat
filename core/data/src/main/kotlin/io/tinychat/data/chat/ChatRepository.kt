@@ -1,4 +1,4 @@
-package io.tinychat.data.chat
+﻿package io.tinychat.data.chat
 
 import io.tinychat.data.db.MessageEntity
 import io.tinychat.data.db.MessageWithFragments
@@ -98,16 +98,47 @@ class ChatRepository(
         )
     }
 
+
+    fun observeSession(sessionId: String): Flow<SessionEntity?> = db.sessionDao().observeById(sessionId)
+
     suspend fun send(sessionId: String, text: String, apiKey: String): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
+        val parentId = session.currentMessageId
+            ?: db.messageDao().withFragments(sessionId).lastOrNull()?.message?.id
+        return sendInternal(session, parentId, text, apiKey)
+    }
+
+    /**
+     * 编辑重发（02 §5.1）：在原消息的**父节点**下新建一条 USER 兄弟。
+     * 旧分支留在库里（M1-8 的版本切换要用），当前分支改走新的。
+     */
+    suspend fun editMessage(
+        sessionId: String,
+        messageId: Long,
+        text: String,
+        apiKey: String,
+    ): RunOutcome {
+        val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
+        val original = db.messageDao().byId(messageId) ?: error("消息不存在：$messageId")
+        return sendInternal(session, original.parentId, text, apiKey)
+    }
+
+    private suspend fun sendInternal(
+        session: SessionEntity,
+        parentId: Long?,
+        text: String,
+        apiKey: String,
+    ): RunOutcome {
+        val sessionId = session.id
         val modelInfo = KnownProviders.deepSeek.model(session.model) ?: KnownProviders.flash
-        val history = db.messageDao().withFragments(sessionId)
         val now = clock()
 
         // 本轮的用户元信息（02 §5.4）；地点暂未接设置项，留空但保留逗号
         val reminder = ReminderBuilder.build(date = LocalDate.now(), location = null)
 
-        val parentId = session.currentMessageId ?: history.lastOrNull()?.message?.id
+        // 上下文只取**当前分支**（root → parentId），别把废弃分支带进去
+        val history = chainTurns(sessionId, parentId)
+
         val userId = db.messageDao().insert(
             MessageEntity(
                 sessionId = sessionId,
@@ -146,15 +177,8 @@ class ChatRepository(
             effort = session.effort,
             searchEnabled = session.searchEnabled,
             includeTitle = session.title == null,
-            messages = ContextRebuilder.build(
-                branch = history.map { entry ->
-                    ContextTurn(
-                        message = entry.message.toDomain(),
-                        fragments = entry.orderedFragments.map { it.toDomain() },
-                    )
-                },
-                currentReminder = reminder,
-            ) + WireMessage.text(WireMessage.ROLE_USER, text),
+            messages = ContextRebuilder.build(history, reminder) +
+                WireMessage.text(WireMessage.ROLE_USER, text),
         )
 
         val request = DeepSeekMessagesProtocol.build(
@@ -173,4 +197,23 @@ class ChatRepository(
         return outcome
     }
 
+    /** 从 leaf 往上回溯成 root → leaf 的顺序 */
+    private suspend fun chainTurns(sessionId: String, leafId: Long?): List<ContextTurn> {
+        if (leafId == null) return emptyList()
+        val all = db.messageDao().withFragments(sessionId).associateBy { it.message.id }
+        val path = ArrayDeque<MessageWithFragments>()
+        var cursor: Long? = leafId
+        val guard = HashSet<Long>()
+        while (cursor != null && guard.add(cursor)) {
+            val node = all[cursor] ?: break
+            path.addFirst(node)
+            cursor = node.message.parentId
+        }
+        return path.map { entry ->
+            ContextTurn(
+                message = entry.message.toDomain(),
+                fragments = entry.orderedFragments.map { it.toDomain() },
+            )
+        }
+    }
 }

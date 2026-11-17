@@ -16,6 +16,10 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE id = :id")
     suspend fun byId(id: String): SessionEntity?
 
+    /** 会话页要跟着 current_message_id 走，所以用 Flow 盯着它 */
+    @Query("SELECT * FROM sessions WHERE id = :id")
+    fun observeById(id: String): Flow<SessionEntity?>
+
     /** 抽屉列表：置顶优先，其次按最后活跃倒序 */
     @Query("SELECT * FROM sessions WHERE deleted = 0 ORDER BY pinned DESC, updated_at DESC")
     fun observeAll(): Flow<List<SessionEntity>>

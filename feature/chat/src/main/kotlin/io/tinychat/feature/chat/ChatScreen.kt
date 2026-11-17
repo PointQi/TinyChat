@@ -1,7 +1,10 @@
 package io.tinychat.feature.chat
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +27,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -44,6 +50,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -80,6 +88,9 @@ fun ChatScreen(
     onNewChat: () -> Unit,
     onToggleAutoSpeak: () -> Unit,
     onOpenProviderSettings: () -> Unit,
+    onEditMessage: (ChatMessage) -> Unit,
+    onCancelEdit: () -> Unit,
+    conversationText: () -> String,
 ) {
     val palette = TcTheme.palette
 
@@ -104,7 +115,12 @@ fun ChatScreen(
         if (state.messages.isEmpty()) {
             Greeting(modifier = Modifier.weight(1f))
         } else {
-            MessageList(state = state, modifier = Modifier.weight(1f))
+            MessageList(
+                state = state,
+                modifier = Modifier.weight(1f),
+                onEditMessage = onEditMessage,
+                conversationText = conversationText,
+            )
         }
 
         state.error?.let { message ->
@@ -131,6 +147,7 @@ fun ChatScreen(
             onToggleThinking = onToggleThinking,
             onToggleSearch = onToggleSearch,
             onSelectModel = onSelectModel,
+            onCancelEdit = onCancelEdit,
         )
 
         if (state.messages.isNotEmpty()) {
@@ -175,9 +192,15 @@ private fun Greeting(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun MessageList(state: ChatUiState, modifier: Modifier = Modifier) {
+private fun MessageList(
+    state: ChatUiState,
+    modifier: Modifier = Modifier,
+    onEditMessage: (ChatMessage) -> Unit,
+    conversationText: () -> String,
+) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
 
     LaunchedEffect(state.messages.size) {
         if (state.messages.isNotEmpty()) {
@@ -185,10 +208,7 @@ private fun MessageList(state: ChatUiState, modifier: Modifier = Modifier) {
         }
     }
 
-    // 离底超过一屏就浮出「回到底部」（§12.2）
-    val showToBottom by remember {
-        derivedStateOf { listState.canScrollForward }
-    }
+    val showToBottom by remember { derivedStateOf { listState.canScrollForward } }
 
     Box(modifier = modifier.fillMaxWidth()) {
         LazyColumn(
@@ -198,7 +218,12 @@ private fun MessageList(state: ChatUiState, modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(state.messages, key = { it.id }) { message ->
-                MessageRow(message)
+                MessageRow(
+                    message = message,
+                    onTap = { onEditMessage(message) },
+                    onCopyMessage = { clipboard.setText(AnnotatedString(message.text)) },
+                    onCopyConversation = { clipboard.setText(AnnotatedString(conversationText())) },
+                )
             }
         }
 
@@ -211,14 +236,12 @@ private fun MessageList(state: ChatUiState, modifier: Modifier = Modifier) {
                     .shadow(4.dp, CircleShape)
                     .background(TcTheme.palette.bg, CircleShape)
                     .clickable {
-                        scope.launch {
-                            listState.animateScrollToItem(state.messages.lastIndex)
-                        }
+                        scope.launch { listState.animateScrollToItem(state.messages.lastIndex) }
                     },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = TcIcons.ArrowDown,
+                    imageVector = TcIcons.ChevronDown,
                     contentDescription = "回到底部",
                     tint = TcTheme.palette.labelSecondary,
                     modifier = Modifier.size(20.dp),
@@ -228,8 +251,19 @@ private fun MessageList(state: ChatUiState, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * 一条消息。
+ * - 用户消息：**短按进入编辑重发**，**长按复制这条消息**；
+ * - AI 消息：长按弹出菜单（复制整个会话 / 选择文本）。
+ */
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun MessageRow(message: ChatMessage) {
+private fun MessageRow(
+    message: ChatMessage,
+    onTap: () -> Unit,
+    onCopyMessage: () -> Unit,
+    onCopyConversation: () -> Unit,
+) {
     val palette = TcTheme.palette
 
     if (message.isUser) {
@@ -241,31 +275,84 @@ private fun MessageRow(message: ChatMessage) {
                 modifier = Modifier
                     .widthIn(max = 300.dp)
                     .background(palette.bubble, BubbleShape)
+                    .combinedClickable(onClick = onTap, onLongClick = onCopyMessage)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
         return
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        if (message.hasThinking) {
-            ThinkingBlock(
-                timeline = message.timeline,
-                seconds = message.thinkingSeconds,
-                inProgress = message.isThinking,
-            )
-            Spacer(Modifier.height(8.dp))
+    var menuOpen by remember { mutableStateOf(false) }
+    var selectOpen by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    Box {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = {}, onLongClick = { menuOpen = true }),
+        ) {
+            if (message.hasThinking) {
+                ThinkingBlock(
+                    timeline = message.timeline,
+                    seconds = message.thinkingSeconds,
+                    inProgress = message.isThinking,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            if (message.text.isNotBlank()) {
+                Text(
+                    text = message.text,
+                    style = TcTypography.bodyLarge,
+                    color = palette.labelPrimary,
+                )
+                if (message.citations.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    CitationChips(message.citations)
+                }
+            }
         }
 
-        if (message.text.isNotBlank()) {
-            Text(
-                text = message.text,
-                style = TcTypography.bodyLarge,
-                color = palette.labelPrimary,
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text("复制", style = TcTypography.bodyMedium, color = palette.labelPrimary) },
+                onClick = {
+                    menuOpen = false
+                    onCopyConversation()
+                },
             )
-            if (message.citations.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                CitationChips(message.citations)
+            DropdownMenuItem(
+                text = { Text("选择文本", style = TcTypography.bodyMedium, color = palette.labelPrimary) },
+                onClick = {
+                    menuOpen = false
+                    selectOpen = true
+                },
+            )
+        }
+    }
+
+    if (selectOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { selectOpen = false },
+            sheetState = sheetState,
+            containerColor = palette.bg,
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                Text(
+                    text = "选择文本",
+                    style = TcTypography.titleMedium,
+                    color = palette.labelPrimary,
+                )
+                Spacer(Modifier.height(10.dp))
+                SelectionContainer {
+                    Text(
+                        text = message.text,
+                        style = TcTypography.bodyLarge,
+                        color = palette.labelPrimary,
+                    )
+                }
+                Spacer(Modifier.height(24.dp))
             }
         }
     }
@@ -491,17 +578,47 @@ private fun InputCard(
     onToggleThinking: () -> Unit,
     onToggleSearch: () -> Unit,
     onSelectModel: (String, ThinkingEffort) -> Unit,
+    onCancelEdit: () -> Unit,
 ) {
     val palette = TcTheme.palette
+    val dark = isSystemInDarkTheme()
+    // 深色下卡片与背景同色会糊在一起，用 bgLayer2 抬一层
+    val cardColor = if (dark) palette.bgLayer2 else palette.bg
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
             .shadow(3.dp, RoundedCornerShape(24.dp))
-            .background(palette.bg, RoundedCornerShape(24.dp))
+            .background(cardColor, RoundedCornerShape(24.dp))
             .padding(start = 14.dp, end = 10.dp, top = 12.dp, bottom = 8.dp),
     ) {
+        // 编辑态提示条
+        if (state.editingMessageId != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "正在编辑消息：",
+                    style = TcTypography.bodySmall,
+                    color = palette.brand,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "取消",
+                    style = TcTypography.bodySmall,
+                    color = palette.labelSecondary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(onClick = onCancelEdit)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
