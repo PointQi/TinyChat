@@ -94,6 +94,8 @@ git clone --depth 1 https://github.com/deepseek-ai/chat-demo.git temp-doc/chat-d
 | 18 | Markdown 流式**只用** `rememberStreamingMarkdownState` + `append()`；禁用 `Markdown(String)` 重载与"逐帧换 state 驱动"（实测 42–61 次高度回缩，见 04 §3） |
 | 19 | 公式与图表统一走 **WebView 宿主 + 离线 KaTeX / mermaid.js**（共用一套高度回传与深色主题；纯 Compose LaTeX 库已排除） |
 | 20 | **界面文案禁用「·」作分隔符**（改用逗号/空格/竖线或拆行）；设置里系统提示词那行显示 `当前预设：默认` / `当前预设：自定义`，不写"5 个预设"这类说明 |
+| 21 | 依赖注入用**手写 `AppContainer`**，不引 Hilt（AGP 9 内置 Kotlin 下 Hilt 插桩未验证，且 M1 只有 3 个仓库；将来要换 Hilt 只是改构造参数） |
+| 22 | `messages.id` 用**全局 `AUTOINCREMENT`**，不做「会话内自增」；导入时按包内 id 重映射。v3 只要求会话内唯一且 parent 自洽，全局 id 满足 |
 
 ---
 
@@ -379,6 +381,27 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 
 - **M1-2 可直接照 04 号报告 §1 的边界清单实现**（离线固件已有 40 条断言可复用）。
 - 验收需要 Key：连续对话、思维链、停止、重发、版本切换。
+
+**M1 进展（滚动更新）**
+
+| 任务 | 状态 | 备注 |
+|---|---|---|
+| M1-0 工程补底 | 进行中 | KSP 2.3.14 + Room 2.8.5 + DataStore 1.3.0 已接；`core:data` 就绪；`core:net` 与 Key 存储待做 |
+| M1-1 Room schema + DAO + 迁移框架 | **完成** | 5 张表、schema v1 已生成入库、28 个单测全绿 |
+| M1-2 `SseReader` | 未开始 | 不依赖 Key |
+| M1-3 请求构建器 | 未开始 | 不依赖 Key（golden JSON） |
+| M1-4 碎片归并 | 未开始 | 不依赖 Key |
+| M1-5 及之后 | 未开始 | 真实联调需要 Key |
+
+**M1-1 的实测发现（已同步进 02 §3.1/3.2）**：
+
+1. 真实数据里存在 `TOOL_IMAGE_SEARCH`（3 条），§3.1 原枚举漏了它，**已补为第 10 类**，否则导入这 3 条会丢；
+2. `READ_LINK` 全库仅 3 条且 `results` 均为空数组，`signature` 的字段形状无法从数据实测 → 该 payload **整块按原始 JSON 保留**，保证「取到什么样、发回什么样」；
+3. `FILE.files[]` 在导出里带显式 `null`（`export_path`/`width`/`height`），我们编码时省略 null 字段，语义等价；
+4. 工具碎片的 `status` 实测三种值：`FINISHED` / `FAILED` / `WIP`，按字符串存，不做枚举硬判；
+5. `CONTENT_RISK`（4411 条）确认全部是同一句免责声明，**不入库**，导入时直接丢。
+
+**M1-1 与计划的偏差**：DAO 测试用 **Robolectric 4.18 跑 JVM 单测**（`@Config(sdk = [34])`），而不是 `androidTest`，因为 CI 只跑 `testDebugUnitTest`；session 列表索引按 (deleted, pinned, updated_at) **升序**建，混合方向索引 Room 表达不了，几千量级无影响。
 
 ### Step 3 起
 

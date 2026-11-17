@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // 不用 jvmToolchain(17)：本机只有 JDK 21，且 toolchain 自动下载没配仓库。
@@ -18,5 +19,6 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 dependencies {
+    api(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
 }

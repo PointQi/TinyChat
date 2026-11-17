@@ -105,16 +105,18 @@
 > ② 所有插件版本集中在 `settings.gradle.kts` 的 `pluginManagement.plugins {}`，根工程 `apply false` 统一解析；
 > ③ Compose 1.12.1 **强制要求 compileSdk ≥ 37**，M0-1 必须用 `sdkmanager` 正规装 `platforms;android-37`。
 
+> **M1-0 探针（2026-11-17 实测通过）**：`core:data` 接入 KSP **2.3.14** + Room **2.8.5**，AGP 9.5.1 内置 Kotlin + Kotlin 2.4.21 下首次即生成 `ProbeDatabase_Impl.kt`，无版本冲突。KSP 已与 Kotlin 版本解耦（2.3.x 为独立版本号，不再有 `<kotlin>-<ksp>` 双段格式）。
+
 | 用途 | 坐标 | 选型理由 |
 |---|---|---|
 | UI | `androidx.compose:compose-bom` + material3 | 统一管理 Compose 版本 |
 | 导航 | `androidx.navigation:navigation-compose` | 单 Activity + 类型安全路由 |
 | 状态 | `androidx.lifecycle:lifecycle-viewmodel-compose` | 与 Compose 原生配合 |
-| DI | `com.google.dagger:hilt-android` + `hilt-navigation-compose` | 多模块装配；备选：手写 `AppContainer`（更轻） |
+| DI | **手写 `AppContainer`**（不引 Hilt，见决策 21） | M1 只有 3 个仓库，手写成本 0.2d 且无编译期插桩风险 |
 | 序列化 | `org.jetbrains.kotlinx:kotlinx-serialization-json` | 请求体/碎片 JSON/预设文件 |
 | 网络 | `com.squareup.okhttp3:okhttp` | SSE 手写解析（见 §4.4） |
-| 数据库 | `androidx.room:room-runtime/ktx/compiler`(KSP) | 关系型 + 事务，适合消息树 |
-| 偏好 | `androidx.datastore:datastore-preferences` | 设置项；密钥另行加密 |
+| 数据库 | `androidx.room` **2.8.5**（`room-runtime/ktx/compiler` + KSP **2.3.14**） | 关系型 + 事务，适合消息树 |
+| 偏好 | `androidx.datastore:datastore-preferences` **1.3.0** | 设置项；密钥另行加密 |
 | 图片 | `io.coil-kt.coil3:coil-compose` | 附件缩略图/图片消息 |
 | Markdown | `com.mikepenz:multiplatform-markdown-renderer:0.46.0` + `-m3` | **只用 `rememberStreamingMarkdownState`（实测 0 次高度回缩）** |
 | 数学 | **WebView + 离线 KaTeX**（`assets/`） | 纯 Compose LaTeX 库依赖链断裂，已排除（04 §4） |
@@ -200,7 +202,7 @@ CREATE TABLE fragments (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id INTEGER NOT NULL,
   ord        INTEGER NOT NULL,
-  type       TEXT NOT NULL,     -- REQUEST/RESPONSE/THINK/TOOL_SEARCH/TOOL_OPEN/TOOL_FIND/READ_LINK/FILE/TEMPLATE_RESPONSE
+  type       TEXT NOT NULL,     -- REQUEST/RESPONSE/THINK/TOOL_SEARCH/TOOL_OPEN/TOOL_FIND/READ_LINK/FILE/TEMPLATE_RESPONSE/TOOL_IMAGE_SEARCH
   payload    TEXT NOT NULL,     -- kotlinx.serialization JSON
   FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
 );
@@ -243,6 +245,7 @@ CREATE TABLE prompt_presets (
 | `current_message_id` | 当前分支的叶子；渲染只走这条链 | 删除分支后必须重算 |
 | `messages.parent_id` | 同一 user 消息下的多个 assistant = 重新生成产生的兄弟 | 编辑提问 = 新建 user 兄弟，并把它的第一个 assistant 设为 current |
 | `fragments.type` | 与 v3 导出完全一致的枚举 | 新增类型必须同步导出映射，否则往返丢数据 |
+| `messages.id` | 全局自增（决策 22） | 不要按会话重算 `MAX(id)+1`；导入时按包内 id 重映射 |
 | `system_prompt_snapshot` | 创建时固化 | **只读**；全局设置改动不得回写 |
 | `cost_micros` | 见 §4.7 | 不用 Double，避免累加误差 |
 

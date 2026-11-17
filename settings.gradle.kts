@@ -17,6 +17,7 @@ pluginManagement {
         id("org.jetbrains.kotlin.jvm") version "2.4.21"
         id("org.jetbrains.kotlin.plugin.compose") version "2.4.21"
         id("org.jetbrains.kotlin.plugin.serialization") version "2.4.21"
+        id("com.google.devtools.ksp") version "2.3.14"
     }
 }
 
@@ -35,6 +36,8 @@ include(":app")
 include(":core:model")
 include(":core:designsystem")
 include(":core:ui")
+include(":core:data")
+include(":core:net")
 
 include(":feature:chat")
 include(":feature:sessions")
