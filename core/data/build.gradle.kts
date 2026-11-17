@@ -35,6 +35,7 @@ kotlin {
 
 dependencies {
     api(project(":core:model"))
+    api(project(":core:net"))
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

@@ -391,7 +391,10 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | M1-2 `SseReader` | **完成** | 9 个用例，Spike 固件原样搬入；四类边界全覆盖 |
 | M1-3 请求构建器 | **完成** | 10 条 golden JSON（对照 03 §6.1 原始报文）；`stream` 漏发的坑已修 |
 | M1-4 碎片归并 | **完成** | 12 个用例：6 种块、结果乱序配对、孤儿结果、未配对 WIP、拒答与错误帧 |
-| M1-5 及之后 | 未开始 | 真实联调需要 Key |
+| M1-5 流式落库与状态流转 | **完成** | 4 个用例；FINISHED/INCOMPLETE/CONTENT_FILTER/FAILED 全覆盖，取消也落 INCOMPLETE |
+| M1-6 会话 CRUD + 列表 | **部分** | 仓库层 `createSession/observeSessions` 已就绪；抽屉列表 UI 仍是假数据（M1-6 剩余） |
+| M1-7 发送/停止接线 | **完成** | 真机跑通：`hi` → 思考 + `Hi! How can I help you today?`（`m1-reply.png`） |
+| M1-8 及之后 | 未开始 | M1-10 之前上下文是朴素线性版 |
 
 **M1-1 的实测发现（已同步进 02 §3.1/3.2）**：
 
@@ -411,6 +414,16 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 4. 结果块先于调用块到达的极端情况进 `orphanResults` 暂存，调用块到达后立即补配对，**不允许出现重复碎片**；
 5. 未配对的调用在流结束时落成 `WIP` 碎片（用户中途停止的形态）；
 6. `stage_id` 暂用「已出现的思考块数量」近似，只为 M3-4 分组服务，不是协议字段。
+
+**M1-5/M1-7 的实测记录**：
+
+| 事项 | 说明 |
+|---|---|
+| 真实接口 | `LiveSmokeTest` 跑通一次（1.46s）。**默认跳过**，要跑设 `TINYCHAT_LIVE_TEST=1`，避免每次跑测试都花钱 |
+| 权限 | M0 的 Manifest 没有 `INTERNET`，真机一发就崩（`SecurityException` 直接打死 OkHttp 线程）→ 已补 `INTERNET` + `ACCESS_NETWORK_STATE` |
+| 开发期 Key | debug 构建从 `.local/dev-key.txt` 注入 `BuildConfig.DEV_API_KEY`；`.local/` 已 gitignore。M8-6 换成 Keystore+DataStore |
+| 渲染妥协 | 思维链目前是一行灰字全文，M2-7 改成可折叠的「思考了 N 秒」 |
+| 上下文 | `ChatRepository` 目前是**朴素线性版**（USER/可用 ASSISTANT 纯文本），M1-10 补六条规则 |
 
 ### Step 3 起
 

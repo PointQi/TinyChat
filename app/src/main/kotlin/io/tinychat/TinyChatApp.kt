@@ -10,15 +10,19 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.feature.chat.ChatScreen
+import io.tinychat.feature.chat.ChatViewModel
 import io.tinychat.feature.sessions.SessionsDrawerContent
 import io.tinychat.feature.settings.AboutScreen
 import io.tinychat.feature.settings.DataManagementScreen
@@ -44,9 +48,14 @@ object Routes {
 @Composable
 fun TinyChatApp() {
     val palette = TcTheme.palette
-    var hasApiKey by rememberSaveable { mutableStateOf(false) }
     var autoSpeak by rememberSaveable { mutableStateOf(false) }
     val promptPreset = PromptPreset.DEFAULT
+
+    val context = LocalContext.current
+    val container = remember { AppContainer(context.applicationContext) }
+    val chatViewModel: ChatViewModel = viewModel(
+        factory = ChatViewModel.factory(container.repository, container.apiKey),
+    )
 
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -58,7 +67,10 @@ fun TinyChatApp() {
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             SessionsDrawerContent(
-                onNewChat = { closeDrawer() },
+                onNewChat = {
+                    chatViewModel.newChat()
+                    closeDrawer()
+                },
                 onOpenSettings = {
                     closeDrawer()
                     navController.navigate(Routes.SETTINGS)
@@ -75,10 +87,14 @@ fun TinyChatApp() {
             NavHost(navController = navController, startDestination = Routes.CHAT) {
                 composable(Routes.CHAT) {
                     ChatScreen(
-                        hasApiKey = hasApiKey,
+                        state = chatViewModel.state,
+                        hasApiKey = chatViewModel.hasApiKey,
                         autoSpeak = autoSpeak,
+                        onInputChange = chatViewModel::onInputChange,
+                        onSend = chatViewModel::send,
+                        onStop = chatViewModel::stop,
                         onOpenDrawer = { scope.launch { drawerState.open() } },
-                        onNewChat = { },
+                        onNewChat = chatViewModel::newChat,
                         onToggleAutoSpeak = { autoSpeak = !autoSpeak },
                         onOpenProviderSettings = { navController.navigate(Routes.PROVIDER) },
                     )

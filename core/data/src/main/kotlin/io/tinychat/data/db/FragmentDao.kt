@@ -24,6 +24,17 @@ interface FragmentDao {
     @Query("UPDATE fragments SET payload = :payload WHERE id = :id")
     suspend fun updatePayload(id: Long, payload: String)
 
+    @Query("UPDATE fragments SET type = :type, payload = :payload WHERE id = :id")
+    suspend fun updateTypeAndPayload(id: Long, type: String, payload: String)
+
+    /** 流式落库用：按 (message_id, ord) 找已有行 */
+    @Query("SELECT id FROM fragments WHERE message_id = :messageId AND ord = :ord")
+    suspend fun idAt(messageId: Long, ord: Int): Long?
+
+    /** 拒绝/失败时按类型清理，例如拒答要丢掉已下发的思考与正文 */
+    @Query("DELETE FROM fragments WHERE message_id = :messageId AND type IN (:types)")
+    suspend fun deleteByTypes(messageId: Long, types: List<String>)
+
     /** 下一个可用 ord；空消息返回 0 */
     @Query("SELECT COALESCE(MAX(ord), -1) + 1 FROM fragments WHERE message_id = :messageId")
     suspend fun nextOrd(messageId: Long): Int

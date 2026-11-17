@@ -3,8 +3,10 @@ package io.tinychat.data.db
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import io.tinychat.model.MessageStatus
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface MessageDao {
@@ -23,6 +25,15 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE session_id = :sessionId ORDER BY inserted_at ASC, id ASC")
     suspend fun allInSession(sessionId: String): List<MessageEntity>
+
+    /** 会话页主查询：消息 + 碎片，流式过程中随库里变化自动刷新 */
+    @Transaction
+    @Query("SELECT * FROM messages WHERE session_id = :sessionId ORDER BY inserted_at ASC, id ASC")
+    fun observeWithFragments(sessionId: String): Flow<List<MessageWithFragments>>
+
+    @Transaction
+    @Query("SELECT * FROM messages WHERE session_id = :sessionId ORDER BY inserted_at ASC, id ASC")
+    suspend fun withFragments(sessionId: String): List<MessageWithFragments>
 
     /**
      * 某个节点下的子节点；同一 USER 下的多个 ASSISTANT 即「重新生成」产生的兄弟。

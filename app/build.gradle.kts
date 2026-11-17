@@ -15,14 +15,29 @@ android {
         versionName = "0.1.0-m0"
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // ⚠️ 仅供本机联调：从 .local/dev-key.txt（已 gitignore）注入开发用 Key。
+    // 正式版本走 M8-6 的服务商与 API Key 页，Key 存 Keystore 加密后的 DataStore。
+    val devKeyFile = rootProject.file(".local/dev-key.txt")
+    val devApiKey = if (devKeyFile.isFile) {
+        devKeyFile.readText().trim().replace("\\", "\\\\").replace("\"", "\\\"")
+    } else {
+        ""
+    }
+
     buildTypes {
+        debug {
+            buildConfigField("String", "DEV_API_KEY", "\"$devApiKey\"")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -40,6 +55,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core:model"))
+    implementation(project(":core:data"))
     implementation(project(":core:designsystem"))
     implementation(project(":core:ui"))
     implementation(project(":feature:chat"))
