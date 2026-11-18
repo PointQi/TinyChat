@@ -27,6 +27,8 @@ import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.listDepth
 import com.mikepenz.markdown.compose.elements.MarkdownBlockQuote
 import com.mikepenz.markdown.compose.elements.MarkdownBulletList
+import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
+import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownDivider
 import com.mikepenz.markdown.compose.elements.MarkdownOrderedList
 import com.mikepenz.markdown.compose.elements.MarkdownParagraph
@@ -88,6 +90,16 @@ internal fun tcMarkdownComponents(): MarkdownComponents = markdownComponents(
     setextHeading2 = { model -> TcHeading(model, model.typography.h2, MarkdownTokenTypes.SETEXT_CONTENT, top = 14.dp) },
     blockQuote = { model -> TcBlockQuote(model) },
     checkbox = { model -> TcCheckbox(model) },
+    codeFence = { model ->
+        MarkdownCodeFence(model.content, model.node, model.typography.code) { code, language, style ->
+            TcCodeBlock(code = code, language = language, style = style)
+        }
+    },
+    codeBlock = { model ->
+        MarkdownCodeBlock(model.content, model.node, model.typography.code) { code, language, style ->
+            TcCodeBlock(code = code, language = language, style = style)
+        }
+    },
     table = { model ->
         Box(modifier = Modifier.padding(vertical = 8.dp)) {
             MarkdownTable(content = model.content, node = model.node, style = model.typography.table)

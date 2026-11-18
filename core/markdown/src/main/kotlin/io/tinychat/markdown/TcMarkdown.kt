@@ -75,7 +75,10 @@ fun TcMarkdown(
             }
         }
 
-        CompositionLocalProvider(LocalBulletListHandler provides TcBulletHandler) {
+        CompositionLocalProvider(
+            LocalBulletListHandler provides TcBulletHandler,
+            LocalMarkdownStreaming provides streaming,
+        ) {
             Markdown(
                 streamingMarkdownState = state,
                 colors = tcMarkdownColors(),
