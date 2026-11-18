@@ -94,6 +94,7 @@ fun SessionsDrawerContent(
     val palette = TcTheme.palette
     var renaming by remember { mutableStateOf<SessionRow?>(null) }
     var deleting by remember { mutableStateOf<SessionRow?>(null) }
+    var confirmingBatchDelete by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -157,7 +158,7 @@ fun SessionsDrawerContent(
             SelectionActions(
                 enabled = state.selected.isNotEmpty(),
                 onPin = onPinSelected,
-                onDelete = onDeleteSelected,
+                onDelete = { confirmingBatchDelete = true },
             )
         } else {
             Spacer(Modifier.height(4.dp))
@@ -169,6 +170,34 @@ fun SessionsDrawerContent(
             )
         }
         Spacer(Modifier.height(12.dp))
+    }
+
+    if (confirmingBatchDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmingBatchDelete = false },
+            title = { Text("删除 ${state.selected.size} 个对话？", style = TcTypography.titleMedium, color = palette.labelPrimary) },
+            text = {
+                Text(
+                    text = "删除后将从列表移除。",
+                    style = TcTypography.bodyMedium,
+                    color = palette.labelSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmingBatchDelete = false
+                    onDeleteSelected()
+                }) {
+                    Text("删除", style = TcTypography.bodyMedium, color = palette.danger)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingBatchDelete = false }) {
+                    Text("取消", style = TcTypography.bodyMedium, color = palette.labelSecondary)
+                }
+            },
+            containerColor = palette.bg,
+        )
     }
 
     renaming?.let { row ->
