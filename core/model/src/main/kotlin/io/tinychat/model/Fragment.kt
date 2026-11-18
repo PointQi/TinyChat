@@ -1,4 +1,4 @@
-package io.tinychat.model
+﻿package io.tinychat.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -180,6 +180,13 @@ data class ToolImageSearchPayload(
 @Serializable
 data class ReadLinkPayload(
     val results: JsonArray? = null,
+    /**
+     * 调用侧 `server_tool_use` 整块（`id` / `name` / `input` / `caller` / `kind`）。
+     *
+     * 回放历史时必须与结果块成对发回去，否则服务端丢网页上下文。
+     * **本地字段**：v3 导出只写 `results`，这里的内容不进导出文件（M6 导出实现照此）。
+     */
+    val call: JsonObject? = null,
 ) : FragmentPayload {
     override val typeWire: String get() = FragmentType.READ_LINK.wire
 }

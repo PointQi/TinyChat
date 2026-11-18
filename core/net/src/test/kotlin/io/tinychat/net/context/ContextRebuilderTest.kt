@@ -1,13 +1,20 @@
-package io.tinychat.net.context
+﻿package io.tinychat.net.context
 
 import io.tinychat.model.Fragment
 import io.tinychat.model.Message
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.RequestPayload
+import io.tinychat.model.ReadLinkPayload
 import io.tinychat.model.ResponsePayload
 import io.tinychat.model.Role
 import io.tinychat.model.TemplateResponsePayload
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -45,6 +52,57 @@ class ContextRebuilderTest {
         ),
         fragments = listOf(Fragment(messageId = id, ord = 0, payload = ResponsePayload(text))) + extra,
     )
+
+    @Test
+    fun `read_link 的调用块与结果块成对回传，签名保留`() {
+        val call = buildJsonObject {
+            put("type", JsonPrimitive("server_tool_use"))
+            put("id", JsonPrimitive("srvtoolu_rl_01"))
+            put("name", JsonPrimitive("deepseek_web_fetch"))
+            put("kind", JsonPrimitive("read_link"))
+            put("input", buildJsonObject { put("action", JsonPrimitive("read_link")) })
+        }
+        val link = Fragment(
+            messageId = 2,
+            ord = 1,
+            payload = ReadLinkPayload(
+                results = JsonArray(
+                    listOf(
+                        buildJsonObject {
+                            put("type", JsonPrimitive("web_fetch_result"))
+                            put("url", JsonPrimitive("https://example.com/a"))
+                            put("signature", JsonPrimitive("q3J0b1RmZ1c4cE1x"))
+                        },
+                    ),
+                ),
+                call = call,
+            ),
+        )
+
+        val out = ContextRebuilder.build(
+            listOf(user(1, "读一下这个链接"), assistant(2, "读完了", extra = listOf(link))),
+            currentReminder = null,
+        )
+
+        val assistant = out.last()
+        val blocks = (assistant.content as JsonArray).map { it as JsonObject }
+        assertEquals(3, blocks.size)
+        assertEquals("text", (blocks[0]["type"] as JsonPrimitive).content)
+        // 调用块原样回传
+        assertEquals("srvtoolu_rl_01", (blocks[1]["id"] as JsonPrimitive).content)
+        // 结果块补回 tool_use_id 与签名，且不再把 signature 混在 content 里
+        assertEquals("web_fetch_tool_result", (blocks[2]["type"] as JsonPrimitive).content)
+        assertEquals("srvtoolu_rl_01", (blocks[2]["tool_use_id"] as JsonPrimitive).content)
+        assertEquals("q3J0b1RmZ1c4cE1x", (blocks[2]["signature"] as JsonPrimitive).content)
+        assertNull((blocks[2]["content"] as JsonObject)["signature"])
+    }
+
+    @Test
+    fun `没有 read_link 的轮次仍是纯文本消息`() {
+        val out = ContextRebuilder.build(listOf(user(1, "你好"), assistant(2, "你也好")), null)
+
+        assertTrue(out.last().content is JsonPrimitive)
+    }
 
     private fun roles(messages: List<io.tinychat.net.protocol.WireMessage>) = messages.map { it.role }
 

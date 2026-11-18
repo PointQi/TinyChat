@@ -426,8 +426,8 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | M1-8 消息树 | **完成** | 编辑重发（提问多版本）、重新生成（回答多版本）、‹ 2/3 › 版本切换；切换后指针落到目标分支叶子。分支算法在 `core/model/MessageBranch.kt`，6 个单测 |
 | M1-9 继续生成 | **完成** | 末尾 ASSISTANT 预填续写（thinking 关）；三个前置条件不满足就不给按钮；真机验证 3471→11761 字、ord 递增追加 |
 | M1-11 错误映射与重试 | **完成** | 11 类错误固定文案（`ErrorKind.userMessage`）；429 补一次、网络/5xx 最多两次、退避 1s/2s；**收到过帧就不再重试**（4 个 runner 用例锁死）；401 文案可点进设置 |
-| M1-13 签名回传 | **部分** | 思考签名已落库（\signature_delta\ → \messages.thinking_signature\，2 个用例）；\ead_link\ 的调用块配对与回传仍待做 |
-| M1-12 Files 客户端 | 未开始 | 上传拿 \ile_id\，只服务 M4 |
+| M1-13 签名回传 | **完成** | 思考签名落 `messages.thinking_signature`；`read_link` 的 `server_tool_use` 调用块整块进 `ReadLinkPayload.call`，重建历史时以 `[正文, 调用块, 结果块(含 signature)]` 成对回传（2 个重建用例） |
+| M1-12 Files 客户端 | 未开始 | 上传拿 `file_id`，只服务 M4 |
 
 **M1-10 上下文重建**：`core/net/context/ContextRebuilder.kt` + `ReminderBuilder.kt`，8 个用例。
 
@@ -436,7 +436,7 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | ① 沿当前分支线性回溯 | 完成（调用方按 root→leaf 传入） |
 | ② 只保留 USER+可用 ASSISTANT 成对轮次 | 完成（孤立 USER、失败轮次整轮跳过） |
 | ③ 可用判定（状态/拒答/模板块/空正文） | 完成 |
-| ④ 历史只回传正文、思考不回传 | **部分**：正文已做，`read_link` 的 `signature` 回传**未做** |
+| ④ 历史只回传正文、思考不回传 | 完成（M1-13）：正文 + `read_link` 调用/结果成对回传（含 signature），历史思考不回传 |
 | ⑤ reminder 快照去重 | 完成（`messages.reminder_snapshot` 落库） |
 | ⑥ 末尾接本轮 USER | 完成（附件块待 M4） |
 | ⑦ 继续生成补未完成 ASSISTANT | 完成：预填 assistant 末尾续写（M1-9） |

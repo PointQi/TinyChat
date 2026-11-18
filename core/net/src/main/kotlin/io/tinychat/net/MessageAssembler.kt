@@ -84,6 +84,9 @@ class MessageAssembler(
     private val slotByToolId = HashMap<String, Int>()
     private val pendingToolAction = HashMap<Int, String>()
     private val pendingToolInput = HashMap<Int, JsonObject>()
+
+    /** 调用块整块（`server_tool_use`）：read_link 回放时必须与结果成对发回 */
+    private val pendingToolCall = HashMap<Int, JsonObject>()
     /** 结果块先于调用块到达时的暂存：tool_use_id → (root, block) */
     private val orphanResults = HashMap<String, Pair<JsonObject, JsonObject>>()
     private var thinkingBlocks = 0
@@ -175,6 +178,7 @@ class MessageAssembler(
                 // ord 现在就占位，payload 等结果块到了再填
                 val slot = newSlot(null)
                 pendingToolAction[slot.ord] = action
+                pendingToolCall[slot.ord] = block
                 pendingToolInput[slot.ord] = (block["input"] as? JsonObject) ?: JsonObject(emptyMap())
                 if (toolId != null) {
                     slotByToolId[toolId] = slot.ord
@@ -280,7 +284,7 @@ class MessageAssembler(
                         put("url", pendingToolInput[ord].string("url") ?: "")
                     }
                 }
-                fill(ord, ReadLinkPayload(results = JsonArray(listOf(element))))
+                fill(ord, ReadLinkPayload(results = JsonArray(listOf(element)), call = pendingToolCall[ord]))
             }
 
             else -> {

@@ -7,6 +7,7 @@ import io.tinychat.model.ThinkPayload
 import io.tinychat.model.ToolOpenPayload
 import io.tinychat.model.ToolSearchPayload
 import okio.Buffer
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
@@ -124,6 +125,10 @@ class MessageAssemblerTest {
         assertTrue(result, result.contains("signature"))
         assertTrue(result, result.contains("q3J0b1RmZ1c4cE1x"))
         assertTrue(result, result.contains("https://example.com/a"))
+        // 调用块也要留着：回放历史时要与结果成对发回去
+        val call = payload.call!!
+        assertEquals("server_tool_use", call["type"]!!.jsonPrimitive.content)
+        assertTrue("调用块必须带 id", call["id"]!!.jsonPrimitive.content.isNotBlank())
     }
 
     @Test
