@@ -427,7 +427,7 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | M1-9 继续生成 | **完成** | 末尾 ASSISTANT 预填续写（thinking 关）；三个前置条件不满足就不给按钮；真机验证 3471→11761 字、ord 递增追加 |
 | M1-11 错误映射与重试 | **完成** | 11 类错误固定文案（`ErrorKind.userMessage`）；429 补一次、网络/5xx 最多两次、退避 1s/2s；**收到过帧就不再重试**（4 个 runner 用例锁死）；401 文案可点进设置 |
 | M1-13 签名回传 | **完成** | 思考签名落 `messages.thinking_signature`；`read_link` 的 `server_tool_use` 调用块整块进 `ReadLinkPayload.call`，重建历史时以 `[正文, 调用块, 结果块(含 signature)]` 成对回传（2 个重建用例） |
-| M1-12 Files 客户端 | 未开始 | 上传拿 `file_id`，只服务 M4 |
+| M1-12 Files 客户端 | **完成** | `FilesRequests` 拼 multipart（purpose 在 file 前）+ beta 头；`FilesClient.upload` 拿 `file_id`。**真实上传已验证**（`TINYCHAT_LIVE_TEST=1` 跑通，`user_data` 不计费）；5 个离线用例 |
 
 **M1-10 上下文重建**：`core/net/context/ContextRebuilder.kt` + `ReminderBuilder.kt`，8 个用例。
 
@@ -471,7 +471,7 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 
 | 事项 | 说明 |
 |---|---|
-| 真实接口 | `LiveSmokeTest` 跑通一次（1.46s）。**默认跳过**，要跑设 `TINYCHAT_LIVE_TEST=1`，避免每次跑测试都花钱 |
+| 真实接口 | `LiveSmokeTest` 跑通（1.46s）+ 文件上传跑通。**默认跳过**，要跑设 `TINYCHAT_LIVE_TEST=1`；注意 Gradle 常驻守护进程不带新环境变量，要加 `--no-daemon` 才会生效 |
 | 权限 | M0 的 Manifest 没有 `INTERNET`，真机一发就崩（`SecurityException` 直接打死 OkHttp 线程）→ 已补 `INTERNET` + `ACCESS_NETWORK_STATE` |
 | 开发期 Key | debug 构建从 `.local/dev-key.txt` 注入 `BuildConfig.DEV_API_KEY`；`.local/` 已 gitignore。M8-6 换成 Keystore+DataStore |
 | 渲染妥协 | 思维链目前是一行灰字全文，M2-7 改成可折叠的「思考了 N 秒」 |

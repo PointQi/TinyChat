@@ -1,10 +1,12 @@
-package io.tinychat.net
+﻿package io.tinychat.net
 
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.ResponsePayload
 import io.tinychat.net.protocol.ChatCommand
 import io.tinychat.net.protocol.DeepSeekMessagesProtocol
 import io.tinychat.net.protocol.WireMessage
+import io.tinychat.net.files.FilePurpose
+import io.tinychat.net.files.FilesClient
 import io.tinychat.net.transport.OkHttpChatTransport
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -57,6 +59,28 @@ class LiveSmokeTest {
         assertNotNull("应当拿到停止原因", assembler.stopReason)
         assertNotNull("应当拿到用量", assembler.usage)
         assertTrue("输出 token 应大于 0", assembler.usage!!.completionTokens > 0)
+    }
+
+    /**
+     * Files API 冒烟：上传一个几十字节的 txt（`user_data` 不计费），验证能拿到 `file_id`。
+     * 同样只在 TINYCHAT_LIVE_TEST=1 时跑。
+     */
+    @Test
+    fun `文件上传拿到 file_id`() = runBlocking {
+        assumeTrue("未开启真实接口测试（TINYCHAT_LIVE_TEST=1）", System.getenv("TINYCHAT_LIVE_TEST") == "1")
+        val key = readKey()
+        assumeTrue("未配置 .local/dev-key.txt，跳过真实接口测试", key != null)
+
+        val uploaded = FilesClient().upload(
+            apiKey = key!!,
+            fileName = "tinychat-smoke.txt",
+            mimeType = "text/plain",
+            bytes = "tinychat files api smoke test".toByteArray(),
+            purpose = FilePurpose.USER_DATA,
+        )
+
+        assertTrue("应当返回 file id：${uploaded.fileId}", uploaded.fileId.isNotBlank())
+        assertTrue("file id 形如 file-xxx：${uploaded.fileId}", uploaded.fileId.contains("file"))
     }
 
     /** 从模块目录向上找仓库根的 .local/dev-key.txt */
