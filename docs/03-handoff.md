@@ -513,6 +513,23 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | mermaid 缩放 | `useMaxWidth: false`（否则 mermaid 默认把图拉满容器，字号被放大）；显示端按位图长宽比 `aspectRatio` 等比铺满，超宽图缩到正文宽度 |
 | 渲染实验室 | `app/src/debug/`（release 不打包）：`adb shell am start -n io.tinychat/io.tinychat.debug.RenderLabActivity`，含 5 类图、错误态样例、`--ez dark true` 深色开关与「测耗时」（`TcRenderLab.benchMath` 冷启/稳态各一轮） |
 
+**M2-5 收尾待办（行内公式的「对齐 + 行距」，2026-11-18 停在这里）**
+
+现状：块级公式、```math、```mermaid、行内公式位图都已落地（提交 `e3df09c` → `a3d6355`），
+实验室里肉眼可见的问题有四个，都不是位图路线的硬限制：
+
+| # | 现象 | 原因 | 修法 |
+|---|---|---|---|
+| 1 | 行内公式中心比正文高一截 | 用 `PlaceholderVerticalAlign.AboveBaseline`（底边对基线），位图里公式的上下伸展不对称，再加位图多留了 3px 下边距 | 先换 `PlaceholderVerticalAlign.Center` 试；更准的做法是让 JS 返回「基线在图中的 y」（在公式前插 1px 基线探针取 `rect.bottom`），按基线裁位图 |
+| 2 | 公式偏小 | 传的是 `style.fontSize`（16sp），KaTeX 行内按 1em 排，x-height 比正文小 | `fontPx` 乘 1.12～1.15，位图仍 1:1 显示（不缩放，避免糊） |
+| 3 | **行距不会为公式让位**（用户重点问的） | Compose `Text` 的行高由 `TextStyle.lineHeight` 固定，内联内容再高也不撑行；现在固定 28sp | **逐段**动态行高：段落含公式时 `lineHeight = max(原行高, 最高公式位图高度 + 2dp)`；流式期间是源码文字（行高不变），结束后换图只变一次 |
+| 4 | `\sqrt[3]{x+1}` 行内根号被切 | 根号是 SVG 路径，会画到元素盒左侧 2–3px，位图从盒边切 | 已在 `host.js` 给行内 stage 加 `padding-left:4px`，**尚未真机验证** |
+
+验证方式（不截图、省上下文）：渲染实验室 `RenderLabActivity` 直接 `am start` 拉起（不用点屏幕），
+必要时用 `adb shell uiautomator dump` 看文本/尺寸，出图耗时用实验室「测耗时」按钮（`TcRenderLab.benchMath`）。
+
+其他已知项：深色主题（`--ez dark true`）未验；首帧 ≤300ms 未测；M2-3 抖动压测排在之后。
+
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**
 
 | 构建 | 渲染 | Janky | 50th | 95th |
