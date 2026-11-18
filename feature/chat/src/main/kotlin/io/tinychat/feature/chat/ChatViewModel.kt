@@ -1,4 +1,4 @@
-﻿package io.tinychat.feature.chat
+package io.tinychat.feature.chat
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +33,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -55,13 +56,29 @@ data class ToolStep(
     val items: List<String>,
 )
 
+/** 正文里的一处引用来源（M2-8） */
+data class ChatSource(
+    /** 角标编号，1 基，与正文内联角标一致 */
+    val index: Int,
+    /** 在全部正文里的字符偏移：角标插在这里 */
+    val anchor: Int,
+    val title: String?,
+    val url: String?,
+) {
+    /** 站点名：url 的 host 取主域，兜底用标题首字 */
+    val site: String
+        get() = url?.substringAfter("://")?.substringBefore('/')?.removePrefix("www.")
+            ?.takeIf { it.isNotBlank() }
+            ?: title?.take(1).orEmpty()
+}
+
 /** 会话页的一条消息（已从碎片拼好）。 */
 data class ChatMessage(
     val id: Long,
     val isUser: Boolean,
     val text: String,
-    /** 引用角标（正文里的 [n]） */
-    val citations: List<String>,
+    /** 引用来源（正文内联角标 + 末尾来源胶囊共用这一份） */
+    val sources: List<ChatSource>,
     /** 思维链时间轴；纯工具轮次也可能只有工具项 */
     val timeline: List<TimelineItem>,
     val thinkingSeconds: Double?,
@@ -132,8 +149,8 @@ class ChatViewModel(
     init {
         viewModelScope.launch {
             repository.recoverInterrupted()
-            // 冷启动恢复上次会话：没有就停在新对话（会话首次发送才落库）
-            repository.latestSession()?.let { openSession(it.id) }
+            // 冷启动**不**恢复上次会话（2026-11-18 定）：直接停在空白新对话，
+            // 历史都在抽屉里。之前读 updated_at 最大的那条自动进去，用户明确不要。
         }
         viewModelScope.launch {
             repository.observeSessions().collect { rows ->
@@ -520,7 +537,7 @@ class ChatViewModel(
                 id = message.id,
                 isUser = true,
                 text = request,
-                citations = emptyList(),
+                sources = emptyList(),
                 timeline = emptyList(),
                 thinkingSeconds = null,
                 isThinking = false,
@@ -532,9 +549,25 @@ class ChatViewModel(
             .filter { it.type == "RESPONSE" }
             .mapNotNull { FragmentPayloadCodec.decode(it.payload) as? ResponsePayload }
 
-        val text = responses.joinToString("") { it.content }
-        val citations = responses
-            .flatMap { it.citations?.mapNotNull { element -> element.jsonObject["title"]?.jsonPrimitive?.content } ?: emptyList() }
+        val textBuilder = StringBuilder()
+        val sources = mutableListOf<ChatSource>()
+        responses.forEach { response ->
+            textBuilder.append(response.content)
+            // 引用必然紧跟被引用的那段文字，且与本段正文同属一个 RESPONSE 碎片，
+            // 所以在「拼到这一段末尾」的位置记锚点就是精确位置（改协议或加导出字段都不必）
+            response.citations?.forEach { element ->
+                val obj = element.jsonObject
+                sources += ChatSource(
+                    index = sources.size + 1,
+                    // 锚点要落在「最后一个非空白字符之后」，否则会掉进段落之间的空行里，
+                    // 段落级渲染就贴不上角标了（实测：150 落在 71..148 与 166.. 之间）
+                    anchor = textBuilder.trimmedEnd(),
+                    title = obj["title"]?.jsonPrimitive?.contentOrNull,
+                    url = obj["url"]?.jsonPrimitive?.contentOrNull,
+                )
+            }
+        }
+        val text = textBuilder.toString()
 
         val timeline = buildTimeline(fragments)
         if (text.isBlank() && timeline.isEmpty()) return null
@@ -555,7 +588,7 @@ class ChatViewModel(
             id = message.id,
             isUser = false,
             text = text,
-            citations = citations,
+            sources = sources,
             timeline = timeline,
             thinkingSeconds = seconds,
             isThinking = message.status == MessageStatus.WIP,
@@ -564,7 +597,14 @@ class ChatViewModel(
         )
     }
 
-    /** 把 THINK 与工具碎片按 ord 顺序排成时间轴；连续的浏览合并成一条 */
+    /** 最后一个非空白字符之后的位置（不含行尾空白） */
+private fun StringBuilder.trimmedEnd(): Int {
+    var i = length
+    while (i > 0 && this[i - 1].isWhitespace()) i--
+    return i
+}
+
+/** 把 THINK 与工具碎片按 ord 顺序排成时间轴；连续的浏览合并成一条 */
     private fun buildTimeline(fragments: List<FragmentEntity>): List<TimelineItem> {
         val items = mutableListOf<TimelineItem>()
         val buffer = StringBuilder()

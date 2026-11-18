@@ -12,6 +12,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -64,6 +66,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
@@ -77,6 +81,8 @@ import io.tinychat.designsystem.BubbleShape
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
+import io.tinychat.markdown.CitationAnchor
+import io.tinychat.markdown.SourceBadge
 import io.tinychat.markdown.TcMarkdown
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.MessageStatus
@@ -396,6 +402,7 @@ private fun MessageRow(
 
     var menuOpen by remember { mutableStateOf(false) }
     var selectOpen by remember { mutableStateOf(false) }
+    var sourcesOpen by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     Box {
@@ -419,10 +426,15 @@ private fun MessageRow(
                 TcMarkdown(
                     content = message.text,
                     streaming = message.status == MessageStatus.WIP,
+                    citations = message.sources.map { CitationAnchor(it.anchor, it.index) },
+                    onCitationClick = { sourcesOpen = true },
                 )
-                if (message.citations.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    CitationChips(message.citations)
+                if (message.sources.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    SourceCapsule(
+                        sources = message.sources,
+                        onClick = { sourcesOpen = true },
+                    )
                 }
             }
 
@@ -512,6 +524,121 @@ private fun MessageRow(
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+
+    if (sourcesOpen) {
+        SourceSheet(
+            sources = message.sources,
+            sheetState = sheetState,
+            onDismiss = { sourcesOpen = false },
+        )
+    }
+}
+
+/**
+ * 来源列表（M2-8 的临时壳子：点角标/胶囊都落到这里）。
+ * M3-3 会换成「搜索结果抽屉」，带日期、摘要与序号定位，这里只保证有落点。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SourceSheet(
+    sources: List<ChatSource>,
+    sheetState: androidx.compose.material3.SheetState,
+    onDismiss: () -> Unit,
+) {
+    val palette = TcTheme.palette
+    val uriHandler = LocalUriHandler.current
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = palette.bg,
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text(
+                text = "参考来源（${sources.size}）",
+                style = TcTypography.titleMedium,
+                color = palette.labelPrimary,
+            )
+            Spacer(Modifier.height(12.dp))
+            sources.forEach { source ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            source.url?.let { runCatching { uriHandler.openUri(it) } }
+                        }
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(palette.inlineCodeBg),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = source.index.toString(),
+                            fontSize = 10.sp,
+                            color = palette.labelSecondary,
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = source.title ?: source.site,
+                            style = TcTypography.bodyMedium,
+                            color = palette.labelPrimary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = source.site,
+                            style = TcTypography.labelSmall,
+                            color = palette.labelTertiary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 正文末尾的来源聚合胶囊：图标堆叠 + `N 个网页`（M2-8） */
+@Composable
+private fun SourceCapsule(
+    sources: List<ChatSource>,
+    onClick: () -> Unit,
+) {
+    val palette = TcTheme.palette
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(100.dp))
+            .border(1.dp, palette.borderL2, RoundedCornerShape(100.dp))
+            .clickable(onClick = onClick)
+            .padding(start = 6.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 站点首字母堆叠：同一站点只出现一次，最多 3 个
+        sources.distinctBy { it.site }.take(3).forEach { source ->
+            Box(modifier = Modifier.size(16.dp)) {
+                SourceBadge(letter = source.site.take(1).uppercase())
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "${sources.size} 个网页",
+            style = TcTypography.labelSmall,
+            color = palette.labelSecondary,
+        )
     }
 }
 
@@ -781,25 +908,6 @@ private fun SiteStack(items: List<String>) {
                 contentAlignment = Alignment.Center,
             ) {
                 Text(text = "+", fontSize = 8.sp, color = palette.bg)
-            }
-        }
-    }
-}
-
-/** 引用角标（§13）：上标数字，点击留给 M3-3 的来源面板 */
-@Composable
-private fun CitationChips(citations: List<String>) {
-    val palette = TcTheme.palette
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        citations.forEachIndexed { index, title ->
-            Box(
-                modifier = Modifier
-                    .size(width = 20.dp, height = 16.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(palette.inlineCodeBg),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "${index + 1}", fontSize = 10.sp, color = palette.labelSecondary)
             }
         }
     }

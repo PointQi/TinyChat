@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.ui.text.buildAnnotatedString
+import com.mikepenz.markdown.annotator.annotatorSettings
+import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Path
@@ -51,11 +55,7 @@ import org.intellij.markdown.ast.getTextInNode
 @Composable
 internal fun tcMarkdownComponents(): MarkdownComponents = markdownComponents(
     paragraph = { model ->
-        MarkdownParagraph(
-            content = model.content,
-            node = model.node,
-            modifier = Modifier.padding(vertical = LocalBlockSpacing.current),
-        )
+        TcParagraph(model)
     },
     orderedList = { model ->
         // 列表项里的段落不再额外加块间距，否则每项之间会空出 12dp
@@ -121,6 +121,34 @@ internal val LocalBlockSpacing = staticCompositionLocalOf { 6.dp }
 
 /** 列表符号与正文之间的空隙：比库自带的 `"• "` 后面的空格更紧凑可控 */
 private val listMarkerModifier: RowScope.() -> Modifier = { Modifier.padding(end = 6.dp) }
+
+/**
+ * 段落：库默认只把文字交给 MarkdownParagraph；这里多一步 —— 把落在本段范围内的引用锚点
+ * 以**内联占位符**贴到段末（`appendInlineContent` 不带 altText，插入的是占位符而不是数字）。
+ */
+@Composable
+private fun TcParagraph(model: MarkdownComponentModel) {
+    val anchors = LocalCitationAnchors.current
+    val mine = anchorsIn(anchors, model.node.startOffset, model.node.endOffset)
+    val settings = annotatorSettings()
+    val text = buildAnnotatedString {
+        pushStyle(model.typography.paragraph.toSpanStyle())
+        buildMarkdownAnnotatedString(
+            content = model.content,
+            node = model.node,
+            annotatorSettings = settings,
+        )
+        pop()
+        mine.forEach { anchor -> appendInlineContent(CitationTagPrefix + anchor.index) }
+    }
+
+    MarkdownText(
+        content = text,
+        node = model.node,
+        modifier = Modifier.padding(vertical = LocalBlockSpacing.current),
+        style = model.typography.paragraph,
+    )
+}
 
 @Composable
 private fun TcHeading(

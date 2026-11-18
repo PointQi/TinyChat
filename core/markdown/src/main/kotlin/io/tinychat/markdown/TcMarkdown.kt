@@ -50,12 +50,15 @@ fun TcMarkdown(
     content: String,
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
+    citations: List<CitationAnchor> = emptyList(),
+    onCitationClick: ((Int) -> Unit)? = null,
 ) {
     var generation by remember { mutableIntStateOf(0) }
     val merger = remember { FrameMerger() }
     // 只有真含行内代码时才启用圆角画笔：没有反引号的正文可以省掉
     // extend() / onTextLayout / drawBehind 这一整条链路
     val withInlineCode = remember(content) { content.contains('`') }
+    val inlineContent = citationInlineContent(citations, onCitationClick)
 
     key(generation) {
         val state = rememberStreamingMarkdownState()
@@ -89,6 +92,7 @@ fun TcMarkdown(
         CompositionLocalProvider(
             LocalBulletListHandler provides TcBulletHandler,
             LocalMarkdownStreaming provides streaming,
+            LocalCitationAnchors provides citations,
         ) {
             Markdown(
                 streamingMarkdownState = state,
@@ -98,6 +102,7 @@ fun TcMarkdown(
                 dimens = tcMarkdownDimens(),
                 modifier = modifier.fillMaxWidth(),
                 components = tcMarkdownComponents(),
+                inlineContent = inlineContent,
                 // 行内代码的灰底由自己的画笔绘制：库自带画笔拿「行盒」当矩形，
                 // 14sp 的字被 28sp 行高的灰条压住，首行与续行的裁切量还不一样。
                 extendedSpans = inlineCodeSpans(withInlineCode),
