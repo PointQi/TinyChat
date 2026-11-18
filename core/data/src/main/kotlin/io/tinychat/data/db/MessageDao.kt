@@ -1,4 +1,4 @@
-package io.tinychat.data.db
+﻿package io.tinychat.data.db
 
 import androidx.room.Dao
 import androidx.room.Insert
@@ -51,6 +51,10 @@ interface MessageDao {
 
     @Query("UPDATE messages SET status = :status WHERE id = :id")
     suspend fun setStatus(id: Long, status: MessageStatus)
+
+    /** 思考块签名（仅本地，不导出）：续写本轮思考时要原样回传 */
+    @Query("UPDATE messages SET thinking_signature = :signature WHERE id = :id")
+    suspend fun setThinkingSignature(id: Long, signature: String)
 
     @Query("SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id = :sessionId")
     suspend fun maxIdInSession(sessionId: String): Long

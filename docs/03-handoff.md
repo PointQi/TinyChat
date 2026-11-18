@@ -426,7 +426,8 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | M1-8 消息树 | **完成** | 编辑重发（提问多版本）、重新生成（回答多版本）、‹ 2/3 › 版本切换；切换后指针落到目标分支叶子。分支算法在 `core/model/MessageBranch.kt`，6 个单测 |
 | M1-9 继续生成 | **完成** | 末尾 ASSISTANT 预填续写（thinking 关）；三个前置条件不满足就不给按钮；真机验证 3471→11761 字、ord 递增追加 |
 | M1-11 错误映射与重试 | **完成** | 11 类错误固定文案（`ErrorKind.userMessage`）；429 补一次、网络/5xx 最多两次、退避 1s/2s；**收到过帧就不再重试**（4 个 runner 用例锁死）；401 文案可点进设置 |
-| M1-13/1-12 | 未开始 | read_link 签名回传、Files 客户端 |
+| M1-13 签名回传 | **部分** | 思考签名已落库（\signature_delta\ → \messages.thinking_signature\，2 个用例）；\ead_link\ 的调用块配对与回传仍待做 |
+| M1-12 Files 客户端 | 未开始 | 上传拿 \ile_id\，只服务 M4 |
 
 **M1-10 上下文重建**：`core/net/context/ContextRebuilder.kt` + `ReminderBuilder.kt`，8 个用例。
 

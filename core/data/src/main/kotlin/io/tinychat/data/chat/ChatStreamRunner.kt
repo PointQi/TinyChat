@@ -162,6 +162,10 @@ class ChatStreamRunner(
             )
         }
 
+        assembler.thinkingSignature?.let { signature ->
+            runCatching { messageDao.setThinkingSignature(messageId, signature) }
+        }
+
         val usage = assembler.usage
         val entity = messageDao.byId(messageId)
         if (entity != null) {

@@ -1,4 +1,4 @@
-package io.tinychat.net
+﻿package io.tinychat.net
 
 import io.tinychat.model.Fragment
 import io.tinychat.model.FragmentPayload
@@ -87,6 +87,13 @@ class MessageAssembler(
     /** 结果块先于调用块到达时的暂存：tool_use_id → (root, block) */
     private val orphanResults = HashMap<String, Pair<JsonObject, JsonObject>>()
     private var thinkingBlocks = 0
+
+    /** 思考块的签名（`signature_delta`），按 ord 记；续写那一轮要原样回传 */
+    private val signatures = mutableMapOf<Int, StringBuilder>()
+
+    /** 本轮最后一个思考签名（落到 messages.thinking_signature，仅本地） */
+    var thinkingSignature: String? = null
+        private set
     private var toolCalls = 0
     private var fetchCalls = 0
 
@@ -312,11 +319,23 @@ class MessageAssembler(
         when (delta.string("type")) {
             "thinking_delta" -> appendThinking(ord, delta.string("thinking") ?: "")
             "text_delta" -> appendText(ord, delta.string("text") ?: "")
-            "signature_delta" -> Unit // 思考的 signature 仅本轮续写需要，M1-9 再处理
+            "signature_delta" -> onSignature(ord, delta.string("signature") ?: "")
             "citations_delta" -> appendCitation(ord, delta["citation"])
             "input_json_delta" -> unknownEvents += "input_json_delta@$index"
             else -> unknownEvents += "delta:${delta.string("type")}"
         }
+    }
+
+    /**
+     * `signature_delta` 表示这一段思考结束时的签名。
+     *
+     * 签名是对整块内容签的，**截断后回传必然不匹配**，所以它只能用于「整块回放」，
+     * 不能用来从中间续写（用户问过这个问题，结论记在 02 §5.1）。
+     */
+    private fun onSignature(ord: Int, signature: String) {
+        val buffer = signatures.getOrPut(ord) { StringBuilder() }
+        buffer.append(signature)
+        thinkingSignature = buffer.toString()
     }
 
     private fun onBlockStop(root: JsonObject) {        val index = root.int("index") ?: return

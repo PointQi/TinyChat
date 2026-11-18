@@ -178,6 +178,14 @@ class ChatStreamRunnerTest {
         assertTrue("取消前的内容必须留住", db.fragmentDao().byMessage(id).isNotEmpty())
     }
 
+    @Test
+    fun `思考签名落到 thinking_signature 列`() = runBlocking {
+        val id = newAssistantMessage()
+        runner().run(id, request(), FakeTransport(sse(SEARCH_STREAM)))
+
+        assertEquals("sig_abcdefghij", db.messageDao().byId(id)!!.thinkingSignature)
+    }
+
     // —— M1-11 自动重试 ——
 
     @Test
@@ -254,6 +262,9 @@ data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"
 
 event: content_block_delta
 data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"先查一下。"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abcdefghij"}}
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":0}

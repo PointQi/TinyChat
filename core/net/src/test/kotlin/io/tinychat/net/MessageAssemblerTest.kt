@@ -1,4 +1,4 @@
-package io.tinychat.net
+﻿package io.tinychat.net
 
 import io.tinychat.model.FragmentType
 import io.tinychat.model.ReadLinkPayload
@@ -8,6 +8,7 @@ import io.tinychat.model.ToolOpenPayload
 import io.tinychat.model.ToolSearchPayload
 import okio.Buffer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -58,6 +59,21 @@ class MessageAssemblerTest {
         )
         assertEquals(1, (fragments[3].payload as ResponsePayload).citations?.size)
         assertEquals("\n2. 输出 384K", (fragments[4].payload as ResponsePayload).content)
+    }
+
+    @Test
+    fun `思考签名被捕获，供整块回放使用`() {
+        // 签名是整块签的：只能整块回放，不能拿它做「截断续写」
+        assertEquals("sig_abcdefghij", assemble(SseFixtures.SEARCH_STREAM).thinkingSignature)
+    }
+
+    @Test
+    fun `没有签名的一段流不会编出签名`() {
+        val raw = frame(
+            "content_block_start",
+            """{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}""",
+        )
+        assertNull(assemble(raw).thinkingSignature)
     }
 
     @Test
