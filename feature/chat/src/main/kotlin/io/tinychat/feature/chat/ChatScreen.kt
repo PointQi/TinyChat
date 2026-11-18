@@ -1,5 +1,13 @@
 package io.tinychat.feature.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -48,6 +56,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.shadow
@@ -593,17 +602,42 @@ private fun ThinkingBlock(
                 modifier = Modifier.size(16.dp),
             )
             Spacer(Modifier.width(6.dp))
-            Text(text = label, style = TcTypography.bodyMedium, color = palette.labelSecondary)
+            // 文案切换（正在思考 → 已思考（用时 N 秒））用淡入淡出，别硬跳
+            Crossfade(
+                targetState = label,
+                animationSpec = tween(durationMillis = 180),
+                label = "thinking-label",
+            ) { text ->
+                Text(text = text, style = TcTypography.bodyMedium, color = palette.labelSecondary)
+            }
             Spacer(Modifier.width(4.dp))
+            // 一个图标转 90°：收起是 ›，展开是 ˅（官方就是这个手感，别用两张图硬切）
+            val chevronRotation by animateFloatAsState(
+                targetValue = if (expanded) 90f else 0f,
+                animationSpec = tween(durationMillis = 180),
+                label = "thinking-chevron",
+            )
             Icon(
-                imageVector = if (expanded) TcIcons.ChevronDown else TcIcons.ChevronRight,
+                imageVector = TcIcons.ChevronRight,
                 contentDescription = if (expanded) "收起思维链" else "展开思维链",
                 tint = palette.labelTertiary,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier
+                    .size(16.dp)
+                    .rotate(chevronRotation),
             )
         }
 
-        if (expanded) {
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(
+                animationSpec = tween(durationMillis = 200),
+                expandFrom = Alignment.Top,
+            ) + fadeIn(animationSpec = tween(durationMillis = 200)),
+            exit = shrinkVertically(
+                animationSpec = tween(durationMillis = 180),
+                shrinkTowards = Alignment.Top,
+            ) + fadeOut(animationSpec = tween(durationMillis = 120)),
+        ) {
             Row(
                 modifier = Modifier
                     .padding(top = 6.dp)
