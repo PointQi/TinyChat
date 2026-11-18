@@ -25,7 +25,16 @@
 
   function ensureKatex() {
     if (katexReady) return Promise.resolve();
-    return loadScript('../katex/katex.min.js').then(function () { katexReady = true; });
+    return loadScript('../katex/katex.min.js').then(function () {
+      katexReady = true;
+      // KaTeX 的数学字体按需加载：不显式 load，首图会拿回退字体画（根号空白、上标错位）
+      var families = ['KaTeX_Main', 'KaTeX_Math', 'KaTeX_Size1', 'KaTeX_Size2', 'KaTeX_Size3',
+        'KaTeX_Size4', 'KaTeX_AMS', 'KaTeX_Caligraphic', 'KaTeX_Script', 'KaTeX_Fraktur',
+        'KaTeX_SansSerif', 'KaTeX_Typewriter'];
+      return Promise.all(families.map(function (family) {
+        return document.fonts.load('16px ' + family).catch(function () {});
+      }));
+    });
   }
 
   function ensureMermaid() {

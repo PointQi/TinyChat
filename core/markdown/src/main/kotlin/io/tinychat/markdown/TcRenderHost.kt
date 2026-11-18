@@ -131,19 +131,33 @@ internal object TcRenderHost {
         if (bridged == null) return Result(null, error = "渲染超时")
         if (!bridged.ok) return Result(null, bridged.widthPx, bridged.heightPx, bridged.error)
 
-        // 回传的是 CSS px，折回物理像素；+2px 防亚像素把笔画切掉
-        val width = (bridged.widthPx * scale).toInt().coerceIn(1, MAX_SIDE_PX)
-        var height = ((bridged.heightPx + 2) * scale).toInt().coerceIn(1, MAX_SIDE_PX)
+        // 回传的是 CSS px，折回物理像素。display 模式直接用请求宽度（页面本身按整宽排版）；
+        // 行内模式用实测宽 + 内边距，KaTeX 的上标/根号会探出元素盒，不留边就被切掉。
+        var width = if (request.display) {
+            request.widthPx.coerceIn(1, MAX_SIDE_PX)
+        } else {
+            ((bridged.widthPx + 3) * scale).toInt().coerceIn(1, MAX_SIDE_PX)
+        }
+        var height = ((bridged.heightPx + 3) * scale).toInt().coerceIn(1, MAX_SIDE_PX)
 
         // 量完再改尺寸会让页面重排一次，公式换行后可能比第一次更高（实测被裁掉半行）。
-        // 所以改完尺寸**再量一次**，只增不减，最多补两轮。
+        // 所以改完尺寸**再量一次**，宽高都只增不减，最多补两轮。
         for (round in 0 until 2) {
             layout(view, width, height)
             delay(RESIZE_SETTLE_MS)
             val measured = evaluateAndAwait(view, "window.tcMeasure($id)") ?: break
-            val needed = ((measured.heightPx + 2) * scale).toInt()
-            if (needed <= height) break
-            height = needed.coerceIn(1, MAX_SIDE_PX)
+            val needW = ((measured.widthPx + 3) * scale).toInt()
+            val needH = ((measured.heightPx + 3) * scale).toInt()
+            var grown = false
+            if (!request.display && needW > width) {
+                width = needW.coerceIn(1, MAX_SIDE_PX)
+                grown = true
+            }
+            if (needH > height) {
+                height = needH.coerceIn(1, MAX_SIDE_PX)
+                grown = true
+            }
+            if (!grown) break
         }
         layout(view, width, height)
         delay(RESIZE_SETTLE_MS)

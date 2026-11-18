@@ -175,13 +175,21 @@ private fun TcParagraph(model: MarkdownComponentModel) {
         pop()
         mine.forEach { anchor -> appendInlineContent(CitationTagPrefix + anchor.index) }
     }
-    // 行内公式：先只吞掉 `$` 定界符（宽度稳定、零异步）。位图升级要等内联内容
-    // 的尺寸先量出来，那一步单独做，别混在流式路径里。
+    // 行内公式：流式中只吞 `$`（宽度稳定），消息结束后升级成 KaTeX 内联位图
     val formulas = remember(built) { findInlineMath(built.text) }
-    val text = remember(formulas) { built.applyInlineMath(formulas, replace = false) }
+    if (formulas.isNotEmpty()) {
+        InlineMathParagraph(
+            built = built,
+            formulas = formulas,
+            streaming = LocalMarkdownStreaming.current,
+            style = model.typography.paragraph,
+            modifier = Modifier.padding(vertical = LocalBlockSpacing.current),
+        )
+        return
+    }
 
     MarkdownText(
-        content = text,
+        content = built,
         node = model.node,
         modifier = Modifier.padding(vertical = LocalBlockSpacing.current),
         style = model.typography.paragraph,
