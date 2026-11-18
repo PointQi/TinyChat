@@ -11,6 +11,7 @@ import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.db.FragmentEntity
 import io.tinychat.data.db.MessageWithFragments
 import io.tinychat.model.FragmentPayloadCodec
+import io.tinychat.model.BranchNode
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.RequestPayload
@@ -23,6 +24,7 @@ import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ToolFindPayload
 import io.tinychat.model.ToolOpenPayload
 import io.tinychat.model.ToolSearchPayload
+import io.tinychat.model.versionPointer
 import io.tinychat.net.transport.ChatException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -63,6 +65,9 @@ data class ChatMessage(
     val thinkingSeconds: Double?,
     val isThinking: Boolean,
     val status: MessageStatus,
+    /** 同一条提问下的第几版回答 / 同一位置的第几次提问（1 基）；只有一版时为 1/1 */
+    val versionIndex: Int = 1,
+    val versionCount: Int = 1,
 ) {
     val hasThinking: Boolean get() = timeline.isNotEmpty()
 }
@@ -282,6 +287,34 @@ class ChatViewModel(
         state = state.copy(editingMessageId = null, input = "")
     }
 
+    /** 切换版本（M1-8）：只在有兄弟分支时有效；指针换到那条分支的叶子上 */
+    fun switchVersion(messageId: Long, delta: Int) {
+        val id = sessionId ?: return
+        if (state.isStreaming) return
+        viewModelScope.launch { repository.switchVersion(id, messageId, delta) }
+    }
+
+    /** 重新生成（M1-8）：在当前这条回答下再生成一版，旧版留着可切回 */
+    fun regenerate(message: ChatMessage) {
+        val id = sessionId ?: return
+        if (state.isStreaming || message.isUser) return
+
+        state = state.copy(isStreaming = true, error = null)
+        job = viewModelScope.launch {
+            try {
+                repository.regenerate(id, message.id, apiKey)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ChatException) {
+                state = state.copy(error = e.message ?: "重新生成失败")
+            } catch (e: Exception) {
+                state = state.copy(error = e.message ?: "重新生成失败")
+            } finally {
+                state = state.copy(isStreaming = false)
+            }
+        }
+    }
+
     /** 复制整个会话（纯文本，用户/AI 交替） */
     fun conversationText(): String = buildString {
         state.messages.forEach { message ->
@@ -355,8 +388,14 @@ class ChatViewModel(
                 .collect { (rows, session) ->
                     // 只渲染**当前分支**：从 current_message_id 往回走
                     val chain = chainOf(rows, session?.currentMessageId)
+                    val branchNodes = rows.map {
+                        BranchNode(it.message.id, it.message.parentId, it.message.insertedAt)
+                    }
                     state = state.copy(
-                        messages = chain.mapNotNull { it.toChatMessage() },
+                        messages = chain.mapNotNull { entry ->
+                            val (index, count) = versionPointer(branchNodes, entry.message.id)
+                            entry.toChatMessage()?.copy(versionIndex = index, versionCount = count)
+                        },
                         title = session?.title,
                     )
                 }

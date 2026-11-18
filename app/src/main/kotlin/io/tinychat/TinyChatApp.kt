@@ -122,6 +122,8 @@ fun TinyChatApp() {
                         onEditMessage = chatViewModel::startEdit,
                         onCancelEdit = chatViewModel::cancelEdit,
                         conversationText = chatViewModel::conversationText,
+                        onSwitchVersion = chatViewModel::switchVersion,
+                        onRegenerate = chatViewModel::regenerate,
                     )
                 }
                 composable(Routes.SETTINGS) {

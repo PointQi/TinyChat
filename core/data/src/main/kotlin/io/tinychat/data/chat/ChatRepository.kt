@@ -7,9 +7,11 @@ import io.tinychat.data.db.TinyChatDatabase
 import io.tinychat.data.db.toDomain
 import io.tinychat.data.db.toEntity
 import io.tinychat.model.Fragment
+import io.tinychat.model.BranchNode
 import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
+import io.tinychat.model.pickVersion
 import io.tinychat.model.PromptMode
 import io.tinychat.model.RequestPayload
 import io.tinychat.model.ResponsePayload
@@ -189,6 +191,50 @@ class ChatRepository(
         return sendInternal(session, original.parentId, text, apiKey)
     }
 
+    /**
+     * 重新生成（M1-8）：在同一条提问下再挂一条 ASSISTANT 兄弟，旧回答留着当版本。
+     *
+     * 不新建用户消息，上下文回溯到那条提问为止，再按原样把提问追加回请求。
+     */
+    suspend fun regenerate(
+        sessionId: String,
+        assistantMessageId: Long,
+        apiKey: String,
+    ): RunOutcome {
+        val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
+        val original = db.messageDao().byId(assistantMessageId) ?: error("消息不存在：$assistantMessageId")
+        val userMessageId = original.parentId ?: error("这条回答没有对应的提问，无法重新生成")
+        val question = db.messageDao().byId(userMessageId) ?: error("找不到对应的提问：$userMessageId")
+
+        val userText = db.fragmentDao().byMessage(userMessageId)
+            .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
+            .joinToString("")
+        if (userText.isBlank()) error("这条回答对应的提问内容为空，无法重新生成")
+
+        return streamAssistant(
+            session = session,
+            userMessageId = userMessageId,
+            userText = userText,
+            // 沿用当时那条提问的元信息快照，避免上下文里凭空多出一条新的 reminder
+            reminder = question.reminderSnapshot ?: ReminderBuilder.build(date = LocalDate.now(), location = null),
+            apiKey = apiKey,
+        )
+    }
+
+    /**
+     * 切换版本（M1-8）：把当前分支指针移到 [messageId] 的相邻兄弟分支，落到那条分支的叶子上。
+     *
+     * @return 新的叶子消息 id；只有一版时返回 null
+     */
+    suspend fun switchVersion(sessionId: String, messageId: Long, delta: Int): Long? {
+        val nodes = db.messageDao().withFragments(sessionId).map {
+            BranchNode(it.message.id, it.message.parentId, it.message.insertedAt)
+        }
+        val leaf = pickVersion(nodes, messageId, delta) ?: return null
+        db.sessionDao().setCurrentMessage(sessionId, leaf.id, clock())
+        return leaf.id
+    }
+
     private suspend fun sendInternal(
         session: SessionEntity,
         parentId: Long?,
@@ -196,14 +242,10 @@ class ChatRepository(
         apiKey: String,
     ): RunOutcome {
         val sessionId = session.id
-        val modelInfo = KnownProviders.deepSeek.model(session.model) ?: KnownProviders.flash
         val now = clock()
 
         // 本轮的用户元信息（02 §5.4）；地点暂未接设置项，留空但保留逗号
         val reminder = ReminderBuilder.build(date = LocalDate.now(), location = null)
-
-        // 上下文只取**当前分支**（root → parentId），别把废弃分支带进去
-        val history = chainTurns(sessionId, parentId)
 
         val userId = db.messageDao().insert(
             MessageEntity(
@@ -219,20 +261,48 @@ class ChatRepository(
         )
         db.fragmentDao().insert(Fragment(messageId = userId, ord = 0, payload = RequestPayload(text)).toEntity())
 
+        return streamAssistant(
+            session = session,
+            userMessageId = userId,
+            userText = text,
+            reminder = reminder,
+            apiKey = apiKey,
+            assistantInsertedAt = now + 1,
+        )
+    }
+
+    /**
+     * 在一条**已存在的**提问下流式生成回答：发送与重新生成共用这一段。
+     */
+    private suspend fun streamAssistant(
+        session: SessionEntity,
+        userMessageId: Long,
+        userText: String,
+        reminder: String?,
+        apiKey: String,
+        assistantInsertedAt: Long = clock(),
+    ): RunOutcome {
+        val sessionId = session.id
+        val modelInfo = KnownProviders.deepSeek.model(session.model) ?: KnownProviders.flash
+
         val assistantId = db.messageDao().insert(
             MessageEntity(
                 sessionId = sessionId,
-                parentId = userId,
+                parentId = userMessageId,
                 role = Role.ASSISTANT,
                 status = MessageStatus.WIP,
                 thinkingEnabled = session.thinkingEnabled,
                 searchEnabled = session.searchEnabled,
-                insertedAt = now + 1,
+                insertedAt = assistantInsertedAt,
                 model = session.model,
                 effort = session.effort,
             ),
         )
-        db.sessionDao().setCurrentMessage(sessionId, assistantId, now)
+        db.sessionDao().setCurrentMessage(sessionId, assistantId, clock())
+
+        // 上下文只取**当前分支**：到这条提问的父节点为止，再追加本次提问
+        val question = db.messageDao().byId(userMessageId)
+        val history = chainTurns(sessionId, question?.parentId)
 
         val command = ChatCommand(
             capabilities = modelInfo.capabilities,
@@ -244,7 +314,7 @@ class ChatRepository(
             searchEnabled = session.searchEnabled,
             includeTitle = session.title == null,
             messages = ContextRebuilder.build(history, reminder) +
-                WireMessage.text(WireMessage.ROLE_USER, text),
+                WireMessage.text(WireMessage.ROLE_USER, userText),
         )
 
         val request = DeepSeekMessagesProtocol.build(

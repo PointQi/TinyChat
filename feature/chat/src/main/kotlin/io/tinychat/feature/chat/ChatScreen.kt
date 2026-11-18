@@ -1,4 +1,4 @@
-package io.tinychat.feature.chat
+﻿package io.tinychat.feature.chat
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -94,6 +94,8 @@ fun ChatScreen(
     onEditMessage: (ChatMessage) -> Unit,
     onCancelEdit: () -> Unit,
     conversationText: () -> String,
+    onSwitchVersion: (Long, Int) -> Unit,
+    onRegenerate: (ChatMessage) -> Unit,
 ) {
     val palette = TcTheme.palette
 
@@ -123,6 +125,8 @@ fun ChatScreen(
                 modifier = Modifier.weight(1f),
                 onEditMessage = onEditMessage,
                 conversationText = conversationText,
+                onSwitchVersion = onSwitchVersion,
+                onRegenerate = onRegenerate,
             )
         }
 
@@ -200,6 +204,8 @@ private fun MessageList(
     modifier: Modifier = Modifier,
     onEditMessage: (ChatMessage) -> Unit,
     conversationText: () -> String,
+    onSwitchVersion: (Long, Int) -> Unit,
+    onRegenerate: (ChatMessage) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -244,11 +250,14 @@ private fun MessageList(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(state.messages, key = { it.id }) { message ->
+                val isLatest = message.id == state.messages.lastOrNull()?.id
                 MessageRow(
                     message = message,
                     onTap = { onEditMessage(message) },
                     onCopyMessage = { clipboard.setText(AnnotatedString(message.text)) },
                     onCopyConversation = { clipboard.setText(AnnotatedString(conversationText())) },
+                    onSwitchVersion = { delta -> onSwitchVersion(message.id, delta) },
+                    onRegenerate = if (!message.isUser && isLatest) ({ onRegenerate(message) }) else null,
                 )
             }
         }
@@ -292,11 +301,16 @@ private fun MessageRow(
     onTap: () -> Unit,
     onCopyMessage: () -> Unit,
     onCopyConversation: () -> Unit,
+    onSwitchVersion: (Int) -> Unit,
+    onRegenerate: (() -> Unit)?,
 ) {
     val palette = TcTheme.palette
 
     if (message.isUser) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.End,
+        ) {
             Text(
                 text = message.text,
                 style = TcTypography.bodyLarge,
@@ -307,6 +321,9 @@ private fun MessageRow(
                     .combinedClickable(onClick = onTap, onLongClick = onCopyMessage)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
+            if (message.versionCount > 1) {
+                VersionSwitcher(message.versionIndex, message.versionCount, onSwitchVersion)
+            }
         }
         return
     }
@@ -339,6 +356,23 @@ private fun MessageRow(
                 if (message.citations.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
                     CitationChips(message.citations)
+                }
+            }
+
+            // 最后一条回答给「重新生成」；任一条有兄弟分支时给版本切换
+            if (onRegenerate != null || message.versionCount > 1) {
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onRegenerate != null) {
+                        TcIconButton(
+                            icon = TcIcons.Regenerate,
+                            contentDescription = "重新生成",
+                            onClick = onRegenerate,
+                        )
+                    }
+                    if (message.versionCount > 1) {
+                        VersionSwitcher(message.versionIndex, message.versionCount, onSwitchVersion)
+                    }
                 }
             }
         }
@@ -383,6 +417,39 @@ private fun MessageRow(
                 }
                 Spacer(Modifier.height(24.dp))
             }
+        }
+    }
+}
+
+/**
+ * 版本切换 `‹ 2/3 ›`（M1-8）：编辑重发产生提问的多个版本，重新生成产生回答的多个版本。
+ */
+@Composable
+private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
+    val palette = TcTheme.palette
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .clickable { onSwitch(-1) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(TcIcons.Back, "上一版", tint = palette.labelTertiary, modifier = Modifier.size(12.dp))
+        }
+        Text(
+            text = "$index/$count",
+            style = TcTypography.bodySmall,
+            color = palette.labelTertiary,
+        )
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .clickable { onSwitch(1) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(TcIcons.ChevronRight, "下一版", tint = palette.labelTertiary, modifier = Modifier.size(12.dp))
         }
     }
 }
