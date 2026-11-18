@@ -1,5 +1,6 @@
 package io.tinychat.feature.chat
 
+import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
@@ -66,6 +67,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalFocusManager
@@ -94,6 +96,7 @@ import io.tinychat.model.ThinkingEffort
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcInlineHint
 import io.tinychat.ui.TcTopBar
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalTime
 
@@ -406,7 +409,16 @@ private fun MessageRow(
     var menuOpen by remember { mutableStateOf(false) }
     var selectOpen by remember { mutableStateOf(false) }
     var sourcesOpen by remember { mutableStateOf(false) }
+    // 复制做一下确认：图标变对勾 1.5s，不做 Toast（官方也没弹东西）
+    var copied by remember(message.id) { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1500)
+            copied = false
+        }
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
 
     Box {
         Column(
@@ -441,30 +453,69 @@ private fun MessageRow(
                 }
             }
 
-            // 最后一条回答给「重新生成」与「继续生成」；任一条有兄弟分支时给版本切换
-            if (onContinue != null || onRegenerate != null || message.versionCount > 1) {
-                Spacer(Modifier.height(6.dp))
+            // 操作栏（M2-9）按官方版式固定两行：
+            //   第一行：复制/朗读/分享靠左贴边 …… 重新生成靠右贴边
+            //   第二行：版本切换靠左贴边 …… 继续生成靠右贴边
+            // 可见性规则抽到 resolveFooterState()，单测覆盖（手动停止也要给全三件）
+            val footer = resolveFooterState(
+                status = message.status,
+                hasText = message.text.isNotBlank(),
+                versionCount = message.versionCount,
+                isLatest = onRegenerate != null,
+                canContinue = onContinue != null,
+            )
+
+            if (footer.visible) {
+                Spacer(Modifier.height(4.dp))
+            }
+            if (footer.showFirstRow) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (onRegenerate != null) {
-                        // 小号灰图标，与版本文字同一行高，不做又大又黑的按钮
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .clickable(onClick = onRegenerate),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = TcIcons.Regenerate,
-                                contentDescription = "重新生成",
-                                tint = palette.labelTertiary,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
+                    if (footer.showActions) {
+                        ActionIcon(
+                            icon = if (copied) TcIcons.Check else TcIcons.Copy,
+                            description = if (copied) "已复制" else "复制",
+                            tint = if (copied) palette.labelSecondary else palette.labelTertiary,
+                            onClick = {
+                                onCopyMessage()
+                                copied = true
+                            },
+                        )
+                        // 朗读占位：官方在 M5-4 才接 TTS，这里先做成点了没反应
+                        ActionIcon(
+                            icon = TcIcons.Speak,
+                            description = "朗读",
+                            onClick = {},
+                        )
+                        ActionIcon(
+                            icon = TcIcons.Share,
+                            description = "分享",
+                            onClick = {
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, message.text)
+                                }
+                                context.startActivity(Intent.createChooser(send, "分享回答"))
+                            },
+                        )
                     }
+                    Spacer(Modifier.weight(1f))
+                    onRegenerate?.takeIf { footer.showRegenerate }?.let { regenerate ->
+                        ActionIcon(
+                            icon = TcIcons.Regenerate,
+                            description = "重新生成",
+                            onClick = regenerate,
+                        )
+                    }
+                }
+            }
+            if (footer.showSecondRow) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     if (message.versionCount > 1) {
                         VersionSwitcher(message.versionIndex, message.versionCount, onSwitchVersion)
                     }
@@ -679,6 +730,33 @@ private fun SourceCapsule(
 }
 
 /**
+ * 操作栏里的单个灰图标按钮（M2-9）。
+ * 40dp 触达、18dp 图形、无底色 —— 相邻两个按钮的图形间距正好 22dp，和官方一致。
+ */
+@Composable
+private fun ActionIcon(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    tint: Color = TcTheme.palette.labelTertiary,
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = tint,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+/**
  * 版本切换 `‹ 2/3 ›`（M1-8）。到头那一侧箭头置灰，点了也不动（不循环）。
  */
 @Composable
@@ -690,7 +768,7 @@ private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
-                .size(28.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .clickable(enabled = canPrev) { onSwitch(-1) },
             contentAlignment = Alignment.Center,
@@ -699,7 +777,7 @@ private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
                 imageVector = TcIcons.Back,
                 contentDescription = "上一版",
                 tint = if (canPrev) palette.labelSecondary else palette.labelTertiary.copy(alpha = 0.35f),
-                modifier = Modifier.size(13.dp),
+                modifier = Modifier.size(16.dp),
             )
         }
         Text(
@@ -709,7 +787,7 @@ private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
         )
         Box(
             modifier = Modifier
-                .size(28.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .clickable(enabled = canNext) { onSwitch(1) },
             contentAlignment = Alignment.Center,
@@ -718,7 +796,7 @@ private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
                 imageVector = TcIcons.ChevronRight,
                 contentDescription = "下一版",
                 tint = if (canNext) palette.labelSecondary else palette.labelTertiary.copy(alpha = 0.35f),
-                modifier = Modifier.size(13.dp),
+                modifier = Modifier.size(16.dp),
             )
         }
     }

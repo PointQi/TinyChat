@@ -15,9 +15,9 @@
 | 规划 | ✅ 开发计划 + 交互设计完成（02 号文档） |
 | Spike | ✅ 4/4（SSE 离线 40/40、导出包 PASS、渲染定 API、公式图表定 WebView、在线 SSE 跑通） |
 | 代码 | ✅ **M1 完成（2026-11-18）**：M1-1 ~ M1-13 全部完成，单测 118 个 + lint 全绿；真机验过发送/停止/编辑重发/重新生成/版本切换/继续生成/抽屉会话管理与搜索 |
-| M2 渲染 | 🚧 **进行中**：M2-1（Markdown 接入 + 令牌映射）、M2-2（流式增量 + 帧合并）、M2-4（代码块：语言列 + 复制 + 长文折叠）已落地并真机对照；M2-3 抖动三坑待压测，M2-7/8/9、M2-5/6 待做 |
+| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）已落地并真机对照；M2-3 抖动三坑待压测，M2-5/6（KaTeX / mermaid）待做 |
 | 阻塞项 | 无。Key 走 `.local/dev-key.txt`（debug 注入），M8-6 换 Keystore |
-| 下一步 | **M2-7 思维链折叠**，随后 M2-8 引用角标、M2-9 操作栏，最后 M2-5/M2-6 WebView 批（KaTeX / mermaid 11.12.0） |
+| 下一步 | **M2-5/M2-6 WebView 批**（KaTeX `0.19.1` + mermaid `11.12.0`，共用 WebView host + 高度回调 + 深色主题 + 图表/代码切换），随后 M2-3 抖动压测 |
 
 ---
 
@@ -505,6 +505,9 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | 引用角标（M2-8） | `citations_delta` **不写进正文**，但必然紧跟被引用的那段、且与该段同属一个 RESPONSE 碎片 → 拼正文时在**该碎片末尾的非空白字符之后**记锚点（`ChatSource.anchor`），不用改协议、不用给导出加字段。落位规则「贴在所属段落末尾」：锚点常落在段落间的 `\n\n` 里，按文本节点插会整批丢失（实测 6 个全丢） |
 | 角标外形 | 三圆一直角（官方 `border-radius: 6px 6px 6px 0`，左下角带尖），15sp 占位符 + 9.5sp 数字，`InlineCodeBg` 底；用 `InlineTextContent` + 段落里 `appendInlineContent(tag)` 实现（**别传 altText**，否则会把数字当文字插进去） |
 | 来源胶囊 | 正文末尾：站点首字母堆叠（同站去重、最多 3 个）+ `N 个网页`，点击打开来源列表（`SourceSheet` 是 M3-3 的临时壳，M3-3 换成搜索结果抽屉） |
+| 操作栏布局（M2-9） | 固定两行、官方版式：第一行 `复制` `朗读` `分享` 靠左贴边 + `重新生成` 靠右贴边；第二行 `‹ 2/3 ›` 靠左贴边 + `继续生成` 靠右贴边。`ActionIcon` 统一 40dp 触达 / 18dp 图形 / `LabelTertiary` 无底色（相邻图形间距 22dp）；`VersionSwitcher` 的箭头盒子也统一成 40dp，否则第二行左缘比第一行缩进 6dp |
+| 操作栏可见性 | 抽成纯函数 `resolveFooterState(status, hasText, versionCount, isLatest, canContinue)`（`MessageFooterState.kt`），9 个单测钉死矩阵：WIP/FAILED/TIMEOUT 整栏不出；**INCOMPLETE 只要已有正文照给左三件**（用户明确要求，手动停止后内容仍可复制/朗读）；只有「正文为空」才只剩重新生成。**别把判断写回 Composable** |
+| 操作栏动作 | 复制=本条回答纯文本（`onCopyMessage`，图标变对勾 1.5s，不弹 Toast）；分享=`ACTION_SEND` text/plain 系统面板（M8-2 换成出图抽屉）；朗读=M5-4 前的空占位（`onClick = {}`，点了无动作）；赞踩官方已确认不做 |
 
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**
 
