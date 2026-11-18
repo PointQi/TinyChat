@@ -48,6 +48,11 @@ internal object TcRenderHost {
         val widthPx: Int,
         val colorHex: String,
         val dark: Boolean,
+        /**
+         * 块级公式按**内容自然宽度**排版（不限制在容器宽内），出图可能比屏幕宽 ——
+         * 显示端再用横向滚动查看。宽公式（多列矩阵、长推导）只能这么处理。
+         */
+        val naturalWidth: Boolean = false,
     )
 
     enum class Kind(val wire: String) { MATH("math"), MERMAID("mermaid") }
@@ -65,6 +70,19 @@ internal object TcRenderHost {
          */
         val baselinePx: Int = 0,
         val error: String? = null,
+        /**
+         * 内容的**自然宽度**（物理 px）：`scrollWidth` 比盒子宽就说明这条公式比容器还长，
+         * 显示端据此改用「自然宽度出图 + 横向滚动」，而不是把公式切掉。
+         */
+        val naturalWidthPx: Int = 0,
+        /**
+         * 墨迹在右侧被视口切掉了（块级公式比容器宽）。
+         *
+         * 为什么不用 `scrollWidth` 判断：`overflow: visible` 的元素上它返回的是自身宽度，
+         * **不会**算上溢出内容 —— 实测永远等于容器宽，判据恒为假。
+         * 只有像素墨迹贴到右边缘才是真的被切。
+         */
+        val clippedRight: Boolean = false,
     )
 
     /** 位图缓存上限：公式都很小，24MB 能放几千个；按字节计，超了先淘汰旧的 */
@@ -88,6 +106,9 @@ internal object TcRenderHost {
         val ok: Boolean,
         /** 公式基线在**视口坐标**里的 y（CSS px），行内公式靠它对齐正文；0 = 没量到 */
         val baselinePx: Int,
+        /** stage 盒子的自然尺寸（CSS px）：块级自然宽度模式靠它决定视口要多宽 */
+        val widthCss: Int,
+        val heightCss: Int,
         val error: String?,
     )
 
@@ -106,14 +127,29 @@ internal object TcRenderHost {
             val result = drawOne(view, request)
             val header = "ok=" + (result.bitmap != null) +
                 " w=" + result.widthPx + " h=" + result.heightPx +
-                " baseline=" + result.baselinePx + " err=" + result.error
+                " baseline=" + result.baselinePx + " nat=" + result.naturalWidthPx +
+                " clip=" + result.clippedRight + " err=" + result.error
             val done = CompletableDeferred<String>()
             view.evaluateJavascript(
                 "(function(){var s=document.getElementById('stage');" +
                     "return s?s.outerHTML:'(no stage)';})()",
             ) { value -> done.complete(value ?: "") }
-            header + "\n" + svgSummary(view) + "\n" + (withTimeoutOrNull(3_000) { done.await() } ?: "")
+            header + "\n" + svgSummary(view) + "\n" + viewportSummary(view) + "\n" +
+                (withTimeoutOrNull(3_000) { done.await() } ?: "")
         }
+    }
+
+    /** 调试：视口与字号真值（排查「整页被缩放」这类问题） */
+    private suspend fun viewportSummary(view: WebView): String {
+        val deferred = CompletableDeferred<String>()
+        view.evaluateJavascript(
+            "(function(){var s=document.getElementById('stage');var k=document.querySelector('.katex');" +
+                "var cs=getComputedStyle(s);var kcs=k?getComputedStyle(k):null;" +
+                "return 'VP innerW='+window.innerWidth+' dpr='+window.devicePixelRatio" +
+                "+' stageFS='+cs.fontSize+' stageW='+s.getBoundingClientRect().width.toFixed(1)" +
+                "+' katexFS='+(kcs?kcs.fontSize:'-')+' katexW='+(k?k.getBoundingClientRect().width.toFixed(1):'0');})()",
+        ) { value -> deferred.complete(value ?: "") }
+        return withTimeoutOrNull(2_000) { deferred.await() } ?: "VP ?"
     }
 
     /** 调试：列出超出 #stage 盒子的元素与所有 svg（排查「图里多出个大图案」「根号消失」） */
@@ -156,7 +192,7 @@ internal object TcRenderHost {
     }
 
     private fun Request.cacheKey(): String = listOf(
-        kind.wire, display, fontPx, widthPx, colorHex, dark, source,
+        kind.wire, display, fontPx, widthPx, colorHex, dark, naturalWidth, source,
     ).joinToString("\u0001")
 
     private suspend fun drawOne(view: WebView, request: Request): Result {
@@ -176,6 +212,7 @@ internal object TcRenderHost {
             put("color", request.colorHex)
             put("theme", if (request.dark) "dark" else "light")
             put("display", request.display)
+            put("natural", request.naturalWidth)
             if (request.kind == Kind.MERMAID) put("code", request.source) else put("latex", request.source)
         }.toString()
         val bridged = evaluateAndAwait(view, "window.tcRender(" + JSONObject.quote(payload) + ")")
@@ -190,11 +227,23 @@ internal object TcRenderHost {
         // 视口如果装不下，墨迹会贴边 —— 那就放大重画，最多三轮。
         var viewW = request.widthPx.coerceIn(1, MAX_SIDE_PX)
         var viewH = INITIAL_PAGE_HEIGHT_PX
+        // 自然宽度模式：直接按量到的内容宽出图，宽公式才不会被切；一轮到位，不用试错放大
+        if (request.naturalWidth) {
+            // +12 是页面留白（render.html 的 body padding），按 CSS px 折成物理像素
+            val natural = ((bridged.widthCss + 12) * scale).toInt().coerceIn(1, MAX_SIDE_PX)
+            if (natural > viewW) viewW = natural
+        }
+        var laidW = request.widthPx.coerceIn(1, MAX_SIDE_PX)
+        var laidH = INITIAL_PAGE_HEIGHT_PX
         var full: Bitmap? = null
         var bounds: IntArray? = null
+        // 块级、非自然宽度模式下墨迹贴右边缘 = 被容器切掉了，调用方据此切自然宽度重画
+        var clippedRight = false
         for (round in 0 until 3) {
-            if (round > 0) {
+            if (viewW != laidW || viewH != laidH) {
                 layout(view, viewW, viewH)
+                laidW = viewW
+                laidH = viewH
                 // 改视口会让 WebView 重新排版并重新光栅，必须等一次 JS 往返再画，
                 // 否则 draw() 拿到的是旧尺寸的半张图（实测 `\frac{1}{2}` 只剩一个分母）
                 evaluateAndAwait(view, "window.tcMeasure($id)")
@@ -210,14 +259,20 @@ internal object TcRenderHost {
             bounds = found
             if (found == null) break
             val hitBottom = found[1] + found[3] >= viewH - 2
-            // 块级的宽度是排版宽（居中靠它），不能放大，否则公式会重新按更宽的容器居中
-            val hitRight = !request.display && found[0] + found[2] >= viewW - 2
+            val inkRight = found[0] + found[2]
+            if (round == 0 && request.display && !request.naturalWidth) {
+                clippedRight = inkRight >= viewW - 2
+            }
+            // 非自然宽度的块级公式靠「容器宽 + text-align:center」居中，宽度不能动；
+            // 行内公式和自然宽度块级公式可以把视口撑宽去够完整的墨迹
+            val canGrowW = !request.display || request.naturalWidth
+            val hitRight = canGrowW && inkRight >= viewW - 2
             if (!hitBottom && !hitRight) break
             if (hitBottom) viewH = (viewH * 2).coerceAtMost(MAX_SIDE_PX)
             if (hitRight) viewW = (viewW + 400).coerceAtMost(MAX_SIDE_PX)
         }
         val source = full ?: return Result(null, error = "渲染失败")
-        val crop = cropRect(request.display, bounds, source.width, source.height)
+        val crop = cropRect(request.display, request.naturalWidth, bounds, source.width, source.height)
         val (cropX, cropY, cropW, cropH) = crop.toList()
         val bitmap = if (cropX == 0 && cropY == 0 && cropW == source.width && cropH == source.height) {
             source
@@ -235,6 +290,8 @@ internal object TcRenderHost {
             widthPx = bitmap.width,
             heightPx = bitmap.height,
             baselinePx = baselinePx.coerceIn(0, bitmap.height),
+            naturalWidthPx = (bridged.widthCss * scale).toInt().coerceAtLeast(bitmap.width),
+            clippedRight = clippedRight,
         )
     }
 
@@ -346,8 +403,11 @@ internal object TcRenderHost {
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
+            // **必须为 true**：false 时 WebView 会忽略渲染页里的 `width=device-width`，
+            // 按 980 CSS px 的布局宽度排版再整体缩放 —— 宽公式会被压成 1/3 大小糊成一团，
+            // 而且和我们「CSS px = 物理 px / density」的换算对不上。
+            useWideViewPort = true
             loadWithOverviewMode = false
-            useWideViewPort = false
             textZoom = 100
         }
         view.addJavascriptInterface(Bridge { result -> pending?.complete(result) }, "TcBridge")
@@ -387,11 +447,13 @@ internal object TcRenderHost {
 
     private class Bridge(private val onResult: (BridgeResult) -> Unit) {
         @JavascriptInterface
-        fun onRender(id: Int, ok: Int, baselinePx: Int, error: String) {
+        fun onRender(id: Int, ok: Int, baselinePx: Int, widthCss: Int, heightCss: Int, error: String) {
             onResult(
                 BridgeResult(
                     ok = ok == 1,
                     baselinePx = baselinePx,
+                    widthCss = widthCss,
+                    heightCss = heightCss,
                     error = error.takeIf { it.isNotBlank() },
                 ),
             )
@@ -467,7 +529,7 @@ internal object TcRenderHost {
      */
     private const val INITIAL_PAGE_HEIGHT_PX = 800
 
-    /** 页面四周留白见 render.html 的 `body { padding }`，墨迹探出盒子时靠它兜住 */
+    /** 页面四周留白见 render.html 的 `body { padding }`（12 CSS px），墨迹探出盒子时靠它兜住 */
 
     /** 单边像素上限：防止极端公式把位图撑爆（超过就由调用方降级） */
     private const val MAX_SIDE_PX = 8_000

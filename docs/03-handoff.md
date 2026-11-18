@@ -15,7 +15,7 @@
 | 规划 | ✅ 开发计划 + 交互设计完成（02 号文档） |
 | Spike | ✅ 4/4（SSE 离线 40/40、导出包 PASS、渲染定 API、公式图表定 WebView、在线 SSE 跑通） |
 | 代码 | ✅ **M1 完成（2026-11-18）**：M1-1 ~ M1-13 全部完成，单测 118 个 + lint 全绿；真机验过发送/停止/编辑重发/重新生成/版本切换/继续生成/抽屉会话管理与搜索 |
-| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）、**M2-5/M2-6（块级 + 行内公式、mermaid，共用离屏位图宿主）**、**M2-3（抖动三坑）** 均已落地并在真机对照；真机实测流式 59 帧 0 回缩 |
+| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）、**M2-5/M2-6（块级 + 行内公式、mermaid，共用离屏位图宿主）**、**M2-3（抖动三坑）** 均已落地并在真机对照；宽公式「自然宽度 + 左贴边 + 横向滚动」已对照；真机实测流式 59 帧 0 回缩 |
 | 阻塞项 | 无。Key 走 `.local/dev-key.txt`（debug 注入），M8-6 换 Keystore |
 | 下一步 | 进 **M3**（引用角标点击 / 来源抽屉）、随后 M4 附件与 M5 语音 |
 
@@ -569,6 +569,30 @@ adb shell run-as io.tinychat cat cache/stream.txt   # frames=… drops=… maxDr
 | 唯一可靠做法 | `view.draw()` 画到 Bitmap 后**扫像素 alpha 求墨迹框**，再按这个矩形裁剪；块级公式横向保留整宽（居中靠 `text-align:center`，裁窄就贴左），行内则连横向一起裁 |
 | 视口别开太大 | 初始视口 4000px 高时每次重光栅都要重画整块，单条从 ~430ms 涨到 1.8s。改成 800px 起步 → 扫墨迹 → 贴边才放大重画（≤3 轮） |
 | 改完视口不能立刻 draw | WebView 分块光栅：`\frac{1}{2}` 只剩一个分母、多行 `aligned` 只画一条 8px 横带。改尺寸后要等一次 JS 往返 + `postVisualStateCallback`（官方「视觉状态已就绪」信号）才算稳 |
+
+**M2-5 补：宽公式横向滚动（2026-11-19 完成）**
+
+期望行为只有一条规矩：**位图有多少像素，屏幕上就画多大**（不改字号、不改行高）。于是「填不满整行 → 居中；填满或超出 → 左边缘顶住、右侧裁掉、手指左右滑动查看」。
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 公式被缩成小字（约 0.57 倍，看着像 1/3 高） | 用 `Modifier.size(w, h)` 时被父约束压缩，压缩后 `Image` 又按 `contentScale=Fit` 再适配一次 | `Modifier.requiredSize`（无视父约束）+ 不用 `Image`，直接 `Canvas { drawImage(bitmap) }` |
+| 2 | 公式**居中**且两边溢出屏幕、完全拖不动 | `val image = Canvas(...)` —— `Canvas` 在**赋值那一行就地发射**，成了外层容器的子项，而不是 `Box`/`Row` 的子项：滚动容器里空无一物，画布位置由祖先决定 | 抽成独立 Composable `TcMathImage(...)`，在 `Box`/`Row` 的 content lambda 里调用（**这个坑踩过两次**） |
+| 3 | 宽公式第一帧是被切断的残图、且每次多一轮渲染 | 「先按容器宽画、发现墨迹贴右边缘再切自然宽度重画」的两步走 | 直接**一律按自然宽度出图**（`host.js` 里 `display:inline-block;white-space:nowrap`），一次到位；`clippedRight` 只留作诊断字段 |
+
+最终实现（`TcMath.kt`）：`bitmap.width <= widthPx` → `Box(contentAlignment = Center)`；否则 `Row(fillMaxWidth().horizontalScroll(rememberScrollState()))` —— 用标准组件，**别手搓位移**（手搓没有惯性和越界回弹，试过，退步了）。
+
+**排障方法（这次靠它才定位到，比截图猜快得多）**
+
+`TcRenderLab` 临时加了一个 `probeSink`，把每个公式的 `Box`/`Canvas` 的 `positionInRoot()`、尺寸、`scrollState.value/maxValue` 追加写到 `cacheDir/math_probe.txt`：
+
+```bash
+adb shell run-as io.tinychat cat cache/math_probe.txt
+# 正确：row=988x63 root=(48,681) scroll=0/882 ; canvas=1870x63 root=(48,681)
+# 错误：box=988x63  root=(48,681)                ; canvas=1870x63 root=(-393,681)  ← 差 441 = 居中
+```
+
+配合两个手段交叉验证：截图里画一圈**洋红描边**量「实际绘制矩形」（和位图尺寸一比就知道有没有被缩放），以及 `input swipe` 前后对同一 y 带做像素 diff（`changed=0` 就是没滚动）。改进后已删除全部探针。
 
 **性能（`TcRenderLab.benchMath`，Pixel 3a API34 模拟器）**：8 条样例冷启 `4008/4239/700/516/814/985/315/330ms`，稳态 **`337–433ms`**。模拟器只有约 2fps，按帧折算真机约 50–100ms/条。行内公式仍在**消息结束后**批量出图（流式期间是源码文字），所以不影响打字时的流畅度。
 

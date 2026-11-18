@@ -52,12 +52,14 @@ class RenderLabActivity : ComponentActivity() {
         intent.getStringExtra("dump")?.let { latex ->
             CoroutineScope(Dispatchers.Main).launch {
                 val block = intent.getBooleanExtra("block", false)
+                val natural = intent.getBooleanExtra("natural", false)
                 val html = TcRenderLab.dumpDom(
                     context = this@RenderLabActivity,
                     latex = latex,
                     fontPx = if (block) 47 else 51,
                     display = block,
                     widthPx = if (block) resources.displayMetrics.widthPixels else 900,
+                    naturalWidth = natural,
                 )
                 val file = File(cacheDir, "dom.html")
                 file.writeText(html)
@@ -150,6 +152,11 @@ private fun key2(nonce: Int, content: @Composable () -> Unit) {
 
 private val SAMPLE = """
 # 渲染实验室
+
+## 宽公式（放得下就居中，放不下应可横向滑动）
+${'$'}${'$'}
+\left( a_1+a_2+a_3+a_4+a_5+a_6+a_7+a_8+a_9+a_{10}+a_{11}+a_{12}+a_{13}+a_{14}+a_{15}+a_{16} \right)^{2}
+${'$'}${'$'}
 
 ## 行内公式
 质能方程 ${'$'}E=mc^2${'$'}，分式 ${'$'}\frac{a}{b}${'$'}，根号 ${'$'}\sqrt[3]{x+1}${'$'}，

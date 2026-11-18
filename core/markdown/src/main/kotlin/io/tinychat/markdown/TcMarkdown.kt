@@ -55,17 +55,28 @@ fun TcMarkdown(
 ) {
     var generation by remember { mutableIntStateOf(0) }
     val merger = remember { FrameMerger() }
+    // `\(…\)` → `$…$`：GFM 会把 `\(` 当成转义括号吃掉反斜杠，不归一的话模型给的
+    // LaTeX 行内公式会被当普通文字渲染（真机上表现为「公式糊在正文里」）
+    val normalized = remember(content) { normalizeInlineMathDelimiters(content) }
     // 「正文后紧跟 --- / ===」会被 GFM 当成 setext 标题，标记到达的瞬间上一行变标题 → 高度回缩。
     // 换成等长的 ***（长度不变，引用角标偏移不受影响），见 stabilizeSetextMarkers。
-    val rendered = remember(content) { stabilizeSetextMarkers(content) }
+    val rendered = remember(normalized.text) { stabilizeSetextMarkers(normalized.text) }
     // 末尾连续的换行也先扣住不给解析器：`……现象。\n\n` 这种中间态会先渲染出一行空白，
     // 下一段文字到达时那行空白消失，高度就回缩一次（真机实测 -24dp）。
     // 扣住只影响「画面末尾的空行」，下一片文字到达时会连同换行一起补上。
     val target = remember(rendered) { rendered.trimEnd('\n') }
+    // 归一化会缩短文本，引用角标的偏移要跟着平移
+    val anchoredCitations = remember(citations, normalized) {
+        if (citations.isEmpty()) {
+            citations
+        } else {
+            citations.map { CitationAnchor(normalized.mapOffset(it.offset), it.index) }
+        }
+    }
     // 只有真含行内代码时才启用圆角画笔：没有反引号的正文可以省掉
     // extend() / onTextLayout / drawBehind 这一整条链路
     val withInlineCode = remember(target) { target.contains('`') }
-    val inlineContent = citationInlineContent(citations, onCitationClick)
+    val inlineContent = citationInlineContent(anchoredCitations, onCitationClick)
 
     key(generation) {
         val state = rememberStreamingMarkdownState()
@@ -99,7 +110,7 @@ fun TcMarkdown(
         CompositionLocalProvider(
             LocalBulletListHandler provides TcBulletHandler,
             LocalMarkdownStreaming provides streaming,
-            LocalCitationAnchors provides citations,
+            LocalCitationAnchors provides anchoredCitations,
         ) {
             Markdown(
                 streamingMarkdownState = state,

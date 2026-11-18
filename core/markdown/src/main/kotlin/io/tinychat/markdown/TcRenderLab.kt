@@ -32,6 +32,7 @@ object TcRenderLab {
         fontPx: Int = 51,
         display: Boolean = false,
         widthPx: Int = 900,
+        naturalWidth: Boolean = false,
     ): String =
         TcRenderHost.dumpHtml(
             context,
@@ -43,6 +44,7 @@ object TcRenderLab {
                 widthPx = widthPx,
                 colorHex = "#1A1A1A",
                 dark = false,
+                naturalWidth = naturalWidth,
             ),
         )
 

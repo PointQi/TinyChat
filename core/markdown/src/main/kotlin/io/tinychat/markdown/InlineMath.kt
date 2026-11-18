@@ -34,20 +34,36 @@ internal fun inlineMathTag(index: Int) = "tc_math_$index"
 internal data class BlockMath(val start: Int, val end: Int, val latex: String)
 
 /**
- * 找段落内的 `$$…$$`。允许跨行（模型经常把长公式折多行），但不允许嵌套；
- * 空内容（`$$$$`）跳过。
+ * 找段落内的块级公式。两种定界符都认：
+ * - `$$…$$`（GFM/常见写法）
+ * - `\[…\]`（LaTeX 写法，**DeepSeek 的模型主要用这个**）
+ *
+ * 允许跨行（模型经常把长公式折成多行），但不允许嵌套；空内容跳过。
+ * 注意这里吃的是**原始文本**（`getTextInNode` 的结果），反斜杠还在 —— 行内 `\(…\)`
+ * 却必须先归一成 `$…$`，因为 markdown 会吃掉反斜杠，见 [normalizeInlineMathDelimiters]。
  */
 internal fun findBlockMath(text: String): List<BlockMath> {
     val result = mutableListOf<BlockMath>()
     var cursor = 0
     while (true) {
-        val open = text.indexOf("$$", cursor)
-        if (open < 0) break
-        val close = text.indexOf("$$", open + 2)
-        if (close < 0) break
-        val latex = text.substring(open + 2, close).trim()
-        if (latex.isNotEmpty()) result += BlockMath(open, close + 2, latex)
-        cursor = close + 2
+        val dollar = text.indexOf("$$", cursor)
+        val bracket = text.indexOf("\\[", cursor)
+        if (dollar < 0 && bracket < 0) break
+        val useBracket = bracket >= 0 && (dollar < 0 || bracket < dollar)
+        val open = if (useBracket) bracket else dollar
+        val closeToken = if (useBracket) "\\]" else "$$"
+        val openLen = 2
+        val close = text.indexOf(closeToken, open + openLen)
+        if (close < 0) {
+            // 没闭合（流式中间态）：跳过这个开口继续往后找
+            cursor = open + openLen
+            continue
+        }
+        val latex = text.substring(open + openLen, close).trim()
+        if (latex.isNotEmpty()) {
+            result += BlockMath(open, close + closeToken.length, latex)
+        }
+        cursor = close + closeToken.length
     }
     return result
 }

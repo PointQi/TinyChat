@@ -128,14 +128,24 @@
       purgeStrayNodes();
       stripZeroWidth();
       if (window.TcBridge && TcBridge.onRender) {
-        TcBridge.onRender(id, ok ? 1 : 0, measureBaseline(), error || '');
+        var box = stage.getBoundingClientRect();
+        // scrollWidth 比 rect.width 大 = 内容溢出了容器（宽公式被容器宽卡住）
+        var natural = Math.ceil(Math.max(box.width, stage.scrollWidth || 0));
+        TcBridge.onRender(
+          id, ok ? 1 : 0, measureBaseline(),
+          natural, Math.ceil(Math.max(1, box.height)), error || '');
       }
     });
   }
 
   function renderMath(req) {
     return ensureKatex().then(function () {
-      stage.style.cssText = (req.display ? 'display:block;width:100%;' : 'display:inline-block;')
+      // natural = 块级公式按「内容自然宽度」排版：不限制容器宽，让它整条排在一行上，
+      // 原生层据此出更宽的位图，再由 Compose 横向滚动查看（宽公式的唯一合理做法）。
+      var width = req.display
+        ? (req.natural ? 'display:inline-block;white-space:nowrap;' : 'display:block;width:100%;')
+        : 'display:inline-block;';
+      stage.style.cssText = width
         + 'font-size:' + req.fontPx + 'px;color:' + req.color + ';';
       try {
         katex.render(String(req.latex), stage, {
