@@ -1,4 +1,4 @@
-package io.tinychat.model
+﻿package io.tinychat.model
 
 /**
  * 一次请求的用量。字段名对齐服务端 `usage` 对象（02 §4.7）。
@@ -86,6 +86,15 @@ enum class ErrorKind(val wire: String) {
             REFUSAL -> "这条回答无法提供"
             UPLOAD -> "附件上传失败"
             FILE_INVALID -> "附件已失效，请重新上传"
+        }
+
+    /** 行内重试提示（贴在消息下方右侧的灰字）；官方文案是「请检查网络后重试」 */
+    val retryHint: String
+        get() = when (this) {
+            NETWORK -> "请检查网络后重试"
+            HTTP_429 -> "请求过于频繁，请稍后重试"
+            HTTP_5XX -> "服务器繁忙，请稍后重试"
+            else -> userMessage
         }
 
     /** 自动重试上限：限流只补一次，服务端故障/网络抖动最多两次 */

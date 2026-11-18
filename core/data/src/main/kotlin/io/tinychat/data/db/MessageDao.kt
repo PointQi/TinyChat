@@ -52,6 +52,10 @@ interface MessageDao {
     @Query("UPDATE messages SET status = :status WHERE id = :id")
     suspend fun setStatus(id: Long, status: MessageStatus)
 
+    /** 失败原因：断网这类错误要落库，界面才能挂出重试圆钮 */
+    @Query("UPDATE messages SET error_kind = :kind, error_message = :message WHERE id = :id")
+    suspend fun setError(id: Long, kind: io.tinychat.model.ErrorKind?, message: String?)
+
     /** 思考块签名（仅本地，不导出）：续写本轮思考时要原样回传 */
     @Query("UPDATE messages SET thinking_signature = :signature WHERE id = :id")
     suspend fun setThinkingSignature(id: Long, signature: String)

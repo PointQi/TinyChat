@@ -21,6 +21,8 @@ data class TcPalette(
     val codeBg: Color,
     val inlineCodeBg: Color,
     val danger: Color,
+    /** 警示橙：断网/限流这类「可以手动重试」的失败用它（官方 App 的重试圆钮就是这个色） */
+    val warning: Color,
 )
 
 val LightPalette = TcPalette(
@@ -37,6 +39,7 @@ val LightPalette = TcPalette(
     codeBg = Color(0xFFF9FAFB),
     inlineCodeBg = Color(0xFFEBEEF2),
     danger = Color(0xFFEC1313),
+    warning = Color(0xFFEF8A0C),
 )
 
 val DarkPalette = TcPalette(
@@ -53,4 +56,5 @@ val DarkPalette = TcPalette(
     codeBg = Color(0xFF1B1B1C),
     inlineCodeBg = Color(0xFF2C2C2E),
     danger = Color(0xFFF25A5A),
+    warning = Color(0xFFF0A13C),
 )

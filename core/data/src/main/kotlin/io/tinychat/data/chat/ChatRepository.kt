@@ -1,4 +1,4 @@
-package io.tinychat.data.chat
+﻿package io.tinychat.data.chat
 
 import io.tinychat.data.db.MessageEntity
 import io.tinychat.data.db.MessageWithFragments
@@ -8,6 +8,7 @@ import io.tinychat.data.db.toDomain
 import io.tinychat.data.db.toEntity
 import io.tinychat.model.Fragment
 import io.tinychat.model.BranchNode
+import io.tinychat.model.ErrorKind
 import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
@@ -25,6 +26,7 @@ import io.tinychat.net.context.ReminderBuilder
 import io.tinychat.net.protocol.ChatCommand
 import io.tinychat.net.protocol.DeepSeekMessagesProtocol
 import io.tinychat.net.protocol.WireMessage
+import io.tinychat.net.transport.ChatException
 import io.tinychat.net.transport.ChatTransport
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
@@ -40,6 +42,8 @@ class ChatRepository(
     private val db: TinyChatDatabase,
     private val transport: ChatTransport,
     private val clock: () -> Long = { System.currentTimeMillis() },
+    /** 发请求前的连通性预检：离线就不必等 15s 连接超时，直接落失败让界面挂重试钮 */
+    private val isOnline: () -> Boolean = { true },
 ) {
 
     private val runner = ChatStreamRunner(db.messageDao(), db.fragmentDao(), clock)
@@ -374,6 +378,22 @@ class ChatRepository(
             ),
         )
         db.sessionDao().setCurrentMessage(sessionId, assistantId, clock())
+
+        // 离线预检：没网就别等连接超时了，立刻落失败（界面显示橘色重试圆钮）
+        if (!isOnline()) {
+            val offline = ChatException(ErrorKind.NETWORK, message = "当前无网络连接")
+            db.messageDao().setStatus(assistantId, MessageStatus.FAILED)
+            db.messageDao().setError(assistantId, offline.kind, offline.message)
+            db.sessionDao().touch(sessionId, clock())
+            return RunOutcome(
+                messageId = assistantId,
+                status = MessageStatus.FAILED,
+                usage = null,
+                stopReason = null,
+                title = null,
+                error = offline,
+            )
+        }
 
         // 上下文只取**当前分支**：到这条提问的父节点为止，再追加本次提问
         val question = db.messageDao().byId(userMessageId)

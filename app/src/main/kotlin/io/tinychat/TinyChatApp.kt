@@ -1,4 +1,4 @@
-package io.tinychat
+﻿package io.tinychat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -125,6 +125,7 @@ fun TinyChatApp() {
                         onSwitchVersion = chatViewModel::switchVersion,
                         onRegenerate = chatViewModel::regenerate,
                         onContinue = chatViewModel::continueGeneration,
+                        onRetry = chatViewModel::retryFailed,
                     )
                 }
                 composable(Routes.SETTINGS) {

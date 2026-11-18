@@ -1,6 +1,8 @@
-package io.tinychat
+﻿package io.tinychat
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.db.DatabaseFactory
 import io.tinychat.net.transport.OkHttpChatTransport
@@ -17,7 +19,15 @@ class AppContainer(context: Context) {
 
     private val transport = OkHttpChatTransport()
 
-    val repository = ChatRepository(database, transport)
+    /** 发请求前的连通性预检：离线直接判失败，不用等连接超时 */
+    private val isOnline: () -> Boolean = {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val network = manager?.activeNetwork
+        val capabilities = network?.let { manager.getNetworkCapabilities(it) }
+        capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+    }
+
+    val repository = ChatRepository(database, transport, isOnline = isOnline)
 
     val apiKey: String = BuildConfig.DEV_API_KEY
 }

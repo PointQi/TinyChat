@@ -1,4 +1,4 @@
-package io.tinychat.feature.chat
+﻿package io.tinychat.feature.chat
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.tinychat.data.chat.ChatRepository
+import io.tinychat.data.chat.RunOutcome
 import io.tinychat.data.db.FragmentEntity
 import io.tinychat.data.db.MessageWithFragments
 import io.tinychat.model.FragmentPayloadCodec
@@ -71,6 +72,13 @@ data class ChatMessage(
     val versionCount: Int = 1,
     /** 这条回答是停住/截断的，且没动用服务端工具 —— 可以「继续生成」 */
     val canContinue: Boolean = false,
+    /**
+     * 这条用户消息后面那条回答失败了（可手动重试）：值为失败回答的 messageId。
+     * 界面上表现为气泡左侧的橙色重试圆钮。
+     */
+    val retryTargetId: Long? = null,
+    /** 失败提示（灰字，右贴边），如「请检查网络后重试」 */
+    val retryHint: String? = null,
 ) {
     val hasThinking: Boolean get() = timeline.isNotEmpty()
 }
@@ -269,7 +277,9 @@ class ChatViewModel(
                 } else {
                     repository.send(id, text, apiKey)
                 }
-                state = state.copy(title = repository.session(id)?.title ?: outcome.title)
+                state = state.copy(
+                    title = repository.session(id)?.title ?: outcome.title,
+                ).withOutcomeError(outcome)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -308,7 +318,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
-                repository.regenerate(id, message.id, apiKey)
+                state = state.withOutcomeError(repository.regenerate(id, message.id, apiKey))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -330,7 +340,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
-                repository.continueGeneration(id, message.id, apiKey)
+                state = state.withOutcomeError(repository.continueGeneration(id, message.id, apiKey))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -388,6 +398,38 @@ class ChatViewModel(
         persistStandalone()
     }
 
+    /**
+     * 结局里的错误：可重试（断网/限流/5xx）交给行内橙色圆钮 + 灰字，不弹底部错误条；
+     * 其余（Key 无效、余额不足…）才走底部提示。
+     */
+    private fun ChatUiState.withOutcomeError(outcome: RunOutcome): ChatUiState {
+        val error = outcome.error ?: return this
+        if (error.kind.retryable) return this
+        return copy(error = error.kind.userMessage, errorKind = error.kind)
+    }
+
+    /** 点橙色圆钮：把失败的那一轮重发一次（不新建用户消息，不消耗修改次数） */
+    fun retryFailed(message: ChatMessage) {
+        val targetId = message.retryTargetId ?: return
+        val id = sessionId ?: return
+        if (state.isStreaming) return
+
+        state = state.copy(isStreaming = true, error = null, errorKind = null)
+        job = viewModelScope.launch {
+            try {
+                state = state.withOutcomeError(repository.regenerate(id, targetId, apiKey))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ChatException) {
+                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
+            } catch (e: Exception) {
+                state = state.copy(error = "生成失败，请重试", errorKind = null)
+            } finally {
+                state = state.copy(isStreaming = false)
+            }
+        }
+    }
+
     fun clearError() {
         state = state.copy(error = null)
     }
@@ -420,10 +462,29 @@ class ChatViewModel(
                     val branchNodes = rows.map {
                         BranchNode(it.message.id, it.message.parentId, it.message.insertedAt)
                     }
+                    // 失败的那一轮：用户消息左侧要挂橙色重试圆钮，下面挂灰字提示
+                    val failedAfterUser = HashMap<Long, MessageWithFragments>()
+                    chain.forEachIndexed { index, entry ->
+                        val next = chain.getOrNull(index + 1)?.message ?: return@forEachIndexed
+                        val current = entry.message
+                        val retryable = next.errorKind?.retryable == true
+                        if (current.role == Role.USER && next.role == Role.ASSISTANT &&
+                            next.parentId == current.id && next.status == MessageStatus.FAILED && retryable
+                        ) {
+                            failedAfterUser[current.id] = chain[index + 1]
+                        }
+                    }
+
                     state = state.copy(
                         messages = chain.mapNotNull { entry ->
                             val (index, count) = versionPointer(branchNodes, entry.message.id)
-                            entry.toChatMessage()?.copy(versionIndex = index, versionCount = count)
+                            val failed = failedAfterUser[entry.message.id]
+                            entry.toChatMessage()?.copy(
+                                versionIndex = index,
+                                versionCount = count,
+                                retryTargetId = failed?.message?.id,
+                                retryHint = failed?.message?.errorKind?.retryHint,
+                            )
                         },
                         title = session?.title,
                     )

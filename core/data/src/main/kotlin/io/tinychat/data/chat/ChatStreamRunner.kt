@@ -86,6 +86,8 @@ class ChatStreamRunner(
         } catch (e: ChatException) {
             runCatching { flush() }
             messageDao.setStatus(assistantMessageId, MessageStatus.FAILED)
+            // 失败原因必须落库：界面上「断网重试圆钮」靠 error_kind 判断
+            runCatching { messageDao.setError(assistantMessageId, e.kind, e.message) }
             return RunOutcome(
                 messageId = assistantMessageId,
                 status = MessageStatus.FAILED,

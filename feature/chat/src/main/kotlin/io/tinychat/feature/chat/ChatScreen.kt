@@ -58,6 +58,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -102,6 +104,7 @@ fun ChatScreen(
     onSwitchVersion: (Long, Int) -> Unit,
     onRegenerate: (ChatMessage) -> Unit,
     onContinue: (ChatMessage) -> Unit,
+    onRetry: (ChatMessage) -> Unit,
 ) {
     val palette = TcTheme.palette
 
@@ -134,6 +137,7 @@ fun ChatScreen(
                 onSwitchVersion = onSwitchVersion,
                 onRegenerate = onRegenerate,
                 onContinue = onContinue,
+                onRetry = onRetry,
             )
         }
 
@@ -218,6 +222,7 @@ private fun MessageList(
     onSwitchVersion: (Long, Int) -> Unit,
     onRegenerate: (ChatMessage) -> Unit,
     onContinue: (ChatMessage) -> Unit,
+    onRetry: (ChatMessage) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -276,6 +281,7 @@ private fun MessageList(
                     onSwitchVersion = { delta -> onSwitchVersion(message.id, delta) },
                     onRegenerate = if (!message.isUser && isLatest) ({ onRegenerate(message) }) else null,
                     onContinue = if (!message.isUser && isLatest && message.canContinue) ({ onContinue(message) }) else null,
+                    onRetry = { onRetry(message) },
                 )
             }
         }
@@ -322,6 +328,7 @@ private fun MessageRow(
     onSwitchVersion: (Int) -> Unit,
     onRegenerate: (() -> Unit)?,
     onContinue: (() -> Unit)?,
+    onRetry: () -> Unit,
 ) {
     val palette = TcTheme.palette
 
@@ -330,7 +337,28 @@ private fun MessageRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.End,
         ) {
-            Text(
+            Row(verticalAlignment = Alignment.Bottom) {
+                if (message.retryTargetId != null) {
+                    // 官方做法：失败那轮在气泡左侧挂一个橙色实心圆 + 白色重试图标，
+                    // 圆钮与气泡**最后一行文字**对齐（气泡内边距 10dp，这里补回来）
+                    Box(
+                        modifier = Modifier
+                            .padding(bottom = 10.dp, end = 8.dp)
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(palette.warning)
+                            .clickable(onClick = onRetry),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = TcIcons.Regenerate,
+                            contentDescription = "重试",
+                            tint = palette.brandOn,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+                Text(
                 text = message.text,
                 style = TcTypography.bodyLarge,
                 color = palette.labelPrimary,
@@ -339,7 +367,16 @@ private fun MessageRow(
                     .background(palette.bubble, BubbleShape)
                     .combinedClickable(onClick = onTap, onLongClick = onCopyMessage)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+                )
+            }
+            message.retryHint?.let { hint ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = hint,
+                    style = TcTypography.bodySmall,
+                    color = palette.labelTertiary,
+                )
+            }
             if (message.versionCount > 1) {
                 VersionSwitcher(message.versionIndex, message.versionCount, onSwitchVersion)
             }
@@ -751,6 +788,17 @@ private fun InputCard(
     val inputFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
+    // 输入框内容由外部（state.input）驱动：从外面写进来时（例如点消息进入编辑）
+    // 光标要落在**末尾**，否则会停在开头还要手动挪。
+    var fieldValue by remember {
+        mutableStateOf(TextFieldValue(state.input, TextRange(state.input.length)))
+    }
+    LaunchedEffect(state.input) {
+        if (fieldValue.text != state.input) {
+            fieldValue = TextFieldValue(state.input, TextRange(state.input.length))
+        }
+    }
+
     // 点消息进入编辑态时，输入框要直接拿到焦点并弹输入法（否则还要再点一下）
     LaunchedEffect(state.editingMessageId) {
         if (state.editingMessageId != null) {
@@ -805,8 +853,11 @@ private fun InputCard(
                 )
             }
             BasicTextField(
-                value = state.input,
-                onValueChange = onInputChange,
+                value = fieldValue,
+                onValueChange = { newValue ->
+                    fieldValue = newValue
+                    onInputChange(newValue.text)
+                },
                 textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
                 cursorBrush = SolidColor(palette.brand),
                 modifier = Modifier
