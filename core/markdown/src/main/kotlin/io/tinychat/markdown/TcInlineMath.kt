@@ -55,6 +55,11 @@ internal fun InlineMathParagraph(
     val context = LocalContext.current
     val density = LocalDensity.current
     val palette = TcTheme.palette
+    // 段落文字色：样式里带了就用它（引用块是三级灰），否则用正文色。
+    // **必须显式传**：`Text` 不传颜色会回落到 `LocalContentColor`，而这里的外层是
+    // Markdown 库的容器，暗色下拿到的是 Material 的默认（黑），表现为「字黑、公式白」。
+    val textColor = style.color.takeIf { it != androidx.compose.ui.graphics.Color.Unspecified }
+        ?: palette.labelPrimary
     val screenPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }.toInt()
     var images by remember(formulas, streaming) { mutableStateOf<Map<Int, InlineMathImage>?>(null) }
 
@@ -75,7 +80,7 @@ internal fun InlineMathParagraph(
                 display = false,
                 fontPx = fontPx,
                 widthPx = screenPx.coerceAtLeast(1),
-                colorHex = palette.labelPrimary.toHex(),
+                colorHex = textColor.toHex(),
                 dark = palette.bg.luminance() < 0.5f,
             )
             val result = TcRenderHost.render(context, request)
@@ -93,6 +98,7 @@ internal fun InlineMathParagraph(
         Text(
             text = remember(formulas) { built.applyInlineMath(formulas, replace = false) },
             style = style,
+            color = textColor,
             modifier = modifier,
         )
         return
@@ -142,6 +148,7 @@ internal fun InlineMathParagraph(
     Text(
         text = remember(formulas) { built.applyInlineMath(formulas, replace = true) },
         style = style.copy(lineHeight = lineHeightSp.sp),
+        color = textColor,
         inlineContent = content,
         // 位图会画出占位框（下伸），默认 overflow 会把它裁掉
         overflow = TextOverflow.Visible,

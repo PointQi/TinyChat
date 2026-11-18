@@ -55,25 +55,32 @@ fun TcMarkdown(
 ) {
     var generation by remember { mutableIntStateOf(0) }
     val merger = remember { FrameMerger() }
+    // 「正文后紧跟 --- / ===」会被 GFM 当成 setext 标题，标记到达的瞬间上一行变标题 → 高度回缩。
+    // 换成等长的 ***（长度不变，引用角标偏移不受影响），见 stabilizeSetextMarkers。
+    val rendered = remember(content) { stabilizeSetextMarkers(content) }
+    // 末尾连续的换行也先扣住不给解析器：`……现象。\n\n` 这种中间态会先渲染出一行空白，
+    // 下一段文字到达时那行空白消失，高度就回缩一次（真机实测 -24dp）。
+    // 扣住只影响「画面末尾的空行」，下一片文字到达时会连同换行一起补上。
+    val target = remember(rendered) { rendered.trimEnd('\n') }
     // 只有真含行内代码时才启用圆角画笔：没有反引号的正文可以省掉
     // extend() / onTextLayout / drawBehind 这一整条链路
-    val withInlineCode = remember(content) { content.contains('`') }
+    val withInlineCode = remember(target) { target.contains('`') }
     val inlineContent = citationInlineContent(citations, onCitationClick)
 
     key(generation) {
         val state = rememberStreamingMarkdownState()
 
-        LaunchedEffect(state, content, streaming) {
+        LaunchedEffect(state, target, streaming) {
             val appended = state.content.length
-            if (appended > content.length || !content.regionMatches(0, state.content, 0, appended)) {
+            if (appended > target.length || !target.regionMatches(0, state.content, 0, appended)) {
                 // 正文被替换（比如重新生成得到更短的答案）：解析状态只能追加，只能重建
                 generation += 1
                 return@LaunchedEffect
             }
-            if (appended == content.length) return@LaunchedEffect
+            if (appended == target.length) return@LaunchedEffect
 
             var cursor = appended
-            while (cursor < content.length) {
+            while (cursor < target.length) {
                 // 已结束的消息不节流：一次补完即可，没必要压着出
                 if (streaming) {
                     val wait = merger.millisUntilNextUpdate()
@@ -83,9 +90,9 @@ fun TcMarkdown(
                     }
                 }
                 val startMs = nowMs()
-                state.append(content.substring(cursor))
+                state.append(target.substring(cursor))
                 merger.recordCost(nowMs() - startMs)
-                cursor = content.length
+                cursor = target.length
             }
         }
 

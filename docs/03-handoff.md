@@ -15,9 +15,9 @@
 | 规划 | ✅ 开发计划 + 交互设计完成（02 号文档） |
 | Spike | ✅ 4/4（SSE 离线 40/40、导出包 PASS、渲染定 API、公式图表定 WebView、在线 SSE 跑通） |
 | 代码 | ✅ **M1 完成（2026-11-18）**：M1-1 ~ M1-13 全部完成，单测 118 个 + lint 全绿；真机验过发送/停止/编辑重发/重新生成/版本切换/继续生成/抽屉会话管理与搜索 |
-| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）、**M2-5/M2-6（块级 + 行内公式、mermaid，共用离屏位图宿主）** 已落地并真机/模拟器对照；M2-3 抖动三坑待压测 |
+| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）、**M2-5/M2-6（块级 + 行内公式、mermaid，共用离屏位图宿主）**、**M2-3（抖动三坑）** 均已落地并在真机对照；真机实测流式 59 帧 0 回缩 |
 | 阻塞项 | 无。Key 走 `.local/dev-key.txt`（debug 注入），M8-6 换 Keystore |
-| 下一步 | **M2-3 抖动压测**（高度单调性 + 流式三坑），随后进 M3 |
+| 下一步 | 进 **M3**（引用角标点击 / 来源抽屉）、随后 M4 附件与 M5 语音 |
 
 ---
 
@@ -513,7 +513,36 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | mermaid 缩放 | `useMaxWidth: false`（否则 mermaid 默认把图拉满容器，字号被放大）；显示端按位图长宽比 `aspectRatio` 等比铺满，超宽图缩到正文宽度 |
 | 渲染实验室 | `app/src/debug/`（release 不打包）：`adb shell am start -n io.tinychat/io.tinychat.debug.RenderLabActivity`，含 5 类图、错误态样例、`--ez dark true` 深色开关与「测耗时」（`TcRenderLab.benchMath` 冷启/稳态各一轮） |
 
-**M2-5 收尾：行内公式（2026-11-18 完成，提交见 git log）**
+**M2-3 抖动（2026-11-18 完成，真机 Pixel，density 3.0）**
+
+**验收工具**：`StreamingLabActivity`（debug 专用）。把一份 2600 字样本按 6 字/帧喂给 `TcMarkdown`，
+用 `onSizeChanged` 记录每次高度，统计「高度回缩次数」（验收标准 0 次），并把首个回缩的内容位置写进
+`cacheDir/stream.txt`：
+
+```bash
+adb shell am start -n io.tinychat/io.tinychat.debug.StreamingLabActivity
+adb shell run-as io.tinychat cat cache/stream.txt   # frames=… drops=… maxDrop=… + firstDrop@cursor
+```
+
+**实测**：修之前 `frames=62 drops=1 maxDrop=72`；修之后 **`frames=59 drops=0`**。
+
+| # | 坑 | 现象与根因 | 修法 |
+|---|---|---|---|
+| 1 | **setext** | 正文下一行来了 `---` / `===`，GFM 把上一行变成标题 → 字号、字重、块间距全变，出现 -72px 回缩 | `stabilizeSetextMarkers()`：把这类标记行**原地换成等长的 `***`**（仍是分隔线，但不会被当 setext）。长度不变，引用角标偏移不受影响。**流式与结束都生效**，否则收尾时又跳一次 |
+| 2 | **段尾空行** | 内容以 `\n\n` 结尾时，那一行空白先被解析成一个空行；下一段文字到达后空行消失 → -24dp 回缩 | 喂解析器前先**扣住末尾连续的换行**（`trimEnd('\n')`），下一片文字到达时连同换行一起补；画面末尾不会出现「空行闪一下」 |
+| 3 | key 稳定 | 解析状态每帧重建会整篇重解析（Spike 已证 42–61 次回缩） | 仍只用 `rememberStreamingMarkdownState()` + `append()`；只有「内容不再是从前的前缀」才 `generation += 1` 重建 |
+
+> **取舍**（需要知情）：坑 1 的代价是——若 model 真按 setext 写法输出 `标题\n===`，会被渲染成「段落 + 分隔线」而不是大标题。理由：模型输出里几乎只用 `#` 系列，这种两行写法基本都表示分隔；而它带来的是一条稳定的「高度只增不减」保证。
+
+**同一轮真机发现并修掉的显示 bug**：暗色模式下**含公式的段落与列表项文字是黑的**（公式却是白的）。
+根因是我自定义的 `TcParagraph` / `InlineMathParagraph` / `ParagraphSlice` 里的 `Text` **没有显式传颜色**，
+回落到 `LocalContentColor`（此处是 Material 的默认黑），而公式位图用的是 `palette.labelPrimary`。
+→ 三处都改成「样式里带颜色就用它（引用块三级灰），否则 `palette.labelPrimary`」。
+**教训**：这个模块里凡是自己 new 的 `Text` 都必须显式给 `color`，别依赖环境色。
+
+
+
+**M2-5 收尾：行内公式（2026-11-18 完成）**
 
 四个毛病全部修掉，且都不是「位图路线」的硬限制：
 

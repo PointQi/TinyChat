@@ -208,6 +208,9 @@ private fun ParagraphSlice(text: String, model: MarkdownComponentModel) {
     Text(
         text = payload,
         style = model.typography.paragraph,
+        // 同 InlineMathParagraph：不显式给颜色会回落到 LocalContentColor（暗色下是黑的）
+        color = model.typography.paragraph.color.takeIf { it != androidx.compose.ui.graphics.Color.Unspecified }
+            ?: TcTheme.palette.labelPrimary,
     )
 }
 
