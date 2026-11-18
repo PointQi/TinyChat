@@ -148,7 +148,12 @@ fun TinyChatApp() {
                     ProviderSettingsScreen(onBack = { navController.popBackStack() })
                 }
                 composable(Routes.DATA) {
-                    DataManagementScreen(onBack = { navController.popBackStack() })
+                    DataManagementScreen(
+                        archive = container.archive,
+                        onBack = { navController.popBackStack() },
+                        // 导入是整包替换：当前打开的会话可能已经不存在，回到新对话
+                        onImported = { chatViewModel.newChat() },
+                    )
                 }
                 composable(Routes.ABOUT) {
                     AboutScreen(onBack = { navController.popBackStack() })

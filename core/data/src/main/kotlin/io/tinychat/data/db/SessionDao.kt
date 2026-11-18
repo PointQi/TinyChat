@@ -66,4 +66,8 @@ interface SessionDao {
 
     @Query("SELECT COUNT(*) FROM sessions WHERE deleted = 0")
     suspend fun count(): Int
+
+    /** 导入前清库（M6-3）：级联带走 messages / fragments / attachments 行 */
+    @Query("DELETE FROM sessions")
+    suspend fun deleteAll()
 }

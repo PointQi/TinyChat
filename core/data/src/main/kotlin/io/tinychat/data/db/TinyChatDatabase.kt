@@ -39,6 +39,6 @@ abstract class TinyChatDatabase : RoomDatabase() {
         const val NAME = "tinychat.db"
 
         /** 每次改表结构必须 +1 并在 [TinyChatMigrations] 里补迁移 */
-        const val VERSION = 2
+        const val VERSION = 3
     }
 }

@@ -1,15 +1,29 @@
 package io.tinychat.feature.settings
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.tinychat.data.archive.ChatArchive
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
@@ -18,6 +32,7 @@ import io.tinychat.ui.TcListRow
 import io.tinychat.ui.TcSectionLabel
 import io.tinychat.ui.TcTopBar
 import io.tinychat.model.PromptPreset
+import kotlinx.coroutines.launch
 
 /** 设置树（docs/02 §12.5）。M0 只有导航与占位项。 */
 @Composable
@@ -91,23 +106,138 @@ fun ProviderSettingsScreen(onBack: () -> Unit) {
     )
 }
 
-/** 数据管理（docs/02 §12.8）。M0 只有壳。 */
+/**
+ * 数据管理（docs/02 §12.8，M6-5）。
+ *
+ * 导入 = **整包替换**（官方导出的语义就是"恢复备份"），所以先弹确认；
+ * 导出 = 直接流式写 SAF 指定的位置。
+ */
 @Composable
-fun DataManagementScreen(onBack: () -> Unit) {
-    PlaceholderPage(
-        title = "数据管理",
-        onBack = onBack,
-        lines = listOf(
-            "导入：DeepSeek 导出包（export_format_version = 3）",
-            "  任何未识别 ZIP 条目 → 整包失败并回滚",
-            "  session JSON 内未知字段 → 静默丢弃",
-            "",
-            "导出：兼容模式（纯 v3，不含提示词与用量）",
-            "  不新增 ZIP 条目，不新增会话字段",
-            "",
-            "M6 实现：3340 会话样本 100% 往返",
-        ),
-    )
+fun DataManagementScreen(
+    archive: ChatArchive,
+    onBack: () -> Unit,
+    onImported: () -> Unit,
+) {
+    val palette = TcTheme.palette
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var confirmImport by remember { mutableStateOf(false) }
+    var pendingUri by remember { mutableStateOf<Uri?>(null) }
+
+    val importPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri -> pendingUri = uri }
+
+    val exportPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = true
+        status = "正在导出…"
+        scope.launch {
+            try {
+                val report = archive.export(uri) { done, total ->
+                    val value = "正在导出 $done/$total"
+                    scope.launch { status = value }
+                }
+                status = "已导出 ${report.sessions} 个会话、${report.messages} 条消息，" +
+                    "${formatSize(report.bytes)}（用时 ${report.durationMs / 1000}s）"
+            } catch (e: Exception) {
+                status = "导出失败：${e.message ?: e::class.simpleName}"
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    LaunchedEffect(pendingUri) {
+        val uri = pendingUri ?: return@LaunchedEffect
+        pendingUri = null
+        busy = true
+        status = "正在导入…"
+        try {
+            val report = archive.import(uri)
+            status = "已导入 ${report.sessions} 个会话、${report.messages} 条消息、" +
+                "${report.files} 个附件（丢弃 ${report.droppedFragments} 条提示碎片，" +
+                "用时 ${report.durationMs / 1000}s）"
+            onImported()
+        } catch (e: Exception) {
+            status = "导入失败：${e.message ?: e::class.simpleName}"
+        } finally {
+            busy = false
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.bg),
+    ) {
+        TcTopBar(
+            title = "数据管理",
+            leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
+        )
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            TcSectionLabel("备份")
+            TcListRow(
+                title = "导入对话",
+                subtitle = if (busy) "正在处理，请稍候…" else "DeepSeek 导出包（v3）",
+                onClick = { if (!busy) confirmImport = true },
+            )
+            TcListRow(
+                title = "导出对话",
+                subtitle = if (busy) "正在处理，请稍候…" else "兼容模式（纯 v3，不含提示词与用量）",
+                onClick = {
+                    if (!busy) {
+                        exportPicker.launch("tinychat-backup-${System.currentTimeMillis()}.zip")
+                    }
+                },
+            )
+
+            status?.let { text ->
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = text,
+                    style = TcTypography.bodySmall,
+                    color = palette.labelSecondary,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "导入会覆盖本机现有对话；导出不包含提示词预设与本机用量统计。",
+                style = TcTypography.bodySmall,
+                color = palette.labelTertiary,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
+    }
+
+    if (confirmImport) {
+        AlertDialog(
+            onDismissRequest = { confirmImport = false },
+            title = { Text("导入会覆盖现有对话？") },
+            text = { Text("当前设备上的全部对话与附件都会被替换成包里内容，且不可撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmImport = false
+                    importPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                }) { Text("选择文件") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmImport = false }) { Text("取消") }
+            },
+            containerColor = palette.bg,
+        )
+    }
+}
+
+private fun formatSize(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "%.0f KB".format(bytes / 1024.0)
+    else -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
 }
 
 /** 关于（docs/02 §12.5 末）。 */

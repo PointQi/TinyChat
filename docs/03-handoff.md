@@ -20,13 +20,13 @@
 | **M3 联网** | ✅ 已真机在用 | `server_tool_use` / `web_search_tool_result` 解析、搜索阶段碎片与卡片、来源胶囊 + 来源页、「N 个网页」聚合、`deepseek_web_search` / `deepseek_read_url` 声明；工具报文见 §6 |
 | **M4 附件** | ✅ **全部验完**（2026-11-19） | 相册多选、SAF 选文件、拍照入口（按 `resolveActivity` 判空）、草稿预览与删除、落盘（`attachments/{messageId}/` + `thumbs/`）、Files API 流式上传、`purpose` 自动判定、请求块（文件/图片在前、文本在后）、消息内 120dp/64dp 缩略图与文件卡、v4-pro 隐藏入口、断网失败→联网重试可续、删会话清附件——模拟器实拍 + 真实接口用例。仅剩「拍照」未在真机验（模拟器无相机 App）与确认文案分支（并入 M6） |
 | **M5 语音** | ⬜ 未实现 | `Asr` / `SpeechRecognizer` / 录音相关 0 处；TTS 只有 `Provider.kt` 的能力位与 `TtsVoice` 枚举（决策 3），**没有播放实现** |
-| **M6 数据管理** | 🚧 基本在 | v3 导入导出已实现（导出 27 处、导入 8 处，流式 ZIP + SAF）；「3340 会话 100% 往返」的验收还没写进记录 |
+| **M6 数据管理** | 🚧 **导入导出已通，3340 会话往返 PASS**（2026-11-19） | 流式 ZIP 读（`ZipFile` 中央目录）、v3 解析/校验（未知条目整包失败、索引 message_count 交叉校验）、单事务整包替换 + 文件副作用回滚、导出（官方条目顺序，不新增条目/字段）、数据管理页接 SAF（导入要二次确认）。**真样本 3340 会话 / 23580 消息 / 39665 碎片 / 79 附件往返，字段级 diff = 0**；未做：清空所有对话（M6-6）、导出进度百分比 |
 | **M7 用量与费用** | 🚧 大半在 | `Usage` / `Cost` / 余额接口都在（`余额` 8 处）；**上下文饼图未做**（`PieChart` / `饼图` 0 处） |
 | **M7.5 提示词** | 🚧 基本在 | 预设体系在（`Preset` 165 处、`内置预设` 4 处）；三种组合模式与会话快照固化待对验收 |
 | **M8 打磨** | 🚧 部分 | 设置页在（`SettingsScreens.kt`）；**分享出图、i18n、引导页都没做**（`ShareImage` / `I18n` / `Onboarding` 各 0 处） |
 | **M9 发布** | ⬜ 未开始 | 签名仍是 debug（决策 14，`M8-6` 才换 Keystore）；`NOTICE` 0 处 |
 | 阻塞项 | 无 | Key 走 `.local/dev-key.txt`（debug 注入） |
-| 下一步 | — | 建议顺序：M4 收尾（SAF 真机验 + 失败重试 + 删会话清附件） → M5 语音 → M8 分享出图 / i18n → M9 发布 |
+| 下一步 | — | 建议顺序：M6 收尾（M6-6 清空所有对话 + 确认文案分支） → M5 语音（等真机） → M8 分享出图 / i18n → M9 发布 |
 
 
 ---
@@ -670,6 +670,60 @@ adb logcat -d | Select-String "bench cold"
 - 拍过的照片缩略图/原件不会自动清理（只有删会话时清）；M6「清空所有对话」一起收口。
 - 更早期留下的孤儿文件（先在旧包上删过两个会话）：`attachments/13|15|17` 与两个 thumb 是**修好之前**删会话留下的，新代码不会再产生。
 - 模拟器上没有相机 App（`ACTION_IMAGE_CAPTURE` 解析不到），所以「拍照」入口在模拟器里**不出现**（代码按 `resolveActivity` 判空隐藏）；真机要再验一次 FileProvider 那条路。
+
+
+---
+
+**M6 导入导出（2026-11-19 落地，真样本往返 PASS）**
+
+| 模块 | 职责 |
+|---|---|
+| `data/archive/V3Format.kt` | 条目名与顺序、`parseFileEntry`、时间换算、报告类型 |
+| `data/archive/V3Archive.kt` | DTO、**`ZipFile` 读**、`ZipOutputStream` 写、`V3SessionJson` 拼会话 JSON |
+| `data/archive/V3Importer.kt` | 校验 + 单事务整包替换 + 附件落地 + 索引交叉校验 |
+| `data/archive/V3Exporter.kt` | 按官方顺序导出；本地附件补 `FILE` 碎片 |
+| `data/archive/ChatArchive.kt` | 门面：SAF `Uri` 或 `File` → 上面两者；导入后清孤儿文件 |
+| `app/src/debug/…/ArchiveLabActivity` | 验收台（release 不打包），按路径跑导入/导出 |
+
+**四个必须记住的坑（都真机验过）**
+
+| # | 坑 | 现象 / 根因 | 修法 |
+|---|---|---|---|
+| 1 | **`ZipInputStream` 读不了真样本** | 包里有 STORE 条目带 data descriptor：JDK 直接抛 `only DEFLATED entries can have EXT descriptor`；**Android 上更阴**——静默停在那一条，79 个附件只进来 1 个，还不报错 | 先把流落成临时文件，再用 **`ZipFile`（中央目录）**逐条读。代价是多一次 87MB 拷贝（~3s），换来尺寸/CRC 可信 |
+| 2 | **`attachments` 主键必须 `(id, message_id)`** | 真样本 124 个附件里 **20 个**被同一会话的两条提问重复引用；单列主键下后写的把前一条顶掉 → 导出丢 `export_path`、界面少一个缩略图 | 改复合主键 + `MIGRATION_2_3`（重建表）；`byId` 返回 List，`setLocal` 同时更新同一 id 的所有行 |
+| 3 | **导出消息按 `id` 排，不能按 `inserted_at`** | 真样本里 ASSISTANT 的 `inserted_at` 常比它对应的提问早几毫秒（发言时间 vs 建行时间），按时间排会把一问一答顺序翻过来（`current_message_id` 也随之错位） | `withFragments(...).sortedBy { it.message.id }` |
+| 4 | **时间格式不能固定三位毫秒** | 官方整秒写作 `2025-06-17T07:55:45Z`（无小数），有毫秒才写 `.059Z` | 直接用 `Instant.toString()`，往返字节级一致 |
+
+**丢弃规则**（03 §6.8）：`TIP`（UI 提示条）与 `CONTENT_RISK`（同一句英文免责声明）导入时丢弃，报告里计数。真样本丢了 **4411** 条，与文档记录的条数一致。
+
+**验收（2026-11-19，模拟器 Pixel_3a_API_34）**
+
+```bash
+# 导入（87MB 真样本，包已推到 app 自己的外部目录，SAF 之外的可复现路径）
+adb shell am start -n io.tinychat/io.tinychat.debug.ArchiveLabActivity \
+  --es import /sdcard/Android/media/io.tinychat/deepseek_data.zip
+adb shell run-as io.tinychat cat cache/archive.txt
+# → sessions=3340 messages=23580 fragments=39665 files=79 dropped=4411 ms≈67000
+
+# 导出
+adb shell am start -n io.tinychat/io.tinychat.debug.ArchiveLabActivity \
+  --es export /sdcard/Android/media/io.tinychat/tinychat_export.zip
+# → sessions=3340 messages=23580 fragments=39665 files=79 bytes≈82MB ms≈34000
+```
+
+导出包与原包逐字段比对（Python，归一化：丢掉 `TIP`/`CONTENT_RISK`、消息 id 换成会话内序号、`export_path` 只比"文件在不在包里"）：
+
+```
+sessions 3340 3340 ids equal True
+files     79   79  names equal True
+total diff sessions 0 => PASS
+```
+
+导出体积 82.4MB < 原包 87.8MB，差额就是丢掉的 4411 条 `CONTENT_RISK`。
+
+**导入语义**：整包替换（先二次确认）。DB 在一个事务里换库；附件原件写在事务外，所以**失败时按"这次写过哪些目录"逐个删**（不是删整个 attachments 根，否则会误伤旧数据）。导入成功后 `ChatArchive` 再清一次孤儿目录与孤儿缩略图。
+
+**还没做**：`M6-6` 清空所有对话（含停止生成、清附件、二次确认）；导出只有"第 N/3340 个会话"的文本进度，没有进度条；`chat_session_index.json` 只用于校验，不用于建列表（会话顺序取 `updated_at`）；**数据管理页的 SAF 点选在模拟器上没点通**——`DocumentsUI` 的 Download 列表里不显示我们 push 进去的 zip（同目录的 pdf/md/txt 都显示），`ChatArchive.import(Uri)` 的「流 → 临时文件 → 解析」这段改由 Robolectric 用例覆盖（`ChatArchiveUriImportTest`），点选本身留真机验。
 
 
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**

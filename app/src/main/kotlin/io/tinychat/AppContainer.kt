@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import io.tinychat.data.attachment.AttachmentStore
 import io.tinychat.data.attachment.AttachmentUploader
+import io.tinychat.data.archive.ChatArchive
 import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.db.DatabaseFactory
 import io.tinychat.net.transport.OkHttpChatTransport
@@ -31,6 +32,9 @@ class AppContainer(context: Context) {
 
     /** 附件落盘（M4）：选图/选文件后先把元信息与缩略图准备好 */
     val attachmentStore = AttachmentStore(context.applicationContext)
+
+    /** 导入/导出（M6）：v3 兼容包 */
+    val archive = ChatArchive(context.applicationContext, database)
 
     val repository = ChatRepository(
         db = database,

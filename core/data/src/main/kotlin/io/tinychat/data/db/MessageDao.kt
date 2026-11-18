@@ -1,4 +1,4 @@
-﻿package io.tinychat.data.db
+package io.tinychat.data.db
 
 import androidx.room.Dao
 import androidx.room.Insert
@@ -51,6 +51,10 @@ interface MessageDao {
 
     @Query("UPDATE messages SET status = :status WHERE id = :id")
     suspend fun setStatus(id: Long, status: MessageStatus)
+
+    /** 导入用：包内 id 先按顺序插成新行，再回来补父子关系 */
+    @Query("UPDATE messages SET parent_id = :parentId WHERE id = :id")
+    suspend fun setParent(id: Long, parentId: Long?)
 
     /** 失败原因：断网这类错误要落库，界面才能挂出重试圆钮 */
     @Query("UPDATE messages SET error_kind = :kind, error_message = :message WHERE id = :id")

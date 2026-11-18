@@ -26,5 +26,48 @@ object TinyChatMigrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2)
+    /**
+     * v2 → v3：`attachments` 主键从 `id` 改成 `(id, message_id)`。
+     *
+     * 原因：真样本里同一个附件会被同一会话的两条提问同时引用（124 个附件里 20 个如此）。
+     * 单列主键下后写的那条会把前一条替换掉 —— 导出丢 `export_path`、界面少一个缩略图。
+     * SQLite 改主键只能重建表（Room 的 schema 校验也按这个顺序比字段）。
+     */
+    val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `attachments_new` (
+                    `id` TEXT NOT NULL,
+                    `message_id` INTEGER NOT NULL,
+                    `file_name` TEXT NOT NULL,
+                    `file_size` INTEGER NOT NULL,
+                    `mime` TEXT,
+                    `local_path` TEXT,
+                    `remote_id` TEXT,
+                    `is_image` INTEGER NOT NULL,
+                    `width` INTEGER,
+                    `height` INTEGER,
+                    `state` TEXT NOT NULL,
+                    PRIMARY KEY(`id`, `message_id`),
+                    FOREIGN KEY(`message_id`) REFERENCES `messages`(`id`)
+                        ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT OR REPLACE INTO `attachments_new`
+                SELECT `id`, `message_id`, `file_name`, `file_size`, `mime`, `local_path`,
+                       `remote_id`, `is_image`, `width`, `height`, `state`
+                FROM `attachments`
+                """.trimIndent(),
+            )
+            db.execSQL("DROP TABLE `attachments`")
+            db.execSQL("ALTER TABLE `attachments_new` RENAME TO `attachments`")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `idx_attachments_msg` ON `attachments` (`message_id`)")
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
 }

@@ -210,7 +210,7 @@ CREATE UNIQUE INDEX idx_fragments_ord ON fragments(message_id, ord);
 
 -- 附件
 CREATE TABLE attachments (
-  id          TEXT PRIMARY KEY NOT NULL,   -- 归档里的 file id
+  id          TEXT NOT NULL,               -- 归档里的 file id
   message_id  INTEGER NOT NULL,
   file_name   TEXT NOT NULL,
   file_size   INTEGER NOT NULL,
@@ -220,6 +220,7 @@ CREATE TABLE attachments (
   is_image    INTEGER NOT NULL,
   width INTEGER, height INTEGER,
   state       TEXT NOT NULL,               -- LOCAL / UPLOADING / UPLOADED / FAILED / MISSING
+  PRIMARY KEY(id, message_id),             -- 同一附件会被同一会话的多条提问引用（真样本 20/124）
   FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_attachments_msg ON attachments(message_id);

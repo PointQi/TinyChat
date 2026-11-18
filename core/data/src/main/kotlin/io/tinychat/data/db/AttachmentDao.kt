@@ -19,8 +19,9 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachments WHERE message_id = :messageId ORDER BY rowid")
     suspend fun byMessage(messageId: Long): List<AttachmentEntity>
 
+    /** 同一个附件可能挂在同一会话的多条消息上（v3 主键是 (id, message_id)） */
     @Query("SELECT * FROM attachments WHERE id = :id")
-    suspend fun byId(id: String): AttachmentEntity?
+    suspend fun byId(id: String): List<AttachmentEntity>
 
     @Query("UPDATE attachments SET state = :state WHERE id = :id")
     suspend fun setState(id: String, state: AttachmentState)

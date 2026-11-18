@@ -10,5 +10,9 @@
             android:name="io.tinychat.debug.StreamingLabActivity"
             android:exported="true"
             android:label="流式抖动" />
+        <activity
+            android:name="io.tinychat.debug.ArchiveLabActivity"
+            android:exported="true"
+            android:label="导入导出验收" />
     </application>
 </manifest>
