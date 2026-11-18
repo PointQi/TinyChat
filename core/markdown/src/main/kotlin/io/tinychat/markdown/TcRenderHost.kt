@@ -24,6 +24,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import kotlin.math.max
 
 /**
  * 公式与图表的离屏渲染宿主（M2-5 / M2-6）。
@@ -56,6 +57,13 @@ internal object TcRenderHost {
         val bitmap: ImageBitmap?,
         val widthPx: Int = 0,
         val heightPx: Int = 0,
+        /**
+         * 基线在位图中的 y（物理 px）；0 = 没量到（块级公式、mermaid 都是 0）。
+         *
+         * 行内公式靠它对齐正文：占位框只占 [0, baselinePx) 这段（即基线以上），
+         * 位图从占位框顶端按原尺寸往下画，伸进基线以下的部分自然落进行距里。
+         */
+        val baselinePx: Int = 0,
         val error: String? = null,
     )
 
@@ -76,10 +84,53 @@ internal object TcRenderHost {
     private var pending: CompletableDeferred<BridgeResult>? = null
     private var nextId = 1
 
-    private data class BridgeResult(val ok: Boolean, val widthPx: Int, val heightPx: Int, val error: String?)
+    private data class BridgeResult(
+        val ok: Boolean,
+        /** 公式基线在**视口坐标**里的 y（CSS px），行内公式靠它对齐正文；0 = 没量到 */
+        val baselinePx: Int,
+        val error: String?,
+    )
 
     /** 缓存命中直接复用，不碰 WebView */
     fun cached(request: Request): Result? = cache.get(request.cacheKey())
+
+    /**
+     * 调试用：把渲染后的 stage HTML 取回来（只有渲染实验室调用）。
+     *
+     * 出问题时「图里少了根号/多出个小点」这类现象光看位图查不出原因，
+     * 必须看 KaTeX 到底生成了什么 DOM。
+     */
+    suspend fun dumpHtml(context: Context, request: Request): String = withContext(Dispatchers.Main) {
+        mutex.withLock {
+            val view = ensureWebView(context)
+            val result = drawOne(view, request)
+            val header = "ok=" + (result.bitmap != null) +
+                " w=" + result.widthPx + " h=" + result.heightPx +
+                " baseline=" + result.baselinePx + " err=" + result.error
+            val done = CompletableDeferred<String>()
+            view.evaluateJavascript(
+                "(function(){var s=document.getElementById('stage');" +
+                    "return s?s.outerHTML:'(no stage)';})()",
+            ) { value -> done.complete(value ?: "") }
+            header + "\n" + svgSummary(view) + "\n" + (withTimeoutOrNull(3_000) { done.await() } ?: "")
+        }
+    }
+
+    /** 调试：列出超出 #stage 盒子的元素与所有 svg（排查「图里多出个大图案」「根号消失」） */
+    private suspend fun svgSummary(view: WebView): String {
+        val deferred = CompletableDeferred<String>()
+        view.evaluateJavascript(
+            "(function(){" +
+                "var s=document.getElementById('stage').getBoundingClientRect();" +
+                "var out=[];var list=document.querySelectorAll('body *');" +
+                "for(var i=0;i<list.length;i++){var e=list[i];var r=e.getBoundingClientRect();" +
+                "if(r.bottom>s.bottom+8||r.height>s.height+8){" +
+                "out.push(e.tagName.toLowerCase()+'.'+(e.className||'-')+' '+Math.round(r.width)+'x'" +
+                "+Math.round(r.height)+'@'+Math.round(r.top)+','+Math.round(r.left));}}" +
+                "return 'GEO stage '+Math.round(s.width)+'x'+Math.round(s.height)+' | '+out.slice(0,10).join(' || ');})()",
+        ) { value -> deferred.complete(value ?: "") }
+        return withTimeoutOrNull(2_000) { deferred.await() } ?: "GEO ?"
+    }
 
     /**
      * 渲染一张图。必须在主线程调用（内部切到 Main）。
@@ -128,48 +179,118 @@ internal object TcRenderHost {
             if (request.kind == Kind.MERMAID) put("code", request.source) else put("latex", request.source)
         }.toString()
         val bridged = evaluateAndAwait(view, "window.tcRender(" + JSONObject.quote(payload) + ")")
-        if (bridged == null) return Result(null, error = "渲染超时")
-        if (!bridged.ok) return Result(null, bridged.widthPx, bridged.heightPx, bridged.error)
+            ?: return Result(null, error = "渲染超时")
+        if (!bridged.ok) return Result(bitmap = null, error = bridged.error)
 
-        // 回传的是 CSS px，折回物理像素。display 模式直接用请求宽度（页面本身按整宽排版）；
-        // 行内模式用实测宽 + 内边距，KaTeX 的上标/根号会探出元素盒，不留边就被切掉。
-        var width = if (request.display) {
-            request.widthPx.coerceIn(1, MAX_SIDE_PX)
+        // 出图 + **按像素裁到真正的墨迹框**。
+        //
+        // 为什么不按 DOM 尺寸裁：KaTeX 的盒子比墨迹小（根号尾巴、上下标、大括号都画在盒外，
+        // 实测块级公式的盒子只有真实高度的一半，矩阵右边少 20px）；而「取所有后代的并集」
+        // 又会被 `.pstrut` 这类 3em 高的隐形占位撑大。只有扫像素能拿到「真正有内容」的矩形。
+        // 视口如果装不下，墨迹会贴边 —— 那就放大重画，最多三轮。
+        var viewW = request.widthPx.coerceIn(1, MAX_SIDE_PX)
+        var viewH = INITIAL_PAGE_HEIGHT_PX
+        var full: Bitmap? = null
+        var bounds: IntArray? = null
+        for (round in 0 until 3) {
+            if (round > 0) {
+                layout(view, viewW, viewH)
+                // 改视口会让 WebView 重新排版并重新光栅，必须等一次 JS 往返再画，
+                // 否则 draw() 拿到的是旧尺寸的半张图（实测 `\frac{1}{2}` 只剩一个分母）
+                evaluateAndAwait(view, "window.tcMeasure($id)")
+                delay(DRAW_SETTLE_MS)
+            }
+            awaitVisualState(view)
+            val bitmap = Bitmap.createBitmap(viewW, viewH, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(0)
+            view.draw(Canvas(bitmap))
+            val found = inkBounds(bitmap)
+            full?.recycle()
+            full = bitmap
+            bounds = found
+            if (found == null) break
+            val hitBottom = found[1] + found[3] >= viewH - 2
+            // 块级的宽度是排版宽（居中靠它），不能放大，否则公式会重新按更宽的容器居中
+            val hitRight = !request.display && found[0] + found[2] >= viewW - 2
+            if (!hitBottom && !hitRight) break
+            if (hitBottom) viewH = (viewH * 2).coerceAtMost(MAX_SIDE_PX)
+            if (hitRight) viewW = (viewW + 400).coerceAtMost(MAX_SIDE_PX)
+        }
+        val source = full ?: return Result(null, error = "渲染失败")
+        val crop = cropRect(request.display, bounds, source.width, source.height)
+        val (cropX, cropY, cropW, cropH) = crop.toList()
+        val bitmap = if (cropX == 0 && cropY == 0 && cropW == source.width && cropH == source.height) {
+            source
         } else {
-            ((bridged.widthPx + 3) * scale).toInt().coerceIn(1, MAX_SIDE_PX)
+            // createBitmap 可能与原图共享像素，拷一份再把整屏释放掉
+            val cropped = Bitmap.createBitmap(source, cropX, cropY, cropW, cropH)
+            val copy = cropped.copy(Bitmap.Config.ARGB_8888, false) ?: cropped
+            if (copy !== cropped) cropped.recycle()
+            source.recycle()
+            copy
         }
-        var height = ((bridged.heightPx + 3) * scale).toInt().coerceIn(1, MAX_SIDE_PX)
-
-        // 量完再改尺寸会让页面重排一次，公式换行后可能比第一次更高（实测被裁掉半行）。
-        // 所以改完尺寸**再量一次**，宽高都只增不减，最多补两轮。
-        for (round in 0 until 2) {
-            layout(view, width, height)
-            delay(RESIZE_SETTLE_MS)
-            val measured = evaluateAndAwait(view, "window.tcMeasure($id)") ?: break
-            val needW = ((measured.widthPx + 3) * scale).toInt()
-            val needH = ((measured.heightPx + 3) * scale).toInt()
-            var grown = false
-            if (!request.display && needW > width) {
-                width = needW.coerceIn(1, MAX_SIDE_PX)
-                grown = true
-            }
-            if (needH > height) {
-                height = needH.coerceIn(1, MAX_SIDE_PX)
-                grown = true
-            }
-            if (!grown) break
-        }
-        layout(view, width, height)
-        delay(RESIZE_SETTLE_MS)
-
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        bitmap.eraseColor(0)
-        view.draw(Canvas(bitmap))
-        return Result(bitmap.asImageBitmap(), width, height)
+        val baselinePx = (bridged.baselinePx * scale).toInt() - cropY
+        return Result(
+            bitmap = bitmap.asImageBitmap(),
+            widthPx = bitmap.width,
+            heightPx = bitmap.height,
+            baselinePx = baselinePx.coerceIn(0, bitmap.height),
+        )
     }
 
-    /** 执行一段 JS 并等它回调（渲染结果或补量结果），超时就当失败 */
-    private suspend fun evaluateAndAwait(view: WebView, script: String): BridgeResult? {
+    /** 找到位图里「真正有内容」的矩形（全透明 = 空）。找不到返回 null。 */
+    private fun inkBounds(bitmap: Bitmap): IntArray? {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= 0 || h <= 0) return null
+        val row = IntArray(w)
+        var minX = w
+        var maxX = -1
+        var minY = h
+        var maxY = -1
+        for (y in 0 until h) {
+            bitmap.getPixels(row, 0, w, 0, y, w, 1)
+            var rowMin = -1
+            var rowMax = -1
+            for (x in 0 until w) {
+                // 只看 alpha：页面背景透明，墨迹以外全是 0
+                if ((row[x] ushr 24) != 0) {
+                    if (rowMin < 0) rowMin = x
+                    rowMax = x
+                }
+            }
+            if (rowMin >= 0) {
+                if (rowMin < minX) minX = rowMin
+                if (rowMax > maxX) maxX = rowMax
+                if (y < minY) minY = y
+                maxY = y
+            }
+        }
+        if (maxX < 0) return null
+        return intArrayOf(minX, minY, maxX - minX + 1, maxY - minY + 1)
+    }
+
+    /**
+     * 等 WebView 真正画完这一帧。
+     *
+     * **踩坑**：`katex.render()` 之后 DOM 已经有了，但 WebView 的光栅是分块的，
+     * `draw()` 可能拿到上一帧的旧内容 —— 实测多行 `aligned` 块只画出一条 8px 的横带。
+     * `postVisualStateCallback` 是官方给的「视觉状态已就绪」信号，比 sleep 靠谱。
+     */
+    private suspend fun awaitVisualState(view: WebView) {
+        val done = CompletableDeferred<Boolean>()
+        view.postVisualStateCallback(
+            nextId++.toLong(),
+            object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    done.complete(true)
+                }
+            },
+        )
+        withTimeoutOrNull(VISUAL_STATE_TIMEOUT_MS) { done.await() }
+    }
+
+    /** 执行一段 JS 并等它回调（渲染结果或补量结果），超时就当失败 */    private suspend fun evaluateAndAwait(view: WebView, script: String): BridgeResult? {
         val deferred = CompletableDeferred<BridgeResult>()
         pending = deferred
         view.evaluateJavascript(script, null)
@@ -266,8 +387,14 @@ internal object TcRenderHost {
 
     private class Bridge(private val onResult: (BridgeResult) -> Unit) {
         @JavascriptInterface
-        fun onRender(id: Int, ok: Int, widthPx: Int, heightPx: Int, error: String) {
-            onResult(BridgeResult(ok == 1, widthPx, heightPx, error.takeIf { it.isNotBlank() }))
+        fun onRender(id: Int, ok: Int, baselinePx: Int, error: String) {
+            onResult(
+                BridgeResult(
+                    ok = ok == 1,
+                    baselinePx = baselinePx,
+                    error = error.takeIf { it.isNotBlank() },
+                ),
+            )
         }
 
         @JavascriptInterface
@@ -325,10 +452,22 @@ internal object TcRenderHost {
     private const val RENDER_TIMEOUT_MS = 6_000L
     private const val LOAD_TIMEOUT_MS = 8_000L
     private const val RESIZE_SETTLE_MS = 48L
+
+    /** 收好视口到 draw 之间还要等的时长：重排 + 重光栅不是一帧能完成的 */
+    private const val DRAW_SETTLE_MS = 64L
+
+    /** 等 WebView 画出当前帧的上限 */
+    private const val VISUAL_STATE_TIMEOUT_MS = 2_000L
     private const val PAGE_RESIZE_SETTLE_MS = 32L
 
-    /** 渲染时页面的初始高度：比任何公式都高，量完再缩到实际高度 */
-    private const val INITIAL_PAGE_HEIGHT_PX = 4_000
+    /**
+     * 渲染时页面的初始高度（物理 px，约 290dp）。**不要开太大**：
+     * 软件光栅要把整块视口重画，4000px 高时每次渲染慢一倍以上。
+     * 真装不下也没关系 —— 量完盒子后会把视口收到实际大小，再补量。
+     */
+    private const val INITIAL_PAGE_HEIGHT_PX = 800
+
+    /** 页面四周留白见 render.html 的 `body { padding }`，墨迹探出盒子时靠它兜住 */
 
     /** 单边像素上限：防止极端公式把位图撑爆（超过就由调用方降级） */
     private const val MAX_SIDE_PX = 8_000

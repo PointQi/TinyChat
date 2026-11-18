@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
@@ -33,7 +32,10 @@ import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
 
 /**
- * 公式的显示（M2-5）：块级（`$$…$$`）与行内（`$…$`）共用。
+ * 块级公式的显示（M2-5）：`$$…$$` 与 ```math 围栏都走这里。
+ *
+ * **行内公式不走这里** —— 它必须以「内联内容」的形式插进段落（见 [InlineMathParagraph]），
+ * 单独一个 Composable 参与不了正文的行盒，也就无法对齐基线、无法撑开行高。
  *
  * 渲染交给 [TcRenderHost]（隐藏 WebView 出位图），这里只做三件事：
  * 占位要**尺寸稳定**、位图就绪后一次性换上去、失败时退回等宽源码。
@@ -41,19 +43,9 @@ import io.tinychat.designsystem.TcTypography
 @Composable
 internal fun TcMath(
     latex: String,
-    display: Boolean,
     modifier: Modifier = Modifier,
-    fontSize: TextUnit = if (display) 17.sp else 15.sp,
+    fontSize: TextUnit = 17.sp,
 ) {
-    if (display) {
-        TcMathDisplay(latex = latex, modifier = modifier, fontSize = fontSize)
-    } else {
-        TcMathInline(latex = latex, fontSize = fontSize, modifier = modifier)
-    }
-}
-
-@Composable
-private fun TcMathDisplay(latex: String, modifier: Modifier, fontSize: TextUnit) {
     val palette = TcTheme.palette
     val density = LocalDensity.current
     val context = LocalContext.current
@@ -87,40 +79,6 @@ private fun TcMathDisplay(latex: String, modifier: Modifier, fontSize: TextUnit)
             result?.error != null -> MathSource(latex, display = true, error = true)
             else -> MathPlaceholder()
         }
-    }
-}
-
-@Composable
-private fun TcMathInline(latex: String, fontSize: TextUnit, modifier: Modifier) {
-    val palette = TcTheme.palette
-    val density = LocalDensity.current
-    val context = LocalContext.current
-    // 行内公式在内联内容里拿不到「段落宽」，KaTeX 自己按内容量宽，给屏幕宽兜底即可
-    val screenWidthPx = with(density) {
-        LocalConfiguration.current.screenWidthDp.dp.toPx().toInt()
-    }.coerceAtLeast(1)
-
-    val fontPx = with(density) { fontSize.toPx().toInt() }.coerceAtLeast(8)
-    val request = remember(latex, fontPx, screenWidthPx, palette.labelPrimary) {
-        mathRequest(latex, display = false, fontPx, screenWidthPx, palette.labelPrimary, palette.bg)
-    }
-    var result by remember(request) { mutableStateOf(TcRenderHost.cached(request)) }
-    LaunchedEffect(request) {
-        if (result?.bitmap == null) result = TcRenderHost.render(context, request)
-    }
-
-    val bitmap = result?.bitmap
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = latex,
-            modifier = modifier.size(
-                width = with(density) { bitmap.width.toDp() },
-                height = with(density) { bitmap.height.toDp() },
-            ),
-        )
-    } else {
-        MathSource(latex, display = false, error = result?.error != null)
     }
 }
 

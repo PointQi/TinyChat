@@ -5,9 +5,16 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <link rel="stylesheet" href="../katex/katex.min.css">
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  /* 四周留白：KaTeX 的内容会探出 #stage 的盒子（vlist 的 pstrut、根号尾巴、上下标），
+     留白保证这些墨迹也落在视口里，能被光栅进图。数值要和 Kotlin 的 PAGE_PAD_CSS 对得上。 */
+  body { padding: 12px; }
   #stage { display: inline-block; line-height: normal; }
-  #stage svg { max-width: 100%; height: auto; display: block; }
+  /* 只针对 mermaid 的顶层 svg（它直接挂在 #stage 下）。**不能写成 `#stage svg`**：
+     那是个 id 选择器，优先级高于 KaTeX 自己的 `.katex svg{height:inherit}`，
+     会把根号/大括号那条 400em 宽的 SVG 高度改成 auto，按长宽比算出来只剩 0.04px ——
+     现象是「根号整条消失，只剩几个像素的糊点」。 */
+  #stage > svg { max-width: 100%; height: auto; display: block; }
   .katex { font-size: 1em; }
   .katex-display { margin: 0; }
   .tcerr { font: 13px/1.4 monospace; color: #c0392b; white-space: pre-wrap; }

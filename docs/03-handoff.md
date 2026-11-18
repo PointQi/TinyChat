@@ -15,9 +15,9 @@
 | 规划 | ✅ 开发计划 + 交互设计完成（02 号文档） |
 | Spike | ✅ 4/4（SSE 离线 40/40、导出包 PASS、渲染定 API、公式图表定 WebView、在线 SSE 跑通） |
 | 代码 | ✅ **M1 完成（2026-11-18）**：M1-1 ~ M1-13 全部完成，单测 118 个 + lint 全绿；真机验过发送/停止/编辑重发/重新生成/版本切换/继续生成/抽屉会话管理与搜索 |
-| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）、**M2-5/M2-6（块级公式 + mermaid，共用离屏位图宿主）** 已落地并真机对照；M2-3 抖动三坑待压测；行内公式目前只吞定界符（位图升级待做） |
+| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）、**M2-5/M2-6（块级 + 行内公式、mermaid，共用离屏位图宿主）** 已落地并真机/模拟器对照；M2-3 抖动三坑待压测 |
 | 阻塞项 | 无。Key 走 `.local/dev-key.txt`（debug 注入），M8-6 换 Keystore |
-| 下一步 | **行内公式位图升级**（流式结束后把 `$…$` 换成 KaTeX 内联位图），随后 M2-3 抖动压测 |
+| 下一步 | **M2-3 抖动压测**（高度单调性 + 流式三坑），随后进 M3 |
 
 ---
 
@@ -513,22 +513,49 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | mermaid 缩放 | `useMaxWidth: false`（否则 mermaid 默认把图拉满容器，字号被放大）；显示端按位图长宽比 `aspectRatio` 等比铺满，超宽图缩到正文宽度 |
 | 渲染实验室 | `app/src/debug/`（release 不打包）：`adb shell am start -n io.tinychat/io.tinychat.debug.RenderLabActivity`，含 5 类图、错误态样例、`--ez dark true` 深色开关与「测耗时」（`TcRenderLab.benchMath` 冷启/稳态各一轮） |
 
-**M2-5 收尾待办（行内公式的「对齐 + 行距」，2026-11-18 停在这里）**
+**M2-5 收尾：行内公式（2026-11-18 完成，提交见 git log）**
 
-现状：块级公式、```math、```mermaid、行内公式位图都已落地（提交 `e3df09c` → `a3d6355`），
-实验室里肉眼可见的问题有四个，都不是位图路线的硬限制：
+四个毛病全部修掉，且都不是「位图路线」的硬限制：
 
-| # | 现象 | 原因 | 修法 |
+| # | 现象 | 根因 | 修法 |
 |---|---|---|---|
-| 1 | 行内公式中心比正文高一截 | 用 `PlaceholderVerticalAlign.AboveBaseline`（底边对基线），位图里公式的上下伸展不对称，再加位图多留了 3px 下边距 | 先换 `PlaceholderVerticalAlign.Center` 试；更准的做法是让 JS 返回「基线在图中的 y」（在公式前插 1px 基线探针取 `rect.bottom`），按基线裁位图 |
-| 2 | 公式偏小 | 传的是 `style.fontSize`（16sp），KaTeX 行内按 1em 排，x-height 比正文小 | `fontPx` 乘 1.12～1.15，位图仍 1:1 显示（不缩放，避免糊） |
-| 3 | **行距不会为公式让位**（用户重点问的） | Compose `Text` 的行高由 `TextStyle.lineHeight` 固定，内联内容再高也不撑行；现在固定 28sp | **逐段**动态行高：段落含公式时 `lineHeight = max(原行高, 最高公式位图高度 + 2dp)`；流式期间是源码文字（行高不变），结束后换图只变一次 |
-| 4 | `\sqrt[3]{x+1}` 行内根号被切 | 根号是 SVG 路径，会画到元素盒左侧 2–3px，位图从盒边切 | 已在 `host.js` 给行内 stage 加 `padding-left:4px`，**尚未真机验证** |
+| 1 | 公式整体比正文高一截 | 用 `AboveBaseline` 让**位图底边**贴基线，而位图上下留白并不对称（公式自身还带 3px 下边距） | `host.js` 用**零宽 inline-block 探针**量出真实基线；原生层让占位框只占「基线以上」那段（`Placeholder(height = aboveBaseline)`），位图用 `requiredSize` 从框顶按原尺寸往下画，下伸（分母、下标）落进行距。`Text` 必须 `overflow = Visible`，否则会被裁 |
+| 2 | 公式偏小 | KaTeX 行内按 1em 排，数学字体的 x-height 天生比中文正文小 | `InlineMathFontScale = 1.16`，**放大字号重排**而不是缩放位图（缩放会糊） |
+| 3 | 行距不为公式让位（用户重点问的） | Compose 行高由 `TextStyle.lineHeight` 定死，内联内容再高也不撑行 | 逐段动态行高：`max(原行高, 最高公式的上半 + 最深的下伸 + 3dp)`，**只有含公式的段落**变高（`InlineMathLayout.kt`，8 个单测） |
+| 4 | `\sqrt` 根号整条消失 | `render.html` 里 `#stage svg { height: auto }` 是 **id 选择器**，优先级压过 KaTeX 的 `.katex svg { height: inherit }`，把那条 400em 宽的根号 SVG 的高度算成 0.04px | 改成 `#stage > svg`（只作用于 mermaid 顶层图） |
 
-验证方式（不截图、省上下文）：渲染实验室 `RenderLabActivity` 直接 `am start` 拉起（不用点屏幕），
-必要时用 `adb shell uiautomator dump` 看文本/尺寸，出图耗时用实验室「测耗时」按钮（`TcRenderLab.benchMath`）。
+**顺带挖出的两个幽灵**（都会伪装成「公式里多了/少了东西」）：
 
-其他已知项：深色主题（`--ez dark true`）未验；首帧 ≤300ms 未测；M2-3 抖动压测排在之后。
+| 现象 | 真相 |
+|---|---|
+| 每个含上下标的公式下方有一撮暗红色小图案 | 它是被切掉的**巨大 💣 emoji**：KaTeX 在 `.vlist-s` 里塞了 U+200B 零宽空格，WebView 的字体回退把它当成缺字画成彩色 emoji。渲染后遍历文本节点删掉 `\u200B` 即可 |
+| 同一位置出现「💣 Syntax error in text」 | mermaid 的 `render()` 会往 body 里塞临时容器，**报错时不自清理**，它的报错图就画在 stage 下方。每次出图前把 body 里除 `#stage` 之外的残留节点清掉 |
+
+**宿主改造：不再相信 DOM 尺寸（这条是本次最大的经验）**
+
+| 坑 | 结论 |
+|---|---|
+| DOM 盒子 ≠ 墨迹 | KaTeX 的盒子比墨迹**小**：块级公式盒子只有真实高度的一半（实测 41/84），矩阵右侧少 20px，根号尾巴画在盒外。**不能按 DOM 尺寸裁位图** |
+| 「所有后代 rect 求并集」也不行 | `.pstrut` 是 3em 高的隐形占位，会把盒子撑大（矩阵被裁成 14px 高）。已试过并回滚 |
+| 唯一可靠做法 | `view.draw()` 画到 Bitmap 后**扫像素 alpha 求墨迹框**，再按这个矩形裁剪；块级公式横向保留整宽（居中靠 `text-align:center`，裁窄就贴左），行内则连横向一起裁 |
+| 视口别开太大 | 初始视口 4000px 高时每次重光栅都要重画整块，单条从 ~430ms 涨到 1.8s。改成 800px 起步 → 扫墨迹 → 贴边才放大重画（≤3 轮） |
+| 改完视口不能立刻 draw | WebView 分块光栅：`\frac{1}{2}` 只剩一个分母、多行 `aligned` 只画一条 8px 横带。改尺寸后要等一次 JS 往返 + `postVisualStateCallback`（官方「视觉状态已就绪」信号）才算稳 |
+
+**性能（`TcRenderLab.benchMath`，Pixel 3a API34 模拟器）**：8 条样例冷启 `4008/4239/700/516/814/985/315/330ms`，稳态 **`337–433ms`**。模拟器只有约 2fps，按帧折算真机约 50–100ms/条。行内公式仍在**消息结束后**批量出图（流式期间是源码文字），所以不影响打字时的流畅度。
+
+**渲染实验室新增两个排障入口**（都不用点屏幕）：
+
+```bash
+# 取回渲染后的 DOM + 尺寸 + 基线（查「图里少了什么」）
+adb shell am start -n io.tinychat/io.tinychat.debug.RenderLabActivity \
+  --es dump '\sqrt[3]{x+1}'            # 行内；加 --ez block true 变块级
+adb shell run-as io.tinychat head -c 300 cache/dom.html
+# 出图耗时（冷启 + 稳态各一轮），结果进 logcat
+adb shell am start -n io.tinychat/io.tinychat.debug.RenderLabActivity --ez bench true
+adb logcat -d | Select-String "bench cold"
+```
+
+其他已知项：深色主题已验（`--ez dark true`，公式转浅色、根号完好）；M2-3 抖动压测排在之后。
 
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**
 

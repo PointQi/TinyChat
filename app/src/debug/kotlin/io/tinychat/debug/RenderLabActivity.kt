@@ -1,4 +1,4 @@
-﻿package io.tinychat.debug
+package io.tinychat.debug
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -31,7 +31,10 @@ import io.tinychat.designsystem.TcThemeMode
 import io.tinychat.designsystem.TcTypography
 import io.tinychat.markdown.TcMarkdown
 import io.tinychat.markdown.TcRenderLab
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * 渲染实验室（**只在 debug 构建里存在**，release 不会打包）。
@@ -44,6 +47,31 @@ class RenderLabActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val dark = intent.getBooleanExtra("dark", false)
+        // 排障入口：--es dump '<latex>' 把渲染后的 DOM 写到 cacheDir/dom.html，
+        // 用 `adb shell run-as io.tinychat cat cache/dom.html` 取回（查「图里少了什么」只能看 DOM）
+        intent.getStringExtra("dump")?.let { latex ->
+            CoroutineScope(Dispatchers.Main).launch {
+                val block = intent.getBooleanExtra("block", false)
+                val html = TcRenderLab.dumpDom(
+                    context = this@RenderLabActivity,
+                    latex = latex,
+                    fontPx = if (block) 47 else 51,
+                    display = block,
+                    widthPx = if (block) resources.displayMetrics.widthPixels else 900,
+                )
+                val file = File(cacheDir, "dom.html")
+                file.writeText(html)
+                android.util.Log.i("TcRenderLab", "dom dump -> " + file.absolutePath + " (" + html.length + " chars)")
+            }
+        }
+        // --ez bench true：冷启/稳态各跑一轮出图耗时，结果直接进 logcat（不用点屏幕）
+        if (intent.getBooleanExtra("bench", false)) {
+            CoroutineScope(Dispatchers.Main).launch {
+                val cold = TcRenderLab.benchMath(this@RenderLabActivity)
+                val warm = TcRenderLab.benchMath(this@RenderLabActivity)
+                android.util.Log.i("TcRenderLab", "bench cold=" + cold + " warm=" + warm)
+            }
+        }
         setContent {
             TcTheme(mode = if (dark) TcThemeMode.DARK else TcThemeMode.LIGHT) {
                 LabScreen()
@@ -127,6 +155,12 @@ private val SAMPLE = """
 质能方程 ${'$'}E=mc^2${'$'}，分式 ${'$'}\frac{a}{b}${'$'}，根号 ${'$'}\sqrt[3]{x+1}${'$'}，
 求和 ${'$'}\sum_{k=1}^{n} k = \frac{n(n+1)}{2}${'$'}，希腊字母 ${'$'}\alpha\beta\gamma${'$'}。
 价格不是公式：${'$'}5 和 ${'$'}10 应该原样显示。
+
+## 对齐与行距
+分式 ${'$'}\frac{1}{2}${'$'} 的分母要沉到基线下面，根号 ${'$'}\sqrt[3]{x+1}${'$'} 的根号不能被切，
+下标 ${'$'}x_{i}^{2}${'$'} 也要压下去，求和 ${'$'}\sum_{k=1}^{n} k${'$'} 的上下标最高，
+矩阵 ${'$'}\begin{pmatrix} a & b \\ c & d \end{pmatrix}${'$'} 应该把这一行撑高。
+这一行没有公式，行距应该回到正常，用来对照上一行被撑高的样子。
 
 ## 块级公式
 ${'$'}${'$'}

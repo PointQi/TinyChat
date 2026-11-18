@@ -23,6 +23,30 @@ object TcRenderLab {
     )
 
     /**
+     * 调试：取回一条公式渲染后的 DOM（见 [TcRenderHost.dumpHtml]）。
+     * 只在渲染实验室里调用，正常路径不碰。
+     */
+    suspend fun dumpDom(
+        context: Context,
+        latex: String,
+        fontPx: Int = 51,
+        display: Boolean = false,
+        widthPx: Int = 900,
+    ): String =
+        TcRenderHost.dumpHtml(
+            context,
+            TcRenderHost.Request(
+                kind = TcRenderHost.Kind.MATH,
+                source = latex,
+                display = display,
+                fontPx = fontPx,
+                widthPx = widthPx,
+                colorHex = "#1A1A1A",
+                dark = false,
+            ),
+        )
+
+    /**
      * 串行渲染一组公式，返回每条耗时（毫秒）。首次调用包含 WebView 冷启动，
      * 所以要跑两轮：第二轮才是「稳态单条成本」。
      */

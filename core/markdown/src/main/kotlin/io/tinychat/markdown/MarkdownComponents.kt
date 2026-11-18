@@ -99,7 +99,6 @@ internal fun tcMarkdownComponents(): MarkdownComponents = markdownComponents(
                 // ```math / ```latex：模型偶尔不用 $$ 包块公式，而用围栏
                 "math", "latex", "tex" -> TcMath(
                     latex = code.trim(),
-                    display = true,
                     modifier = Modifier.padding(vertical = 6.dp),
                 )
                 // ```mermaid：图画在 TcMermaidBlock 里，图/码切换也归它管
@@ -153,7 +152,7 @@ private fun TcParagraph(model: MarkdownComponentModel) {
             blocks.forEach { block ->
                 val before = raw.substring(cursor, block.start).trim()
                 if (before.isNotEmpty()) ParagraphSlice(before, model)
-                TcMath(latex = block.latex, display = true)
+                TcMath(latex = block.latex)
                 cursor = block.end
             }
             val after = raw.substring(cursor).trim()
