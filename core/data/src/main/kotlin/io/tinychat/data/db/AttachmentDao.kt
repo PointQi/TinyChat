@@ -36,6 +36,10 @@ interface AttachmentDao {
     )
     suspend fun bySession(sessionId: String): List<AttachmentEntity>
 
+    /** 全库附件（清空所有对话时一次性清文件用，避免逐会话查询） */
+    @Query("SELECT * FROM attachments")
+    suspend fun all(): List<AttachmentEntity>
+
     @Query("UPDATE attachments SET remote_id = :remoteId, state = :state WHERE id = :id")
     suspend fun setRemote(id: String, remoteId: String?, state: AttachmentState)
 

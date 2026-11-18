@@ -117,12 +117,14 @@ fun DataManagementScreen(
     archive: ChatArchive,
     onBack: () -> Unit,
     onImported: () -> Unit,
+    onClearAll: () -> Unit,
 ) {
     val palette = TcTheme.palette
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var confirmImport by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
     var pendingUri by remember { mutableStateOf<Uri?>(null) }
 
     val importPicker = rememberLauncherForActivityResult(
@@ -205,6 +207,13 @@ fun DataManagementScreen(
                 )
             }
 
+            TcSectionLabel("清理")
+            TcListRow(
+                title = "清空所有对话",
+                subtitle = "连同本机附件一起删除，不可撤销",
+                onClick = { if (!busy) confirmClear = true },
+            )
+
             Spacer(Modifier.height(16.dp))
             Text(
                 text = "导入会覆盖本机现有对话；导出不包含提示词预设与本机用量统计。",
@@ -213,6 +222,25 @@ fun DataManagementScreen(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("清空所有对话？") },
+            text = { Text("本机全部对话与附件原件都会被删除，且不可撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    onClearAll()
+                    status = "已清空本机所有对话"
+                }) { Text("清空") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) { Text("取消") }
+            },
+            containerColor = palette.bg,
+        )
     }
 
     if (confirmImport) {

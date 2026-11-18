@@ -85,6 +85,19 @@ class ChatRepository(
     }
 
     /**
+     * M6-6：清空所有对话（含附件原件与缩略图）。
+     *
+     * 先删文件再删行：行没了就找不到 `local_path`，文件会变成永远清不掉的垃圾。
+     * 一次查出全部附件（3340 会话时不逐会话查库）。
+     */
+    suspend fun clearAllSessions() {
+        db.attachmentDao().all().forEach { row ->
+            runCatching { attachmentStore.delete(row.id, row.localPath) }
+        }
+        db.sessionDao().deleteAll()
+    }
+
+    /**
      * 会话搜索：正文命中或标题命中都算，一条会话最多一条结果（正文命中优先）。
      *
      * 正文命中给「上下文 + 高亮」；只有标题命中时没有上下文，只回标题行。

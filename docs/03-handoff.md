@@ -20,7 +20,7 @@
 | **M3 联网** | ✅ 已真机在用 | `server_tool_use` / `web_search_tool_result` 解析、搜索阶段碎片与卡片、来源胶囊 + 来源页、「N 个网页」聚合、`deepseek_web_search` / `deepseek_read_url` 声明；工具报文见 §6 |
 | **M4 附件** | ✅ **全部验完**（2026-11-19） | 相册多选、SAF 选文件、拍照入口（按 `resolveActivity` 判空）、草稿预览与删除、落盘（`attachments/{messageId}/` + `thumbs/`）、Files API 流式上传、`purpose` 自动判定、请求块（文件/图片在前、文本在后）、消息内 120dp/64dp 缩略图与文件卡、v4-pro 隐藏入口、断网失败→联网重试可续、删会话清附件——模拟器实拍 + 真实接口用例。仅剩「拍照」未在真机验（模拟器无相机 App）与确认文案分支（并入 M6） |
 | **M5 语音** | ⬜ 未实现 | `Asr` / `SpeechRecognizer` / 录音相关 0 处；TTS 只有 `Provider.kt` 的能力位与 `TtsVoice` 枚举（决策 3），**没有播放实现** |
-| **M6 数据管理** | 🚧 **导入导出已通，3340 会话往返 PASS**（2026-11-19） | 流式 ZIP 读（`ZipFile` 中央目录）、v3 解析/校验（未知条目整包失败、索引 message_count 交叉校验）、单事务整包替换 + 文件副作用回滚、导出（官方条目顺序，不新增条目/字段）、数据管理页接 SAF（导入要二次确认）。**真样本 3340 会话 / 23580 消息 / 39665 碎片 / 79 附件往返，字段级 diff = 0**；未做：清空所有对话（M6-6）、导出进度百分比 |
+| **M6 数据管理** | ✅ **导入导出 + 清空全通，3340 会话往返 PASS**（2026-11-19） | 流式 ZIP 读（`ZipFile` 中央目录）、v3 解析/校验（未知条目整包失败、索引 message_count 交叉校验）、单事务整包替换 + 文件副作用回滚、导出（官方条目顺序，不新增条目/字段）、数据管理页接 SAF（导入与清空都要二次确认）、**清空所有对话**（先删文件再删行）。**真样本 3340 会话 / 23580 消息 / 39665 碎片 / 79 附件往返，字段级 diff = 0**；导出只有文本进度、没有进度条 |
 | **M7 用量与费用** | 🚧 大半在 | `Usage` / `Cost` / 余额接口都在（`余额` 8 处）；**上下文饼图未做**（`PieChart` / `饼图` 0 处） |
 | **M7.5 提示词** | 🚧 基本在 | 预设体系在（`Preset` 165 处、`内置预设` 4 处）；三种组合模式与会话快照固化待对验收 |
 | **M8 打磨** | 🚧 部分 | 设置页在（`SettingsScreens.kt`）；**分享出图、i18n、引导页都没做**（`ShareImage` / `I18n` / `Onboarding` 各 0 处） |
@@ -723,7 +723,9 @@ total diff sessions 0 => PASS
 
 **导入语义**：整包替换（先二次确认）。DB 在一个事务里换库；附件原件写在事务外，所以**失败时按"这次写过哪些目录"逐个删**（不是删整个 attachments 根，否则会误伤旧数据）。导入成功后 `ChatArchive` 再清一次孤儿目录与孤儿缩略图。
 
-**还没做**：`M6-6` 清空所有对话（含停止生成、清附件、二次确认）；导出只有"第 N/3340 个会话"的文本进度，没有进度条；`chat_session_index.json` 只用于校验，不用于建列表（会话顺序取 `updated_at`）；**数据管理页的 SAF 点选在模拟器上没点通**——`DocumentsUI` 的 Download 列表里不显示我们 push 进去的 zip（同目录的 pdf/md/txt 都显示），`ChatArchive.import(Uri)` 的「流 → 临时文件 → 解析」这段改由 Robolectric 用例覆盖（`ChatArchiveUriImportTest`），点选本身留真机验。
+**还没做**：导出只有"第 N/3340 个会话"的文本进度，没有进度条；`chat_session_index.json` 只用于校验，不用于建列表（会话顺序取 `updated_at`）；**数据管理页的 SAF 点选在模拟器上没点通**——`DocumentsUI` 的 Download 列表里不显示我们 push 进去的 zip（同目录的 pdf/md/txt 都显示），`ChatArchive.import(Uri)` 的「流 → 临时文件 → 解析」这段改由 Robolectric 用例覆盖（`ChatArchiveUriImportTest`），点选本身留真机验。
+
+**清空所有对话（M6-6，已验）**：设置 → 数据管理 → 清空所有对话 → 二次确认。实现顺序是**先删附件文件、再删行**（行没了就找不到 `local_path`，文件会变成永远清不掉的垃圾），一次 `attachmentDao().all()` 查出全库附件，不逐会话查库。模拟器实测：3340 会话清空后 `sessions`/`messages` 归零、`files/attachments` 与 `files/thumbs` 清空。
 
 
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**

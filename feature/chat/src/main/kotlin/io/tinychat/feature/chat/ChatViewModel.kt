@@ -574,6 +574,15 @@ class ChatViewModel(
         state = state.copy(isStreaming = false)
     }
 
+    /** M6-6：清空所有对话（含附件原件与缩略图），回到新对话 */
+    fun clearAllConversations() {
+        job?.cancel()
+        viewModelScope.launch {
+            repository.clearAllSessions()
+            newChat()
+        }
+    }
+
     fun newChat() {
         job?.cancel()
         observing?.cancel()

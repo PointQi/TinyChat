@@ -153,6 +153,7 @@ fun TinyChatApp() {
                         onBack = { navController.popBackStack() },
                         // 导入是整包替换：当前打开的会话可能已经不存在，回到新对话
                         onImported = { chatViewModel.newChat() },
+                        onClearAll = { chatViewModel.clearAllConversations() },
                     )
                 }
                 composable(Routes.ABOUT) {
