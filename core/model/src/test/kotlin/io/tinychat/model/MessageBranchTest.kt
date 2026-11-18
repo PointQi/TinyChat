@@ -45,16 +45,20 @@ class MessageBranchTest {
     fun `切到下一版并落到目标分支自己的叶子`() {
         // 当前回答 A（有后续追问），下一版是回答 B，B 下面还有追问 7
         assertEquals(7L, pickVersion(nodes, messageId = 2, delta = 1)?.id)
-        // 当前回答 D 没有下文，下一版绕回回答 A，落到 6
-        assertEquals(6L, pickVersion(nodes, messageId = 4, delta = 1)?.id)
+        // 回答 B 往下一版是回答 D，D 没有下文
+        assertEquals(4L, pickVersion(nodes, messageId = 3, delta = 1)?.id)
     }
 
     @Test
-    fun `反向切换与跨多个版本`() {
+    fun `到头就不动，不循环`() {
+        // 已经是最后一版（回答 D）：再往后没有了
+        assertNull(pickVersion(nodes, messageId = 4, delta = 1))
+        // 已经是第一版（回答 A）：再往前没有了
+        assertNull(pickVersion(nodes, messageId = 2, delta = -1))
+        // 中间版本可以双向走
         assertEquals(6L, pickVersion(nodes, messageId = 3, delta = -1)?.id)
-        assertEquals(6L, pickVersion(nodes, messageId = 4, delta = -2)?.id)
+        assertEquals(4L, pickVersion(nodes, messageId = 3, delta = 1)?.id)
     }
-
     @Test
     fun `只有一版时不切换`() {
         assertNull(pickVersion(nodes, 6, 1))

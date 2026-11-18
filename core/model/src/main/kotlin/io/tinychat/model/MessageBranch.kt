@@ -1,4 +1,4 @@
-package io.tinychat.model
+﻿package io.tinychat.model
 
 /**
  * 消息树里的一个节点（M1-8）。
@@ -35,9 +35,11 @@ fun deepestLeaf(nodes: List<BranchNode>, fromId: Long): BranchNode? {
 }
 
 /**
- * 切到 [messageId] 的相邻版本（[delta] 为 +1 / -1，循环）。
+ * 切到 [messageId] 的相邻版本（[delta] 为 +1 / -1）。
  *
- * @return 目标分支的叶子节点；只有一版时返回 null（调用方据此不显示切换器）
+ * **不循环**：到头就返回 null（界面上箭头置灰），避免用户一按就从最后一版跳回第一版。
+ *
+ * @return 目标分支的叶子节点；只有一版或越界时返回 null
  */
 fun pickVersion(nodes: List<BranchNode>, messageId: Long, delta: Int): BranchNode? {
     val target = nodes.firstOrNull { it.id == messageId } ?: return null
@@ -47,8 +49,10 @@ fun pickVersion(nodes: List<BranchNode>, messageId: Long, delta: Int): BranchNod
     val index = siblings.indexOfFirst { it.id == messageId }
     if (index < 0) return null
 
-    val next = siblings[Math.floorMod(index + delta, siblings.size)]
-    return deepestLeaf(nodes, next.id)
+    val nextIndex = index + delta
+    if (nextIndex !in siblings.indices) return null
+
+    return deepestLeaf(nodes, siblings[nextIndex].id)
 }
 
 /** 当前消息在兄弟中的位置：1 基下标与总数；只有一版时 [total] 为 1。 */

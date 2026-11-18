@@ -1,4 +1,4 @@
-﻿package io.tinychat.feature.chat
+package io.tinychat.feature.chat
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -484,6 +484,7 @@ class ChatViewModel(
             .takeIf { it.isNotEmpty() }
             ?.sum()
 
+        // 「继续生成」靠 assistant 预填，必须有正文：思考阶段就被掐断的那种给「重新生成」
         val canContinue = message.status == MessageStatus.INCOMPLETE &&
             timeline.none { it is TimelineItem.Tool } &&
             fragments.none { it.type == "TEMPLATE_RESPONSE" } &&

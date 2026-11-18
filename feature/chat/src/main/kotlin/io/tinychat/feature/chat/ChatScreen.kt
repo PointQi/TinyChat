@@ -2,6 +2,7 @@
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.DragInteraction
@@ -47,6 +48,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -64,6 +67,7 @@ import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
 import io.tinychat.model.ErrorKind
+import io.tinychat.model.MessageStatus
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.ui.TcIconButton
@@ -242,6 +246,11 @@ private fun MessageList(
         }
     }
 
+    // 换了分支（重新生成 / 继续生成 / 新消息）就恢复跟随，否则新答案会停在屏幕外面
+    LaunchedEffect(state.messages.lastOrNull()?.id) {
+        if (state.messages.isNotEmpty()) following.value = true
+    }
+
     val showToBottom by remember {
         derivedStateOf { !listState.layoutInfo.isAtLatestBottom() }
     }
@@ -353,6 +362,7 @@ private fun MessageRow(
                     timeline = message.timeline,
                     seconds = message.thinkingSeconds,
                     inProgress = message.isThinking,
+                    stopped = message.status == MessageStatus.INCOMPLETE && message.text.isBlank(),
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -369,31 +379,46 @@ private fun MessageRow(
                 }
             }
 
-            // 最后一条回答给「重新生成」；任一条有兄弟分支时给版本切换
+            // 最后一条回答给「重新生成」与「继续生成」；任一条有兄弟分支时给版本切换
             if (onContinue != null || onRegenerate != null || message.versionCount > 1) {
                 Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (onContinue != null) {
-                        Text(
-                            text = "继续生成",
-                            style = TcTypography.bodySmall,
-                            color = palette.brand,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(onClick = onContinue)
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     if (onRegenerate != null) {
-                        TcIconButton(
-                            icon = TcIcons.Regenerate,
-                            contentDescription = "重新生成",
-                            onClick = onRegenerate,
-                        )
+                        // 小号灰图标，与版本文字同一行高，不做又大又黑的按钮
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onRegenerate),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = TcIcons.Regenerate,
+                                contentDescription = "重新生成",
+                                tint = palette.labelTertiary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
                     if (message.versionCount > 1) {
                         VersionSwitcher(message.versionIndex, message.versionCount, onSwitchVersion)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (onContinue != null) {
+                        // 灰色胶囊 + 黑字，靠右
+                        Text(
+                            text = "继续生成",
+                            style = TcTypography.bodyMedium,
+                            color = palette.labelPrimary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(100.dp))
+                                .border(1.dp, palette.labelTertiary.copy(alpha = 0.5f), RoundedCornerShape(100.dp))
+                                .clickable(onClick = onContinue)
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                        )
                     }
                 }
             }
@@ -444,34 +469,47 @@ private fun MessageRow(
 }
 
 /**
- * 版本切换 `‹ 2/3 ›`（M1-8）：编辑重发产生提问的多个版本，重新生成产生回答的多个版本。
+ * 版本切换 `‹ 2/3 ›`（M1-8）。到头那一侧箭头置灰，点了也不动（不循环）。
  */
 @Composable
 private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
     val palette = TcTheme.palette
+    val canPrev = index > 1
+    val canNext = index < count
+
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
                 .size(28.dp)
                 .clip(CircleShape)
-                .clickable { onSwitch(-1) },
+                .clickable(enabled = canPrev) { onSwitch(-1) },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(TcIcons.Back, "上一版", tint = palette.labelTertiary, modifier = Modifier.size(12.dp))
+            Icon(
+                imageVector = TcIcons.Back,
+                contentDescription = "上一版",
+                tint = if (canPrev) palette.labelSecondary else palette.labelTertiary.copy(alpha = 0.35f),
+                modifier = Modifier.size(13.dp),
+            )
         }
         Text(
-            text = "$index/$count",
-            style = TcTypography.bodySmall,
-            color = palette.labelTertiary,
+            text = "$index / $count",
+            style = TcTypography.bodyMedium,
+            color = palette.labelSecondary,
         )
         Box(
             modifier = Modifier
                 .size(28.dp)
                 .clip(CircleShape)
-                .clickable { onSwitch(1) },
+                .clickable(enabled = canNext) { onSwitch(1) },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(TcIcons.ChevronRight, "下一版", tint = palette.labelTertiary, modifier = Modifier.size(12.dp))
+            Icon(
+                imageVector = TcIcons.ChevronRight,
+                contentDescription = "下一版",
+                tint = if (canNext) palette.labelSecondary else palette.labelTertiary.copy(alpha = 0.35f),
+                modifier = Modifier.size(13.dp),
+            )
         }
     }
 }
@@ -481,17 +519,25 @@ private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
  * 中间穿插工具步骤卡片。
  */
 @Composable
-private fun ThinkingBlock(timeline: List<TimelineItem>, seconds: Double?, inProgress: Boolean) {
+private fun ThinkingBlock(
+    timeline: List<TimelineItem>,
+    seconds: Double?,
+    inProgress: Boolean,
+    stopped: Boolean,
+) {
     val palette = TcTheme.palette
     var expanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(inProgress) { expanded = inProgress }
 
-    val label = if (inProgress) {
-        "正在思考"
-    } else {
-        val secs = seconds?.let { it.toInt().coerceAtLeast(1) }
-        if (secs != null) "已思考（用时 $secs 秒）" else "已思考"
+    val label = when {
+        inProgress -> "正在思考"
+        // 思考阶段被掐断：不假装「已思考完」，直接标已停止
+        stopped -> "已停止"
+        else -> {
+            val secs = seconds?.let { it.toInt().coerceAtLeast(1) }
+            if (secs != null) "已思考（用时 $secs 秒）" else "已思考"
+        }
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -702,7 +748,16 @@ private fun InputCard(
     val dark = isSystemInDarkTheme()
     // 深色下卡片与背景同色会糊在一起，用 bgLayer2 抬一层
     val cardColor = if (dark) palette.bgLayer2 else palette.bg
+    val inputFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
 
+    // 点消息进入编辑态时，输入框要直接拿到焦点并弹输入法（否则还要再点一下）
+    LaunchedEffect(state.editingMessageId) {
+        if (state.editingMessageId != null) {
+            inputFocus.requestFocus()
+            keyboard?.show()
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -754,7 +809,9 @@ private fun InputCard(
                 onValueChange = onInputChange,
                 textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
                 cursorBrush = SolidColor(palette.brand),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(inputFocus),
                 maxLines = 8,
             )
         }
