@@ -1,4 +1,4 @@
-package io.tinychat.feature.chat
+﻿package io.tinychat.feature.chat
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -12,6 +12,7 @@ import io.tinychat.data.db.FragmentEntity
 import io.tinychat.data.db.MessageWithFragments
 import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.BranchNode
+import io.tinychat.model.ErrorKind
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.RequestPayload
@@ -79,6 +80,8 @@ data class ChatUiState(
     val input: String = "",
     val isStreaming: Boolean = false,
     val error: String? = null,
+    /** 错误分类：决定文案与「去设置」这类动作 */
+    val errorKind: ErrorKind? = null,
     val title: String? = null,
     val modelId: String = KnownProviders.flash.id,
     /**
@@ -247,7 +250,7 @@ class ChatViewModel(
         if (text.isEmpty() || state.isStreaming) return
 
         val editingId = state.editingMessageId
-        state = state.copy(input = "", isStreaming = true, error = null, editingMessageId = null)
+        state = state.copy(input = "", isStreaming = true, error = null, errorKind = null, editingMessageId = null)
         job = viewModelScope.launch {
             try {
                 val id = sessionId ?: repository.createSession(
@@ -270,9 +273,10 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.message ?: "请求失败")
+                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
             } catch (e: Exception) {
-                state = state.copy(error = e.message ?: "请求失败")
+                // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
+                state = state.copy(error = "生成失败，请重试", errorKind = null)
             } finally {
                 state = state.copy(isStreaming = false)
             }
@@ -308,9 +312,10 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.message ?: "重新生成失败")
+                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
             } catch (e: Exception) {
-                state = state.copy(error = e.message ?: "重新生成失败")
+                // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
+                state = state.copy(error = "生成失败，请重试", errorKind = null)
             } finally {
                 state = state.copy(isStreaming = false)
             }
@@ -329,9 +334,10 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.message ?: "继续生成失败")
+                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
             } catch (e: Exception) {
-                state = state.copy(error = e.message ?: "继续生成失败")
+                // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
+                state = state.copy(error = "生成失败，请重试", errorKind = null)
             } finally {
                 state = state.copy(isStreaming = false)
             }

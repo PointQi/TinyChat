@@ -1,4 +1,4 @@
-package io.tinychat.net.transport
+﻿package io.tinychat.net.transport
 
 import io.tinychat.model.ErrorKind
 import io.tinychat.net.SseEvent
@@ -25,6 +25,8 @@ class ChatException(
     val httpStatus: Int? = null,
     message: String,
     cause: Throwable? = null,
+    /** 429 时服务端给的 Retry-After（毫秒）；没有就由上层按默认退避 */
+    val retryAfterMillis: Long? = null,
 ) : Exception(message, cause)
 
 /** 传输层抽象：真实实现走 OkHttp，测试用假实现喂固件，上层不感知差别。 */
@@ -61,7 +63,14 @@ class OkHttpChatTransport(
                 response.use { resp ->
                     if (!resp.isSuccessful) {
                         val body = runCatching { resp.body?.string() }.getOrNull().orEmpty()
-                        close(ChatException(kindFor(resp.code), resp.code, body.ifBlank { "HTTP ${resp.code}" }))
+                        close(
+                            ChatException(
+                                kind = kindFor(resp.code),
+                                httpStatus = resp.code,
+                                message = body.ifBlank { "HTTP ${resp.code}" },
+                                retryAfterMillis = retryAfterMillis(resp.header("Retry-After")),
+                            ),
+                        )
                         return
                     }
 
@@ -88,6 +97,12 @@ class OkHttpChatTransport(
         })
 
         awaitClose { call.cancel() }
+    }
+
+    /** `Retry-After` 只按秒解析；HTTP-date 形式与非法值一律忽略 */
+    private fun retryAfterMillis(raw: String?): Long? {
+        val seconds = raw?.trim()?.toLongOrNull() ?: return null
+        return (seconds * 1000).coerceIn(0, 60_000)
     }
 
     private fun kindFor(code: Int): ErrorKind = when (code) {

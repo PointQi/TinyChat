@@ -68,6 +68,34 @@ enum class ErrorKind(val wire: String) {
             else -> false
         }
 
+    /**
+     * 给用户看的一句话（02 §4.5 表格逐条对齐）。
+     *
+     * 文案只描述**发生了什么、下一步怎么办**，不暴露 HTTP 码与技术细节。
+     */
+    val userMessage: String
+        get() = when (this) {
+            NETWORK -> "网络异常，请检查网络后重试"
+            HTTP_401 -> "API Key 无效或已删除"
+            HTTP_402 -> "账户余额不足，请充值"
+            HTTP_422 -> "请求参数有误"
+            HTTP_429 -> "请求过于频繁，请稍后再试"
+            HTTP_5XX -> "服务器繁忙，请稍后重试"
+            STREAM -> "生成出错"
+            INTERRUPTED -> "生成被中断"
+            REFUSAL -> "这条回答无法提供"
+            UPLOAD -> "附件上传失败"
+            FILE_INVALID -> "附件已失效，请重新上传"
+        }
+
+    /** 自动重试上限：限流只补一次，服务端故障/网络抖动最多两次 */
+    val maxAutoRetries: Int
+        get() = when (this) {
+            HTTP_429 -> 1
+            NETWORK, HTTP_5XX -> 2
+            else -> 0
+        }
+
     companion object {
         fun fromWire(value: String?): ErrorKind? = entries.firstOrNull { it.wire == value }
     }

@@ -1,4 +1,4 @@
-package io.tinychat.data.chat
+﻿package io.tinychat.data.chat
 
 import androidx.test.core.app.ApplicationProvider
 import io.tinychat.data.db.DatabaseFactory
@@ -12,6 +12,7 @@ import io.tinychat.net.SseEvent
 import io.tinychat.net.SseReader
 import io.tinychat.net.StopReason
 import io.tinychat.net.protocol.PreparedRequest
+import io.tinychat.net.transport.ChatException
 import io.tinychat.net.transport.ChatTransport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -59,6 +60,29 @@ class ChatStreamRunnerTest {
         }
     }
 
+    /**
+     * 可数次的假传输：前 [failures].size 次调用直接抛对应错误，之后正常吐 [events]。
+     * [failAfterOneEvent] 用来验证「收到内容后不许重试」。
+     */
+    private class ScriptedTransport(
+        private val failures: List<ChatException> = emptyList(),
+        private val events: List<SseEvent> = emptyList(),
+        private val failAfterEventIndex: Int? = null,
+        private val midStreamError: ChatException? = null,
+    ) : ChatTransport {
+        var calls = 0
+            private set
+
+        override fun stream(request: PreparedRequest): Flow<SseEvent> = flow {
+            val call = calls++
+            if (call < failures.size) throw failures[call]
+            events.forEachIndexed { index, event ->
+                emit(event)
+                if (index == failAfterEventIndex) throw midStreamError!!
+            }
+        }
+    }
+
     private fun sse(raw: String): List<SseEvent> = SseReader.read(Buffer().writeUtf8(raw)).toList()
 
     private fun request() = PreparedRequest(url = "", headers = emptyMap(), bodyJson = "{}")
@@ -89,6 +113,8 @@ class ChatStreamRunnerTest {
         // 固定时钟 + 关闭节流：测试不依赖真实时间
         clock = { now },
         flushIntervalMillis = 0,
+        // 重试退避不真等
+        sleep = {},
     )
 
     @Test
@@ -150,6 +176,73 @@ class ChatStreamRunnerTest {
         assertTrue("取消要向上传播", error is CancellationException)
         assertEquals(MessageStatus.INCOMPLETE, db.messageDao().byId(id)!!.status)
         assertTrue("取消前的内容必须留住", db.fragmentDao().byMessage(id).isNotEmpty())
+    }
+
+    // —— M1-11 自动重试 ——
+
+    @Test
+    fun `5xx 在没收到任何帧前自动重试并成功`() = runBlocking {
+        val id = newAssistantMessage()
+        val transport = ScriptedTransport(
+            failures = listOf(ChatException(ErrorKind.HTTP_5XX, 503, "boom")),
+            events = sse(SEARCH_STREAM),
+        )
+
+        val outcome = runner().run(id, request(), transport)
+
+        assertEquals(MessageStatus.FINISHED, outcome.status)
+        assertEquals("应当重试一次", 2, transport.calls)
+    }
+
+    @Test
+    fun `429 只补一次，退避后仍失败就落 FAILED`() = runBlocking {
+        val id = newAssistantMessage()
+        val transport = ScriptedTransport(
+            failures = listOf(
+                ChatException(ErrorKind.HTTP_429, 429, "slow down"),
+                ChatException(ErrorKind.HTTP_429, 429, "slow down"),
+                ChatException(ErrorKind.HTTP_429, 429, "slow down"),
+            ),
+            events = sse(SEARCH_STREAM),
+        )
+
+        val outcome = runner().run(id, request(), transport)
+
+        assertEquals(MessageStatus.FAILED, outcome.status)
+        assertEquals(ErrorKind.HTTP_429, outcome.error?.kind)
+        assertEquals("429 最多补一次", 2, transport.calls)
+    }
+
+    @Test
+    fun `收到内容之后不再自动重试`() = runBlocking {
+        val id = newAssistantMessage()
+        val transport = ScriptedTransport(
+            events = sse(SEARCH_STREAM),
+            failAfterEventIndex = 3,
+            midStreamError = ChatException(ErrorKind.HTTP_5XX, 500, "mid-stream"),
+        )
+
+        val outcome = runner().run(id, request(), transport)
+
+        assertEquals(MessageStatus.FAILED, outcome.status)
+        // 铁律：出现过 content_block_start 就绝不重试，避免重复计费与内容错乱
+        assertEquals(1, transport.calls)
+        assertTrue("已下发内容要留住", db.fragmentDao().byMessage(id).isNotEmpty())
+    }
+
+    @Test
+    fun `401 不重试，直接失败`() = runBlocking {
+        val id = newAssistantMessage()
+        val transport = ScriptedTransport(
+            failures = listOf(ChatException(ErrorKind.HTTP_401, 401, "bad key")),
+            events = sse(SEARCH_STREAM),
+        )
+
+        val outcome = runner().run(id, request(), transport)
+
+        assertEquals(MessageStatus.FAILED, outcome.status)
+        assertEquals(ErrorKind.HTTP_401, outcome.error?.kind)
+        assertEquals(1, transport.calls)
     }
 
     private companion object {

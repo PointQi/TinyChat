@@ -63,6 +63,7 @@ import io.tinychat.designsystem.BubbleShape
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
+import io.tinychat.model.ErrorKind
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.ui.TcIconButton
@@ -133,11 +134,15 @@ fun ChatScreen(
         }
 
         state.error?.let { message ->
+            val action = if (state.errorKind == ErrorKind.HTTP_401) onOpenProviderSettings else null
             Text(
-                text = message,
+                text = if (action != null) "$message，点这里去设置" else message,
                 style = TcTypography.bodySmall,
                 color = palette.danger,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (action != null) Modifier.clickable(onClick = action) else Modifier)
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
             )
         }
 

@@ -14,6 +14,7 @@ import io.tinychat.net.transport.ChatException
 import io.tinychat.net.transport.ChatTransport
 import io.tinychat.net.protocol.PreparedRequest
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 
 /** 一次流式生成的结果。 */
@@ -40,6 +41,8 @@ class ChatStreamRunner(
     private val fragmentDao: FragmentDao,
     private val clock: () -> Long = { System.currentTimeMillis() },
     private val flushIntervalMillis: Long = 200,
+    /** 重试退避；测试传空实现，免得单测真等 1s */
+    private val sleep: suspend (Long) -> Unit = { delay(it) },
 ) {
 
     suspend fun run(
@@ -71,11 +74,12 @@ class ChatStreamRunner(
             lastFlush = clock()
         }
 
+        suspend fun flushIfDue() {
+            if (clock() - lastFlush >= flushIntervalMillis) flush()
+        }
+
         try {
-            transport.stream(request).collect { event ->
-                assembler.onFrame(event.name, event.data)
-                if (clock() - lastFlush >= flushIntervalMillis) flush()
-            }
+            streamWithRetry(request, transport, assembler) { flushIfDue() }
             assembler.finishUnpairedTools()
             flush()
             return finalize(assistantMessageId, assembler)
@@ -97,6 +101,48 @@ class ChatStreamRunner(
             throw e
         }
     }
+
+    /**
+     * 自动重试（M1-11）：仅限「还没收到任何帧」时。
+     *
+     * **铁律**：一旦收到过 `content_block_start`，再重试就会重复计费并打乱内容，
+     * 因此 [sawFrame] 一旦为真，后面任何错误都直接抛给上层。
+     *
+     * 退避：429 优先用服务端 `Retry-After`，否则 1s；网络/5xx 依次 1s、2s。
+     */
+    private suspend fun streamWithRetry(
+        request: PreparedRequest,
+        transport: ChatTransport,
+        assembler: MessageAssembler,
+        flush: suspend () -> Unit,
+    ) {
+        var attempt = 0
+        while (true) {
+            var sawFrame = false
+            try {
+                transport.stream(request).collect { event ->
+                    sawFrame = true
+                    assembler.onFrame(event.name, event.data)
+                    flush()
+                }
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ChatException) {
+                val canRetry = !sawFrame && e.kind.retryable && attempt < e.kind.maxAutoRetries
+                if (!canRetry) throw e
+                attempt++
+                sleep(e.retryAfterMillis ?: backoffMillis(e.kind, attempt))
+            }
+        }
+    }
+
+    private fun backoffMillis(kind: io.tinychat.model.ErrorKind, attempt: Int): Long =
+        when (kind) {
+            io.tinychat.model.ErrorKind.HTTP_429 -> 1_000L
+            // 网络抖动与服务端故障：1s、2s
+            else -> 1_000L shl (attempt - 1)
+        }
 
     private suspend fun finalize(messageId: Long, assembler: MessageAssembler): RunOutcome {
         val stopReason = assembler.stopReason
