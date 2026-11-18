@@ -66,9 +66,21 @@ object TcIcons {
 
     // —— chat-demo 里没有，保留手绘 ——
 
-    /** 分享（chat-demo 无对应素材） */
+    /**
+     * 分享（chat-demo 无对应素材，手绘）。
+     *
+     * **必须按 16 网格、近似满幅画**：chat-demo 那套图标都是 16 网格的填充轮廓，
+     * 图形几乎顶满画布（约 97% 宽高）。原实现是 24 网格 + 1.8 描边，"框+上箭头"
+     * 只占中间 58%，渲染到 18dp 时视觉上比旁边的复制/朗读/重新生成小一圈、笔画也细。
+     * 这里改成 16 网格、1.35 描边，满幅后与三者同视觉重量。
+     */
     val Share: ImageVector by lazy {
-        strokeIcon("tc_share", "M12,4 V15 M8,8 L12,4 L16,8 M5,14 V20 H19 V14")
+        strokeIcon(
+            name = "tc_share",
+            pathData = "M8,0.9 V9.8 M3.9,4.3 L8,0.8 L12.1,4.3 M0.9,8.4 V15.0 H15.1 V8.4",
+            viewport = 16f,
+            strokeWidth = 1.35f,
+        )
     }
 
     /** 回到底部用的下箭头（chat-demo 用 ChevronDown 套圆圈，这里保留更直白的箭头） */
@@ -91,18 +103,29 @@ object TcIcons {
 
     private const val SW = 1.8f
 
-    private fun strokeIcon(name: String, pathData: String): ImageVector =
+    /**
+     * 手绘描边图标。
+     *
+     * [viewport] 要跟同排的邻居对齐：chat-demo 那套是 16 网格的填充轮廓，
+     * 手绘图标若用 24 网格画，同样的 dp 尺寸下会明显偏小偏细（见 [Share] 的注释）。
+     */
+    private fun strokeIcon(
+        name: String,
+        pathData: String,
+        viewport: Float = 24f,
+        strokeWidth: Float = SW,
+    ): ImageVector =
         ImageVector.Builder(
             name = name,
-            defaultWidth = 24.dp,
-            defaultHeight = 24.dp,
-            viewportWidth = 24f,
-            viewportHeight = 24f,
+            defaultWidth = viewport.dp,
+            defaultHeight = viewport.dp,
+            viewportWidth = viewport,
+            viewportHeight = viewport,
         ).addPath(
             pathData = PathParser().parsePathString(pathData).toNodes(),
             fill = null,
             stroke = SolidColor(Color.Black),
-            strokeLineWidth = SW,
+            strokeLineWidth = strokeWidth,
             strokeLineCap = StrokeCap.Round,
             strokeLineJoin = StrokeJoin.Round,
         ).build()
