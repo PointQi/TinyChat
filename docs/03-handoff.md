@@ -1,4 +1,4 @@
-﻿# 交接与续作指引（上下文压缩后先读本文）
+# 交接与续作指引（上下文压缩后先读本文）
 
 > 用途：**上下文一旦被压缩/新开 session，先读这一篇**，再按需跳转 01 / 02。
 > 本文只写"不可丢失的事实 + 一手报文 + 下一步动作"，不重复论证。
@@ -15,8 +15,9 @@
 | 规划 | ✅ 开发计划 + 交互设计完成（02 号文档） |
 | Spike | ✅ 4/4（SSE 离线 40/40、导出包 PASS、渲染定 API、公式图表定 WebView、在线 SSE 跑通） |
 | 代码 | ✅ **M1 完成（2026-11-18）**：M1-1 ~ M1-13 全部完成，单测 118 个 + lint 全绿；真机验过发送/停止/编辑重发/重新生成/版本切换/继续生成/抽屉会话管理与搜索 |
+| M2 渲染 | 🚧 **进行中**：M2-1（Markdown 接入 + 令牌映射）与 M2-2（流式增量 + 帧合并）已落地并真机对照；M2-3 抖动三坑待压测，M2-4~M2-9 待做 |
 | 阻塞项 | 无。Key 走 `.local/dev-key.txt`（debug 注入），M8-6 换 Keystore |
-| 下一步 | **M2 渲染**（Markdown / 公式 / 代码块 / 思维链折叠 / 引用角标），见 §7 Step 3 |
+| 下一步 | **M2-4 代码块**（语言列 + 复制 + 长文折叠），随后 M2-7 思维链折叠、M2-8 引用角标、M2-9 操作栏，最后 M2-5/M2-6 WebView 批 |
 
 ---
 
@@ -480,6 +481,24 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 ### Step 3 起
 
 见 02 §6 的 M2–M9 表格（60 个任务，含依赖与验收）。
+
+**M2-1/M2-2 的实现约定（踩坑换来的，别改回去）**：
+
+| 事项 | 结论 |
+|---|---|
+| 模块 | 新建 `:core:markdown`（AGP library + Compose），对外只有 `TcMarkdown(content, modifier, streaming)` 一个入口；渲染库类型全部 internal，不泄漏到 feature 层 |
+| 流式 | `rememberStreamingMarkdownState()` + 逐片 `append()`；内容不再是「当前全文的前缀」时（重新生成得到更短答案）用 `key(generation)` 重建解析状态 |
+| 帧合并 | `FrameMerger`：一次渲染耗时 ×2 为最小间隔，封顶 2s；`streaming=false` 时立刻补完不做节流。6 个单测（虚拟时钟） |
+| **库的 Spacer 陷阱** | 库给**每个顶层节点**前插 `Spacer(padding.block)`，而 GFM 的 AST 在每两块之间夹 **2 个 EOL 节点** → 设 8dp 实际是 24dp（真机实测标题下方 54dp）。**`block` 必须置 0**，间距由各组件自己加，且渲染时跳过 EOL 节点 |
+| 块间距 | 段落上下各 6dp；标题上 12–14dp、下 6dp；列表 `list=8dp`、项间 3dp；引用上下 8dp；表格/分隔线 8–14dp。列表项内部的段落间距**置 0**（`LocalBlockSpacing`），否则每项之间多出 12dp |
+| 字体内边距 | 全部 Markdown 样式 `includeFontPadding = false`。安卓默认按字体度量在首末行上下各加一段，中文 16sp 每段多出约 13px，是「标题与正文空得离谱」的另一半原因 |
+| 库的动画 | 库默认给每段文字挂 `animateContentSize()`，流式时与帧合并互相打架（内容「慢慢长出来」并伴随回缩）→ 传 `markdownAnimations { this }` 关掉 |
+| 行内代码底色 | **不用**库的 `RoundedCornerSpanPainter`：它拿「行盒」（= lineHeight，28sp）当矩形，再用 top/bottomMargin 硬裁，首行与续行裁切量不同 → 出现「首行太矮把 l 切了、续行高到吃下一行」。改用自研 `TcInlineCodePainter`：高度 = 字号 ×1.35、底边在基线下 0.24×字号，圆角 4dp，左右内边距 0（等宽字形自带 side bearing，再补 dp 就松）；跨行时只有首段左、末段右是圆角 |
+| 行内代码字号 | 14sp（官方 0.875em），定义在 `MarkdownTheme.InlineCodeFontSize`，画笔与排版必须用同一个值 |
+| 任务列表 | 库默认把勾选框画成等宽文字 `[x]`，不是真的框 → 自绘 16dp 圆角方框（选中品牌色填充 + 白勾） |
+| 引用 | 库把竖线与正文都画成正文色（黑）→ 自定义 `blockQuote`：竖线三级灰、引用内正文/列表/标题整体转三级灰，代码块保持原样 |
+| 列表符号 | 库默认 `"• "`（带空格），宽度随字号浮动 → 自定义 `BulletHandler` 返回 `"•"`，用 `markerModifier` 的 6dp 尾距控制间隙 |
+| 版本 | 渲染库 `com.mikepenz:multiplatform-markdown-renderer:0.46.0` + `-m3`（已实测可解析、API 与本文一致） |
 
 ---
 

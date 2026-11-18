@@ -38,6 +38,7 @@ include(":core:designsystem")
 include(":core:ui")
 include(":core:data")
 include(":core:net")
+include(":core:markdown")
 
 include(":feature:chat")
 include(":feature:sessions")

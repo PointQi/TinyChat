@@ -1,4 +1,4 @@
-﻿package io.tinychat.feature.chat
+package io.tinychat.feature.chat
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -68,6 +68,7 @@ import io.tinychat.designsystem.BubbleShape
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
+import io.tinychat.markdown.TcMarkdown
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.KnownProviders
@@ -405,10 +406,10 @@ private fun MessageRow(
             }
 
             if (message.text.isNotBlank()) {
-                Text(
-                    text = message.text,
-                    style = TcTypography.bodyLarge,
-                    color = palette.labelPrimary,
+                // 正文走 Markdown（M2-1/2/3）：流式期间按渲染耗时节流出帧，禁止整篇重解析
+                TcMarkdown(
+                    content = message.text,
+                    streaming = message.status == MessageStatus.WIP,
                 )
                 if (message.citations.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
