@@ -29,4 +29,8 @@ dependencies {
     api(libs.compose.material3)
     api(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
+
+    // 站点 favicon（引用角标来源页、来源聚合胶囊）
+    api(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
 }

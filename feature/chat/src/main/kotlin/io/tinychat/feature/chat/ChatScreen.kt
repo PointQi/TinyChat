@@ -71,6 +71,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
@@ -78,11 +80,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.tinychat.designsystem.BubbleShape
+import io.tinychat.designsystem.TcFavicon
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
 import io.tinychat.markdown.CitationAnchor
-import io.tinychat.markdown.SourceBadge
+import io.tinychat.markdown.CitationBubbleShape
 import io.tinychat.markdown.TcMarkdown
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.MessageStatus
@@ -426,7 +429,7 @@ private fun MessageRow(
                 TcMarkdown(
                     content = message.text,
                     streaming = message.status == MessageStatus.WIP,
-                    citations = message.sources.map { CitationAnchor(it.anchor, it.index) },
+                    citations = message.anchors.map { CitationAnchor(it.anchor, it.index) },
                     onCitationClick = { sourcesOpen = true },
                 )
                 if (message.sources.isNotEmpty()) {
@@ -536,8 +539,9 @@ private fun MessageRow(
 }
 
 /**
- * 来源列表（M2-8 的临时壳子：点角标/胶囊都落到这里）。
- * M3-3 会换成「搜索结果抽屉」，带日期、摘要与序号定位，这里只保证有落点。
+ * 来源页（M2-8）：标题居中「搜索结果」，每行 = 圆形 favicon + 站点域名 + 灰色日期
+ * + 右贴边角标；下面两行灰色摘要（超出省略）。点击用浏览器打开源网页。
+ * M3-3 会把它扩成带「搜索结果」定位的完整抽屉。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -561,13 +565,16 @@ private fun SourceSheet(
                 .verticalScroll(rememberScrollState()),
         ) {
             Text(
-                text = "参考来源（${sources.size}）",
+                text = "搜索结果",
                 style = TcTypography.titleMedium,
                 color = palette.labelPrimary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
+
             sources.forEach { source ->
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
@@ -575,44 +582,71 @@ private fun SourceSheet(
                             source.url?.let { runCatching { uriHandler.openUri(it) } }
                         }
                         .padding(vertical = 10.dp),
-                    verticalAlignment = Alignment.Top,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(palette.inlineCodeBg),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = source.index.toString(),
-                            fontSize = 10.sp,
-                            color = palette.labelSecondary,
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 左侧一组（图标+站名+日期）吃掉剩余宽度，右侧角标才能真正贴右边
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TcFavicon(
+                                url = source.iconUrl,
+                                fallbackLetter = source.site,
+                                size = 18,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = source.site,
+                                style = TcTypography.bodySmall,
+                                color = palette.labelPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            source.publishedDate?.let { date ->
+                                Text(
+                                    text = date,
+                                    style = TcTypography.labelSmall,
+                                    color = palette.labelTertiary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        // 与正文角标同一个气泡形状，右贴边
+                        Box(
+                            modifier = Modifier
+                                .size(width = 22.dp, height = 16.dp)
+                                .clip(CitationBubbleShape)
+                                .background(palette.inlineCodeBg),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = source.index.toString(),
+                                style = TextStyle(
+                                    fontSize = 10.sp,
+                                    lineHeight = 10.sp,
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                ),
+                                color = palette.labelSecondary,
+                            )
+                        }
                     }
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = source.title ?: source.site,
-                            style = TcTypography.bodyMedium,
-                            color = palette.labelPrimary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = source.site,
-                            style = TcTypography.labelSmall,
-                            color = palette.labelTertiary,
-                        )
-                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = source.snippet.orEmpty(),
+                        style = TcTypography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
+                        color = palette.labelTertiary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
     }
 }
 
-/** 正文末尾的来源聚合胶囊：图标堆叠 + `N 个网页`（M2-8） */
+/** 正文末尾的来源聚合胶囊：favicon 堆叠（同站去重、最多 3 个）+ `N 个网页` */
 @Composable
 private fun SourceCapsule(
     sources: List<ChatSource>,
@@ -624,19 +658,21 @@ private fun SourceCapsule(
             .clip(RoundedCornerShape(100.dp))
             .border(1.dp, palette.borderL2, RoundedCornerShape(100.dp))
             .clickable(onClick = onClick)
-            .padding(start = 6.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
+            .padding(start = 6.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 站点首字母堆叠：同一站点只出现一次，最多 3 个
         sources.distinctBy { it.site }.take(3).forEach { source ->
-            Box(modifier = Modifier.size(16.dp)) {
-                SourceBadge(letter = source.site.take(1).uppercase())
-            }
+            TcFavicon(
+                url = source.iconUrl,
+                fallbackLetter = source.site,
+                size = 20,
+            )
+            Spacer(Modifier.width(2.dp))
         }
         Spacer(Modifier.width(8.dp))
         Text(
             text = "${sources.size} 个网页",
-            style = TcTypography.labelSmall,
+            style = TcTypography.bodySmall,
             color = palette.labelSecondary,
         )
     }

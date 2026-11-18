@@ -56,21 +56,34 @@ data class ToolStep(
     val items: List<String>,
 )
 
-/** 正文里的一处引用来源（M2-8） */
+/** 正文里的一处引用来源（M2-8）。同一 URL 只对应一条来源，编号复用 */
 data class ChatSource(
-    /** 角标编号，1 基，与正文内联角标一致 */
+    /** 角标编号，1 基，等于它在来源列表里的位置 */
     val index: Int,
-    /** 在全部正文里的字符偏移：角标插在这里 */
-    val anchor: Int,
     val title: String?,
     val url: String?,
+    /** 站点域名（如 `sina.com.cn`），来自搜索结果的 site_name */
+    val site: String,
+    /** favicon；搜索结果里没有就用域名拼 DeepSeek 的图标 CDN */
+    val iconUrl: String?,
+    /** 网页发布日期，ISO-8601（UTC） */
+    val publishedAt: String?,
+    /** 网页摘要（搜索结果的 snippet，兜底用被引用的原句） */
+    val snippet: String?,
 ) {
-    /** 站点名：url 的 host 取主域，兜底用标题首字 */
-    val site: String
-        get() = url?.substringAfter("://")?.substringBefore('/')?.removePrefix("www.")
-            ?.takeIf { it.isNotBlank() }
-            ?: title?.take(1).orEmpty()
+    /** `yyyy/MM/dd`，按本地时区（服务端给的是 UTC，直接截前 10 位会差一天） */
+    val publishedDate: String?
+        get() = publishedAt?.let {
+            runCatching {
+                java.time.OffsetDateTime.parse(it)
+                    .atZoneSameInstant(java.time.ZoneId.systemDefault())
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"))
+            }.getOrNull()
+        }
 }
+
+/** 正文里的一处角标：位置 + 指向哪条来源 */
+data class SourceAnchor(val anchor: Int, val index: Int)
 
 /** 会话页的一条消息（已从碎片拼好）。 */
 data class ChatMessage(
@@ -79,6 +92,8 @@ data class ChatMessage(
     val text: String,
     /** 引用来源（正文内联角标 + 末尾来源胶囊共用这一份） */
     val sources: List<ChatSource>,
+    /** 正文里的角标位置（同一来源可能被引用多次，每次一个位置） */
+    val anchors: List<SourceAnchor>,
     /** 思维链时间轴；纯工具轮次也可能只有工具项 */
     val timeline: List<TimelineItem>,
     val thinkingSeconds: Double?,
@@ -538,6 +553,7 @@ class ChatViewModel(
                 isUser = true,
                 text = request,
                 sources = emptyList(),
+                anchors = emptyList(),
                 timeline = emptyList(),
                 thinkingSeconds = null,
                 isThinking = false,
@@ -551,20 +567,49 @@ class ChatViewModel(
 
         val textBuilder = StringBuilder()
         val sources = mutableListOf<ChatSource>()
+        val anchors = mutableListOf<SourceAnchor>()
+        // 引用对象只有 url/title，站名、favicon、发布日期、摘要都在搜索结果里 → 按 url 关联
+        val searchByUrl = fragments
+            .mapNotNull { FragmentPayloadCodec.decode(it.payload) as? ToolSearchPayload }
+            .flatMap { it.results }
+            .associateBy { it.url }
+        val openByUrl = fragments
+            .mapNotNull { FragmentPayloadCodec.decode(it.payload) as? ToolOpenPayload }
+            .associateBy { it.url }
+        // 同一 URL 只列一条来源、正文里复用同一个编号（官方 App 就是这么做的）
+        val indexByUrl = LinkedHashMap<String, Int>()
+
         responses.forEach { response ->
             textBuilder.append(response.content)
-            // 引用必然紧跟被引用的那段文字，且与本段正文同属一个 RESPONSE 碎片，
-            // 所以在「拼到这一段末尾」的位置记锚点就是精确位置（改协议或加导出字段都不必）
             response.citations?.forEach { element ->
                 val obj = element.jsonObject
-                sources += ChatSource(
-                    index = sources.size + 1,
-                    // 锚点要落在「最后一个非空白字符之后」，否则会掉进段落之间的空行里，
-                    // 段落级渲染就贴不上角标了（实测：150 落在 71..148 与 166.. 之间）
-                    anchor = textBuilder.trimmedEnd(),
-                    title = obj["title"]?.jsonPrimitive?.contentOrNull,
-                    url = obj["url"]?.jsonPrimitive?.contentOrNull,
-                )
+                val url = obj["url"]?.jsonPrimitive?.contentOrNull
+                val title = obj["title"]?.jsonPrimitive?.contentOrNull
+                // 锚点要落在「最后一个非空白字符之后」，否则会掉进段落之间的空行里，
+                // 段落级渲染就贴不上角标了（实测：150 落在 71..148 与 166.. 之间）
+                val anchor = textBuilder.trimmedEnd()
+                val key = url ?: title.orEmpty()
+                val index = indexByUrl.getOrPut(key) {
+                    val search = url?.let { searchByUrl[it] }
+                    val open = url?.let { openByUrl[it] }
+                    val host = url?.let { runCatching { java.net.URI(it).host }.getOrNull() }
+                        ?.removePrefix("www.")
+                    // 编号 = 来源在列表里的位置（1 基）
+                    val newIndex = sources.size + 1
+                    sources += ChatSource(
+                        index = newIndex,
+                        title = title ?: search?.title,
+                        url = url,
+                        site = search?.siteName ?: open?.siteName ?: host.orEmpty(),
+                        iconUrl = search?.siteIcon
+                            ?: open?.siteIcon
+                            ?: host?.let { "https://cdn.deepseek.com/site-icons/$it" },
+                        publishedAt = search?.publishedAt ?: open?.publishedAt,
+                        snippet = search?.snippet ?: obj["cited_text"]?.jsonPrimitive?.contentOrNull,
+                    )
+                    newIndex
+                }
+                anchors += SourceAnchor(anchor = anchor, index = index)
             }
         }
         val text = textBuilder.toString()
@@ -589,6 +634,7 @@ class ChatViewModel(
             isUser = false,
             text = text,
             sources = sources,
+            anchors = anchors,
             timeline = timeline,
             thinkingSeconds = seconds,
             isThinking = message.status == MessageStatus.WIP,

@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,8 +39,8 @@ data class CitationAnchor(val offset: Int, val index: Int)
 
 internal const val CitationTagPrefix = "tc_citation_"
 
-/** 引用角标外形：三圆一直角（官方 `border-radius: 6px 6px 6px 0`） */
-private val CitationChipShape = RoundedCornerShape(
+/** 引用角标外形：三圆一直角（官方 `border-radius: 6px 6px 6px 0`），正文与来源页共用 */
+val CitationBubbleShape = RoundedCornerShape(
     topStartPercent = 50,
     topEndPercent = 50,
     bottomEndPercent = 50,
@@ -78,15 +80,19 @@ internal fun citationInlineContent(
                     .fillMaxSize()
                     // 官方样式是 `border-radius: 6px 6px 6px 0`：三个角圆、左下角是直角，
                     // 看起来像一个左下角带尖的气泡
-                    .clip(CitationChipShape)
+                    .clip(CitationBubbleShape)
                     .background(palette.inlineCodeBg)
                     .then(if (onClick != null) Modifier.clickable { onClick(anchor.index) } else Modifier),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = anchor.index.toString(),
-                    fontSize = 9.5.sp,
-                    lineHeight = 9.5.sp,
+                    // 关掉字体内边距，数字才会在气泡里真正居中（默认会整体偏下）
+                    style = TextStyle(
+                        fontSize = 9.5.sp,
+                        lineHeight = 9.5.sp,
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    ),
                     fontWeight = FontWeight.Medium,
                     color = palette.labelSecondary,
                 )
@@ -94,25 +100,4 @@ internal fun citationInlineContent(
         }
     }
     return markdownInlineContent(content)
-}
-
-/** 来源聚合胶囊上的一枚站点图标（首字母色块，真 favicon 要等 M3 接 Coil） */
-@Composable
-fun SourceBadge(letter: String, size: Int = 16) {
-    val palette = TcTheme.palette
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(100.dp))
-            .background(palette.bgLayer2)
-            .then(Modifier.size(size.dp)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = letter,
-            fontSize = (size * 0.55f).sp,
-            lineHeight = (size * 0.55f).sp,
-            color = palette.labelSecondary,
-            fontWeight = FontWeight.Medium,
-        )
-    }
 }
