@@ -1,4 +1,4 @@
-﻿package io.tinychat.net.context
+package io.tinychat.net.context
 
 import io.tinychat.model.Fragment
 import io.tinychat.model.Message
@@ -211,5 +211,126 @@ class ContextRebuilderTest {
             currentReminder = reminder,
         )
         assertEquals(listOf("latest_reminder", "user", "assistant"), roles(out))
+    }
+
+    // —— M4 附件（03 §6.5 的块顺序） ——
+
+    private fun userWithAttachments(
+        id: Long,
+        text: String,
+        attachments: List<HistoryAttachment>,
+    ) = ContextTurn(
+        message = Message(
+            id = id,
+            sessionId = "s",
+            role = Role.USER,
+            status = MessageStatus.FINISHED,
+            insertedAt = id,
+        ),
+        fragments = if (text.isBlank()) {
+            emptyList()
+        } else {
+            listOf(Fragment(messageId = id, ord = 0, payload = RequestPayload(text)))
+        },
+        attachments = attachments,
+    )
+
+    @Test
+    fun `带图片的提问按 图片块 再 文本块 的顺序回传`() {
+        val out = ContextRebuilder.build(
+            listOf(
+                userWithAttachments(
+                    1,
+                    "这张图里是什么",
+                    listOf(HistoryAttachment(remoteId = "file-image-1", isImage = true)),
+                ),
+                assistant(2, "是一张图"),
+            ),
+            currentReminder = null,
+        )
+
+        val userContent = out.first { it.role == "user" }.content as JsonArray
+        assertEquals(2, userContent.size)
+        assertEquals("image", (userContent[0] as JsonObject)["type"].toString().trim('"'))
+        assertEquals("text", (userContent[1] as JsonObject)["type"].toString().trim('"'))
+        assertEquals(
+            "file-image-1",
+            (((userContent[0] as JsonObject)["source"] as JsonObject)["file_id"] as JsonPrimitive).content,
+        )
+    }
+
+    @Test
+    fun `文档在前面、文本在最后`() {
+        val out = ContextRebuilder.build(
+            listOf(
+                userWithAttachments(
+                    1,
+                    "总结这份文档",
+                    listOf(
+                        HistoryAttachment(remoteId = "file-api-doc", isImage = false),
+                        HistoryAttachment(remoteId = "file-image-1", isImage = true),
+                    ),
+                ),
+                assistant(2, "好的"),
+            ),
+            currentReminder = null,
+        )
+
+        val userContent = out.first { it.role == "user" }.content as JsonArray
+        assertEquals(listOf("document", "image", "text"), userContent.map {
+            ((it as JsonObject)["type"] as JsonPrimitive).content
+        })
+    }
+
+    @Test
+    fun `只有图片没有文字的轮次也要回传`() {
+        val out = ContextRebuilder.build(
+            listOf(
+                userWithAttachments(
+                    1,
+                    "",
+                    listOf(HistoryAttachment(remoteId = "file-image-1", isImage = true)),
+                ),
+                assistant(2, "图里有三行字"),
+            ),
+            currentReminder = null,
+        )
+
+        assertEquals(listOf("user", "assistant"), roles(out))
+        val userContent = out.first().content as JsonArray
+        assertEquals(1, userContent.size)
+        assertEquals("image", ((userContent[0] as JsonObject)["type"] as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `附件没拿到 file_id 时不进请求，空轮整轮跳过`() {
+        // 上传失败的附件 + 空正文 = 这一轮没有任何可回传的内容
+        val out = ContextRebuilder.build(
+            listOf(
+                userWithAttachments(1, "", listOf(HistoryAttachment(remoteId = null, isImage = true))),
+                assistant(2, "不该出现"),
+            ),
+            currentReminder = null,
+        )
+        assertTrue(out.isEmpty())
+    }
+
+    @Test
+    fun `有正文但附件没上传成功时退化成纯文本`() {
+        val out = ContextRebuilder.build(
+            listOf(
+                userWithAttachments(1, "看这张图", listOf(HistoryAttachment(remoteId = null, isImage = true))),
+                assistant(2, "看不到图"),
+            ),
+            currentReminder = null,
+        )
+
+        assertEquals("看这张图", (out.first().content as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `没有附件时 userMessage 输出纯文本，报文与 M4 之前一致`() {
+        val message = ContextRebuilder.userMessage("普通一句", emptyList())
+        assertEquals("普通一句", (message.content as JsonPrimitive).content)
     }
 }

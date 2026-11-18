@@ -1,4 +1,4 @@
-﻿package io.tinychat
+package io.tinychat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -54,7 +54,11 @@ fun TinyChatApp() {
     val context = LocalContext.current
     val container = remember { AppContainer(context.applicationContext) }
     val chatViewModel: ChatViewModel = viewModel(
-        factory = ChatViewModel.factory(container.repository, container.apiKey),
+        factory = ChatViewModel.factory(
+            repository = container.repository,
+            apiKey = container.apiKey,
+            attachmentStore = container.attachmentStore,
+        ),
     )
 
     val navController = rememberNavController()
@@ -126,6 +130,9 @@ fun TinyChatApp() {
                         onRegenerate = chatViewModel::regenerate,
                         onContinue = chatViewModel::continueGeneration,
                         onRetry = chatViewModel::retryFailed,
+                        onAddAttachments = chatViewModel::addAttachments,
+                        onRemoveAttachment = chatViewModel::removeAttachment,
+                        onRetryAttachment = chatViewModel::retryAttachment,
                     )
                 }
                 composable(Routes.SETTINGS) {

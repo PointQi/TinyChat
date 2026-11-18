@@ -8,16 +8,32 @@ import io.tinychat.model.RequestPayload
 import io.tinychat.model.ResponsePayload
 import io.tinychat.model.Role
 import io.tinychat.model.TemplateResponsePayload
+import io.tinychat.net.protocol.DeepSeekMessagesProtocol
 import io.tinychat.net.protocol.WireMessage
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 
-/** 上下文构建的一段：消息 + 它的碎片（已按 ord 排好）。 */
+/**
+ * 历史轮次里的一个附件：只带重建请求需要的东西。
+ *
+ * `remoteId` 为 null = 没上传成功（导入的老数据、或上传失败），**不进请求**；
+ * 若该轮正文也为空，整轮会被丢弃（与「孤立 USER」同处理）。
+ */
+data class HistoryAttachment(
+    val remoteId: String?,
+    val isImage: Boolean,
+) {
+    /** 能不能进请求 */
+    val usable: Boolean get() = !remoteId.isNullOrBlank()
+}
+
+/** 上下文构建的一段：消息 + 它的碎片（已按 ord 排好）+ 它的附件。 */
 data class ContextTurn(
     val message: Message,
     val fragments: List<Fragment>,
+    val attachments: List<HistoryAttachment> = emptyList(),
 )
 
 /**
@@ -49,7 +65,10 @@ object ContextRebuilder {
                     val user = pendingUser ?: continue
                     val assistantText = turn.usableText() ?: continue
 
-                    val userText = user.userText() ?: run {
+                    val userText = user.userText().orEmpty()
+                    val attachments = user.usableAttachments()
+                    // 正文和附件都空 = 这一轮没有内容可回传
+                    if (userText.isBlank() && attachments.isEmpty()) {
                         pendingUser = null
                         continue
                     }
@@ -59,7 +78,7 @@ object ContextRebuilder {
                     if (currentReminder != null && snapshot != currentReminder) {
                         out += WireMessage.text(WireMessage.ROLE_REMINDER, currentReminder)
                     }
-                    out += WireMessage.text(WireMessage.ROLE_USER, userText)
+                    out += userMessage(userText, attachments)
                     out += turn.assistantMessage(assistantText)
                     pendingUser = null
                 }
@@ -68,6 +87,42 @@ object ContextRebuilder {
 
         return out
     }
+
+    /**
+     * 规则 6 / 附件：**文件与图片在前、文本在后**（03 §6.5 的示例顺序）。
+     *
+     * 没有可用附件时退化成纯文本消息，报文与 M4 之前完全一致 —— 老会话不会因为
+     * 这次改动多出空 `content` 数组。
+     */
+    fun userMessage(text: String, attachments: List<HistoryAttachment>): WireMessage {
+        val usable = attachments.filter { it.usable }
+        if (usable.isEmpty()) return WireMessage.text(WireMessage.ROLE_USER, text)
+
+        val blocks = buildList {
+            usable.forEach { attachment ->
+                val id = attachment.remoteId ?: return@forEach
+                add(
+                    if (attachment.isImage) {
+                        DeepSeekMessagesProtocol.imageBlock(id)
+                    } else {
+                        DeepSeekMessagesProtocol.fileBlock(id)
+                    },
+                )
+            }
+            if (text.isNotBlank()) {
+                add(
+                    buildJsonObject {
+                        put("type", JsonPrimitive("text"))
+                        put("text", JsonPrimitive(text))
+                    },
+                )
+            }
+        }
+        return WireMessage.blocks(WireMessage.ROLE_USER, blocks)
+    }
+
+    private fun ContextTurn.usableAttachments(): List<HistoryAttachment> =
+        attachments.filter { it.usable }
 
     /**
      * 规则 4：没有 `read_link` 时就是一条纯文本消息；有时改成块数组

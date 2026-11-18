@@ -18,7 +18,7 @@
 | **M1 聊天内核** | ✅ | M1-1 ~ M1-13；真机验过发送/停止/编辑重发/重新生成/版本切换/继续生成/抽屉 |
 | **M2 渲染** | ✅ 2026-11-19 | M2-1/2、M2-3（抖动三坑）、M2-4、M2-5/M2-6、M2-7、M2-8、M2-9 全部落地并真机对照；宽公式「自然宽度 + 左贴边 + 横向滚动」已对照（`6248c97`） |
 | **M3 联网** | ✅ 已真机在用 | `server_tool_use` / `web_search_tool_result` 解析、搜索阶段碎片与卡片、来源胶囊 + 来源页、「N 个网页」聚合、`deepseek_web_search` / `deepseek_read_url` 声明；工具报文见 §6 |
-| **M4 附件** | ⬜ **未接线** | 只有 `FilesApi` / `FileUpload` 能力位与数据结构；**没有**选择器（`ActivityResultContracts` / `GetContent` / `OpenDocument` 各 0 处）、没有上传调用（`uploadFile` 0 处）、没有消息内文件卡 |
+| **M4 附件** | 🚧 **主链路已通**（2026-11-19） | 相册多选/拍照入口、SAF 文件、草稿预览与删除、落盘（`attachments/{messageId}/` + `thumbs/`）、Files API 流式上传、`purpose` 自动判定、请求块（文件/图片在前、文本在后）、消息内 120dp/64dp 缩略图与文件卡、v4-pro 隐藏入口——**模拟器已验传图问答与纯图片轮**；`document` 块由真实接口用例 `LiveSmokeTest.文档块端到端` 证明。遗留：SAF 回落未实测、上传失败重试未实测、删会话清附件未接（见本节末） |
 | **M5 语音** | ⬜ 未实现 | `Asr` / `SpeechRecognizer` / 录音相关 0 处；TTS 只有 `Provider.kt` 的能力位与 `TtsVoice` 枚举（决策 3），**没有播放实现** |
 | **M6 数据管理** | 🚧 基本在 | v3 导入导出已实现（导出 27 处、导入 8 处，流式 ZIP + SAF）；「3340 会话 100% 往返」的验收还没写进记录 |
 | **M7 用量与费用** | 🚧 大半在 | `Usage` / `Cost` / 余额接口都在（`余额` 8 处）；**上下文饼图未做**（`PieChart` / `饼图` 0 处） |
@@ -26,7 +26,7 @@
 | **M8 打磨** | 🚧 部分 | 设置页在（`SettingsScreens.kt`）；**分享出图、i18n、引导页都没做**（`ShareImage` / `I18n` / `Onboarding` 各 0 处） |
 | **M9 发布** | ⬜ 未开始 | 签名仍是 debug（决策 14，`M8-6` 才换 Keystore）；`NOTICE` 0 处 |
 | 阻塞项 | 无 | Key 走 `.local/dev-key.txt`（debug 注入） |
-| 下一步 | — | 建议顺序：M4 附件接线 → M5 语音 → M8 分享出图 / i18n → M9 发布 |
+| 下一步 | — | 建议顺序：M4 收尾（SAF 真机验 + 失败重试 + 删会话清附件） → M5 语音 → M8 分享出图 / i18n → M9 发布 |
 
 
 ---
@@ -622,6 +622,51 @@ adb logcat -d | Select-String "bench cold"
 ```
 
 其他已知项：深色主题已验（`--ez dark true`，公式转浅色、根号完好）；M2-3 抖动压测排在之后。
+
+---
+
+**M4 附件（2026-11-19 落地，主链路已通）**
+
+一条龙：Photo Picker / SAF → 草稿（只存 Uri + 元信息 + 缩略图）→ 发送时落盘到 `attachments/{messageId}/` → 上传 Files API 拿 `file_id` → 请求里用**块数组**引用 → 消息里画缩略图/文件卡。
+
+| 事项 | 结论（踩坑换来的，别改回去） |
+|---|---|
+| 目录结构 | 按 02 §3.4：`filesDir/attachments/{messageId}/{id}_{safeName}` 原件、`filesDir/thumbs/{id}.webp` 缩略图（最长边 512px）。**草稿阶段不拷原件**：`messageId` 要等发送时才有，先只读 Uri 元信息 + 生成缩略图 |
+| 单文件上限 | 100MiB（`AttachmentStore.MAX_BYTES`）。有 `SIZE` 就提前拒；拿不到 `SIZE`（部分 provider）就边拷边数，超了删半截文件 |
+| 状态机 | `LOCAL`（已落盘未传）→ `UPLOADING` → `UPLOADED`（有 `remote_id`）/ `FAILED`（可重试）。**状态先落下一行再上传**，界面直接读库画「上传中 / 失败」，不另做内存态 |
+| `purpose` 判定（M4-5） | 图片 → `user_data`；PDF/Word/PPT/ODF → `text_recognition`；txt/md/csv/json/代码/XLSX/EPUB → `user_data`（不计费）。`rich_layout_recognition` 需要用户显式选，不自动猜（猜错要多花钱）。见 `AttachmentPurpose` |
+| 请求块顺序 | **附件块在前、文本块在后**（03 §6.5 示例顺序）。只有图片/文件没写字的那一轮：**不写 REQUEST 碎片**（真实归档样本就是 0 碎片）+ 请求里也不发 `text` 块。`ContextRebuilder.userMessage()` 是唯一入口 |
+| beta 头 | `anthropic-beta: files-api-2025-04-14` 现在**自动判定**（`WireMessage.hasAttachmentBlocks` 扫 `document`/`image` 块），不用调用方记得传 `hasFileBlocks` |
+| 空轮丢弃 | 附件没拿到 `file_id` 且正文为空 → 这一轮不进上下文（与「孤立 USER」同处理），避免发出只有空 content 的消息 |
+| 消息内版式 | **按 chat-demo 官方实现**（`UserMessage.module.css` / `MessageFile.module.css`）：一列 `flex-wrap`、右贴边、间距 10dp；图片是**正方形缩略图 120dp，与文档混排时缩到 64dp**；圆角 16dp + 1dp 描边 + `object-fit: cover`；上传中压 30% 黑蒙层 + 转圈，失败描红边 + 重试图标。**不是** 1:1 / 2 列 / 3 列九宫格（那是照截图猜的，已按参考实现更正） |
+| 文件卡 | 40dp 图标 + 文件名 + 第二行「扩展名 大小」（`PDF 1.2 MB`），失败/缺失红字。卡片点击在原件可读时才有动作 |
+| 能力位（M4-6） | `state.canAttach` = 当前模型 `imageInput || fileUpload`；v4-pro 整个附件入口**不出现**（不是置灰）。编辑态也不给加附件（编辑只改文字，进入编辑时草稿已清空） |
+| 图片解码 | **不加 Coil**：缩略图是我们自己生成的 512px webp，用 `BitmapFactory` + `inSampleSize` 按目标像素解码即可（`rememberAttachmentBitmap`）。要预览时读的还是缩略图，不解析原图 |
+| 导入的历史附件 | `attachments` 表为空时退回 `FILE` 碎片（`FilePayload`），标 `MISSING` 显示「原件未导入」——M6 导入要把碎片写成附件行，那时这条兜底才会退休 |
+
+**两个必须记住的 Compose 陷阱**
+
+1. `BoxWithConstraints(Modifier.fillMaxWidth())` 的 content 默认 `TopStart` 对齐：里面的 `Column(horizontalAlignment = End)` 是 wrap-content，**靠不满整行**（图片会浮在左边）。必须给 `BoxWithConstraints` 指定 `contentAlignment = Alignment.BottomEnd`。
+2. `uiautomator dump` 的 `bounds` **不能当布局尺寸用**（本项目第二次踩）：那两枚图片节点报成 `330×48`，实际 `onGloballyPositioned` 是 `330×330`、根坐标 `(348,231)`、`(706,231)`——右侧对齐到 1036，与气泡右缘一致。判尺寸一律用 `onGloballyPositioned` 打印，或截图像素探针。
+
+**验证记录（2026-11-19，模拟器 Pixel_3a_API_34，1080×2220 / dpr 2.75）**
+
+| 用例 | 结果 |
+|---|---|
+| 相册多选 2 张 → 草稿行两枚 56dp 缩略图 + 删除角标 | ✅ `files/thumbs/*.webp` 两个文件（1350/1280 B） |
+| 输入文字 + 发送 → 上传 → 视觉问答 | ✅ 附件 `state=UPLOADED`、`remote_id=file-api-…`；回答正确描述两张图的横/竖构图与白框 |
+| 消息内版式 | ✅ 两枚 330×330（120dp）右贴边、间距 28px（10dp）；把其中一条改成文档后，图片自动缩到 168px（64dp）+ 文件卡「PNG 3 KB」 |
+| 只有图片没有文字 | ✅ 用户消息 0 碎片、请求里只有 image 块，正常回答 |
+| v4-pro 下附件入口 | ✅ 切到 `V4 Pro 最大` 后输入区**不再有回形针** |
+| 文档块端到端（真实接口） | ✅ `LiveSmokeTest."文档块端到端"`：上传 md（`user_data`）→ `document` 块 → 模型答出文档里的杜撰代号 `BLUEHARBOR`；同时断言有 beta 头 |
+
+**还没做的（都记在账上，别当成已完成）**
+
+- **SAF「选择文件」回落没实测通**：面板能打开（`OpenMultipleDocuments`），但模拟器 DocumentsUI 的 Recent 不收录 `adb push` 的非媒体文件，`Show roots` 抽屉又 dump 不出来 → 真机待验。文档块本身已由真实接口用例证明。
+- 上传失败重试（`retryTurn` + 消息里那行「附件上传失败，点击重试」）只做了代码路径，没断网实测。
+- 删会话/删消息清附件文件：`AttachmentStore.deleteMessageDir` / `dao.bySession` 已备好，**还没接到删除流程**（M6-6 一起收口）。
+- 上传只有不确定进度（转圈），没有百分比——**官方也是转圈**（`FileCard` 的 spinner + 蒙层），所以不算缺口。
+
 
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**
 

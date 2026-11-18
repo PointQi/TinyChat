@@ -101,6 +101,29 @@ object TcIcons {
         strokeIcon("tc_pin", "M5,4 H19 M12,20 V8 M7,13 L12,8 L17,13")
     }
 
+    // —— 附件（M4）：chat-demo 没有相册/拍照/文件图标，按 24 网格手绘 ——
+    // 只用折线不画圆弧：PathParser 的 A 指令在这些小尺寸下容易糊，菱形/三角在 18dp 更清楚。
+
+    /** 相册：外框 + 山形 */
+    val Photo: ImageVector by lazy {
+        strokeIcon("tc_photo", "M3,5 H21 V19 H3 Z M3,16 L9,11 L14,15 L17,12.5 L21,16")
+    }
+
+    /** 拍照：机身 + 顶部凸起 + 菱形镜头 */
+    val Camera: ImageVector by lazy {
+        strokeIcon("tc_camera", "M3,8 H6.5 L8.5,5.5 H15.5 L17.5,8 H21 V19 H3 Z M12,10.2 L14.5,12.7 L12,15.2 L9.5,12.7 Z")
+    }
+
+    /** 文件：带折角的纸张 */
+    val File: ImageVector by lazy {
+        strokeIcon("tc_file", "M6,3 H14 L19,8 V21 H6 Z M14,3 V8 H19")
+    }
+
+    /** 文件夹（选文件的入口与文件夹型附件） */
+    val Folder: ImageVector by lazy {
+        strokeIcon("tc_folder", "M3,6 H10 L12,8.5 H21 V19 H3 Z")
+    }
+
     private const val SW = 1.8f
 
     /**

@@ -1,8 +1,10 @@
-﻿package io.tinychat
+package io.tinychat
 
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import io.tinychat.data.attachment.AttachmentStore
+import io.tinychat.data.attachment.AttachmentUploader
 import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.db.DatabaseFactory
 import io.tinychat.net.transport.OkHttpChatTransport
@@ -27,7 +29,16 @@ class AppContainer(context: Context) {
         capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     }
 
-    val repository = ChatRepository(database, transport, isOnline = isOnline)
+    /** 附件落盘（M4）：选图/选文件后先把元信息与缩略图准备好 */
+    val attachmentStore = AttachmentStore(context.applicationContext)
+
+    val repository = ChatRepository(
+        db = database,
+        transport = transport,
+        isOnline = isOnline,
+        attachmentStore = attachmentStore,
+        uploader = AttachmentUploader(),
+    )
 
     val apiKey: String = BuildConfig.DEV_API_KEY
 }

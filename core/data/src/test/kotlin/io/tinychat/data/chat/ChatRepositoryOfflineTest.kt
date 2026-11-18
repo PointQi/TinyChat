@@ -1,6 +1,8 @@
 package io.tinychat.data.chat
 
 import androidx.test.core.app.ApplicationProvider
+import io.tinychat.data.attachment.AttachmentStore
+import io.tinychat.data.attachment.AttachmentUploader
 import io.tinychat.data.db.DatabaseFactory
 import io.tinychat.data.db.TinyChatDatabase
 import io.tinychat.model.ErrorKind
@@ -30,10 +32,12 @@ import org.robolectric.annotation.Config
 class ChatRepositoryOfflineTest {
 
     private lateinit var db: TinyChatDatabase
+    private lateinit var attachmentStore: AttachmentStore
 
     @Before
     fun setUp() {
         db = DatabaseFactory.createInMemory(ApplicationProvider.getApplicationContext())
+        attachmentStore = AttachmentStore(ApplicationProvider.getApplicationContext())
     }
 
     @After
@@ -56,6 +60,8 @@ class ChatRepositoryOfflineTest {
             transport = transport,
             clock = { 1_700_000_000_000L },
             isOnline = { false },
+            attachmentStore = attachmentStore,
+            uploader = AttachmentUploader(),
         )
         val sessionId = repository.createSession(thinkingEnabled = false, effort = ThinkingEffort.LOW)
 
@@ -85,6 +91,8 @@ class ChatRepositoryOfflineTest {
             transport = transport,
             clock = { 1_700_000_000_000L },
             isOnline = { true },
+            attachmentStore = attachmentStore,
+            uploader = AttachmentUploader(),
         )
         val sessionId = repository.createSession(thinkingEnabled = false, effort = ThinkingEffort.LOW)
 

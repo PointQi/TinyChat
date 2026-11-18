@@ -1,11 +1,16 @@
-﻿package io.tinychat.data.chat
+package io.tinychat.data.chat
 
+import io.tinychat.data.attachment.AttachmentStore
+import io.tinychat.data.attachment.AttachmentUploader
+import io.tinychat.data.attachment.PickedFile
+import io.tinychat.data.db.AttachmentEntity
 import io.tinychat.data.db.MessageEntity
 import io.tinychat.data.db.MessageWithFragments
 import io.tinychat.data.db.SessionEntity
 import io.tinychat.data.db.TinyChatDatabase
 import io.tinychat.data.db.toDomain
 import io.tinychat.data.db.toEntity
+import io.tinychat.model.AttachmentState
 import io.tinychat.model.Fragment
 import io.tinychat.model.BranchNode
 import io.tinychat.model.ErrorKind
@@ -22,6 +27,7 @@ import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.buildSearchHit
 import io.tinychat.net.context.ContextRebuilder
 import io.tinychat.net.context.ContextTurn
+import io.tinychat.net.context.HistoryAttachment
 import io.tinychat.net.context.ReminderBuilder
 import io.tinychat.net.protocol.ChatCommand
 import io.tinychat.net.protocol.DeepSeekMessagesProtocol
@@ -44,6 +50,10 @@ class ChatRepository(
     private val clock: () -> Long = { System.currentTimeMillis() },
     /** 发请求前的连通性预检：离线就不必等 15s 连接超时，直接落失败让界面挂重试钮 */
     private val isOnline: () -> Boolean = { true },
+    /** 附件落盘（M4）；只有带附件时才会用到 */
+    private val attachmentStore: AttachmentStore,
+    /** 附件上传（M4-3） */
+    private val uploader: AttachmentUploader,
 ) {
 
     private val runner = ChatStreamRunner(db.messageDao(), db.fragmentDao(), clock)
@@ -66,8 +76,11 @@ class ChatRepository(
         db.sessionDao().setPinned(sessionId, pinned, clock())
     }
 
-    /** 软删；消息与碎片留给 M6 的清理任务，不在交互路径上做级联删除。 */
+    /** 软删；消息与碎片留给 M6 的清理任务。附件的原件与缩略图当场删掉（02 §3.4）。 */
     suspend fun deleteSession(sessionId: String) {
+        db.attachmentDao().bySession(sessionId).forEach { row ->
+            runCatching { attachmentStore.delete(row.id, row.localPath) }
+        }
         db.sessionDao().softDelete(sessionId, clock())
     }
 
@@ -173,11 +186,16 @@ class ChatRepository(
 
     fun observeSession(sessionId: String): Flow<SessionEntity?> = db.sessionDao().observeById(sessionId)
 
-    suspend fun send(sessionId: String, text: String, apiKey: String): RunOutcome {
+    suspend fun send(
+        sessionId: String,
+        text: String,
+        apiKey: String,
+        attachments: List<PickedFile> = emptyList(),
+    ): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val parentId = session.currentMessageId
             ?: db.messageDao().withFragments(sessionId).lastOrNull()?.message?.id
-        return sendInternal(session, parentId, text, apiKey)
+        return sendInternal(session, parentId, text, apiKey, attachments)
     }
 
     /**
@@ -213,7 +231,10 @@ class ChatRepository(
         val userText = db.fragmentDao().byMessage(userMessageId)
             .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
             .joinToString("")
-        if (userText.isBlank()) error("这条回答对应的提问内容为空，无法重新生成")
+        // 只发了图片/文件、没写文字的那一轮也可以重新生成
+        if (userText.isBlank() && attachmentsOf(userMessageId).none { it.usable }) {
+            error("这条回答对应的提问内容为空，无法重新生成")
+        }
 
         return streamAssistant(
             session = session,
@@ -292,7 +313,7 @@ class ChatRepository(
             searchEnabled = false,
             includeTitle = false,
             messages = ContextRebuilder.build(history, reminder) +
-                WireMessage.text(WireMessage.ROLE_USER, userText) +
+                ContextRebuilder.userMessage(userText, attachmentsOf(question.id)) +
                 WireMessage.text(WireMessage.ROLE_ASSISTANT, partial),
         )
 
@@ -319,6 +340,7 @@ class ChatRepository(
         parentId: Long?,
         text: String,
         apiKey: String,
+        attachments: List<PickedFile> = emptyList(),
     ): RunOutcome {
         val sessionId = session.id
         val now = clock()
@@ -338,7 +360,17 @@ class ChatRepository(
                 reminderSnapshot = reminder,
             ),
         )
-        db.fragmentDao().insert(Fragment(messageId = userId, ord = 0, payload = RequestPayload(text)).toEntity())
+        // 只有图片/文件、没有文字的那一轮**不写 REQUEST 碎片**（真实样本就是这样）
+        if (text.isNotBlank()) {
+            db.fragmentDao().insert(Fragment(messageId = userId, ord = 0, payload = RequestPayload(text)).toEntity())
+        }
+
+        if (attachments.isNotEmpty()) {
+            // 先把指针挪到这条提问上：上传失败时它才是叶子，重试才能接在同一条上
+            db.sessionDao().setCurrentMessage(sessionId, userId, clock())
+            persistAttachments(userId, attachments)
+            uploadPending(userId, apiKey)
+        }
 
         return streamAssistant(
             session = session,
@@ -349,6 +381,79 @@ class ChatRepository(
             assistantInsertedAt = now + 1,
         )
     }
+
+    /** 原件拷进 `attachments/{messageId}/`，同时落一条 LOCAL 记录（图片带缩略图与宽高） */
+    private suspend fun persistAttachments(userMessageId: Long, picked: List<PickedFile>) {
+        picked.forEach { file ->
+            val saved = attachmentStore.save(userMessageId, file)
+            db.attachmentDao().upsert(
+                AttachmentEntity(
+                    id = file.id,
+                    messageId = userMessageId,
+                    fileName = file.fileName,
+                    fileSize = saved.size,
+                    mime = file.mime,
+                    localPath = saved.path,
+                    isImage = file.isImage,
+                    width = file.width,
+                    height = file.height,
+                    state = AttachmentState.LOCAL,
+                ),
+            )
+        }
+    }
+
+    /**
+     * M4-3：把一轮里还没有 `file_id` 的附件传掉。
+     *
+     * 状态先落库再上传，界面直接读库画「上传中 / 失败」；失败立刻抛，调用方负责提示与重试。
+     */
+    suspend fun uploadPending(userMessageId: Long, apiKey: String) {
+        db.attachmentDao().byMessage(userMessageId).forEach { row ->
+            if (!row.remoteId.isNullOrBlank()) return@forEach
+            val path = row.localPath
+            if (path == null || !attachmentStore.exists(path)) {
+                db.attachmentDao().setState(row.id, AttachmentState.FAILED)
+                throw ChatException(ErrorKind.UPLOAD, message = "附件文件不见了")
+            }
+            db.attachmentDao().setState(row.id, AttachmentState.UPLOADING)
+            try {
+                val remoteId = uploader.upload(apiKey, path, row.fileName, row.mime, row.isImage)
+                db.attachmentDao().setRemote(row.id, remoteId, AttachmentState.UPLOADED)
+            } catch (e: Throwable) {
+                db.attachmentDao().setState(row.id, AttachmentState.FAILED)
+                throw e
+            }
+        }
+    }
+
+    /**
+     * M4-3 失败重试：附件重传 + 重新请求，**复用同一条提问**，不新建用户消息。
+     */
+    suspend fun retryTurn(sessionId: String, userMessageId: Long, apiKey: String): RunOutcome {
+        val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
+        val question = db.messageDao().byId(userMessageId) ?: error("消息不存在：$userMessageId")
+
+        val userText = db.fragmentDao().byMessage(userMessageId)
+            .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
+            .joinToString("")
+
+        uploadPending(userMessageId, apiKey)
+        return streamAssistant(
+            session = session,
+            userMessageId = userMessageId,
+            userText = userText,
+            reminder = question.reminderSnapshot
+                ?: ReminderBuilder.build(date = LocalDate.now(), location = null),
+            apiKey = apiKey,
+        )
+    }
+
+    /** 本轮提问的附件（只带重建请求需要的 remoteId / isImage） */
+    private suspend fun attachmentsOf(messageId: Long): List<HistoryAttachment> =
+        db.attachmentDao().byMessage(messageId).map {
+            HistoryAttachment(remoteId = it.remoteId, isImage = it.isImage)
+        }
 
     /**
      * 在一条**已存在的**提问下流式生成回答：发送与重新生成共用这一段。
@@ -409,7 +514,7 @@ class ChatRepository(
             searchEnabled = session.searchEnabled,
             includeTitle = session.title == null,
             messages = ContextRebuilder.build(history, reminder) +
-                WireMessage.text(WireMessage.ROLE_USER, userText),
+                ContextRebuilder.userMessage(userText, attachmentsOf(userMessageId)),
         )
 
         val request = DeepSeekMessagesProtocol.build(
@@ -444,6 +549,9 @@ class ChatRepository(
             ContextTurn(
                 message = entry.message.toDomain(),
                 fragments = entry.orderedFragments.map { it.toDomain() },
+                attachments = entry.attachments.map {
+                    HistoryAttachment(remoteId = it.remoteId, isImage = it.isImage)
+                },
             )
         }
     }

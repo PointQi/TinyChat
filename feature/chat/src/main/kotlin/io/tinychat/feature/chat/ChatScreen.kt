@@ -1,6 +1,14 @@
 package io.tinychat.feature.chat
 
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.provider.MediaStore
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
@@ -10,9 +18,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
@@ -20,6 +30,7 @@ import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -28,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,6 +52,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,6 +65,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -64,8 +78,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -79,16 +96,21 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.core.content.FileProvider
 import io.tinychat.designsystem.BubbleShape
 import io.tinychat.designsystem.TcFavicon
 import io.tinychat.designsystem.TcIcons
+import io.tinychat.designsystem.TcPalette
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
 import io.tinychat.markdown.CitationAnchor
 import io.tinychat.markdown.CitationBubbleShape
 import io.tinychat.markdown.TcMarkdown
+import io.tinychat.model.AttachmentState
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.KnownProviders
@@ -96,8 +118,11 @@ import io.tinychat.model.ThinkingEffort
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcInlineHint
 import io.tinychat.ui.TcTopBar
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.LocalTime
 
 /**
@@ -127,8 +152,40 @@ fun ChatScreen(
     onRegenerate: (ChatMessage) -> Unit,
     onContinue: (ChatMessage) -> Unit,
     onRetry: (ChatMessage) -> Unit,
+    /** 选完图片/文件（含拍照）后交给 ViewModel 读元信息 + 生成缩略图（M4-1/2） */
+    onAddAttachments: (List<Uri>) -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+    /** 附件上传失败后重试这一轮 */
+    onRetryAttachment: (ChatMessage) -> Unit,
 ) {
     val palette = TcTheme.palette
+    val context = LocalContext.current
+
+    // —— 附件选择器（M4-1/2）——
+    // Photo Picker 走系统选择器，不需要存储权限；一次最多 9 张
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(9),
+    ) { uris -> onAddAttachments(uris) }
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris -> onAddAttachments(uris) }
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture(),
+    ) { ok ->
+        val uri = cameraUri
+        cameraUri = null
+        if (ok && uri != null) onAddAttachments(listOf(uri))
+    }
+    // 没有相机 App（部分模拟器镜像）就不必给「拍照」入口
+    val canTakePhoto = remember(context) {
+        runCatching {
+            context.packageManager.resolveActivity(
+                Intent(MediaStore.ACTION_IMAGE_CAPTURE),
+                PackageManager.MATCH_DEFAULT_ONLY,
+            ) != null
+        }.getOrDefault(false)
+    }
 
     Column(
         modifier = Modifier
@@ -160,6 +217,7 @@ fun ChatScreen(
                 onRegenerate = onRegenerate,
                 onContinue = onContinue,
                 onRetry = onRetry,
+                onRetryAttachment = onRetryAttachment,
             )
         }
 
@@ -192,6 +250,24 @@ fun ChatScreen(
             onToggleSearch = onToggleSearch,
             onSelectModel = onSelectModel,
             onCancelEdit = onCancelEdit,
+            onRemoveAttachment = onRemoveAttachment,
+            // 选图/拍照/选文件交给系统选择器，回调统一走 onAddAttachments
+            onPickImages = {
+                runCatching {
+                    imagePicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                }
+            },
+            onPickFiles = { runCatching { filePicker.launch(arrayOf("*/*")) } },
+            canTakePhoto = canTakePhoto,
+            onTakePhoto = {
+                val uri = createCameraUri(context)
+                if (uri != null) {
+                    cameraUri = uri
+                    runCatching { cameraPicker.launch(uri) }
+                }
+            },
         )
 
         if (state.messages.isNotEmpty()) {
@@ -245,6 +321,7 @@ private fun MessageList(
     onRegenerate: (ChatMessage) -> Unit,
     onContinue: (ChatMessage) -> Unit,
     onRetry: (ChatMessage) -> Unit,
+    onRetryAttachment: (ChatMessage) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -304,6 +381,7 @@ private fun MessageList(
                     onRegenerate = if (!message.isUser && isLatest) ({ onRegenerate(message) }) else null,
                     onContinue = if (!message.isUser && isLatest && message.canContinue) ({ onContinue(message) }) else null,
                     onRetry = { onRetry(message) },
+                    onRetryAttachment = { onRetryAttachment(message) },
                 )
             }
         }
@@ -351,6 +429,7 @@ private fun MessageRow(
     onRegenerate: (() -> Unit)?,
     onContinue: (() -> Unit)?,
     onRetry: () -> Unit,
+    onRetryAttachment: () -> Unit,
 ) {
     val palette = TcTheme.palette
 
@@ -359,36 +438,55 @@ private fun MessageRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.End,
         ) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                if (message.retryTargetId != null) {
-                    // 官方做法：失败那轮在气泡左侧挂一个橙色实心圆 + 白色重试图标，
-                    // 圆钮与气泡**最后一行文字**对齐（气泡内边距 10dp，这里补回来）
-                    Box(
-                        modifier = Modifier
-                            .padding(bottom = 10.dp, end = 8.dp)
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(palette.warning)
-                            .clickable(onClick = onRetry),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = TcIcons.Regenerate,
-                            contentDescription = "重试",
-                            tint = palette.brandOn,
-                            modifier = Modifier.size(14.dp),
-                        )
+            // 附件（M4-4）：图片走网格、文件走卡片，都在气泡**上方**右贴边
+            if (message.attachments.isNotEmpty()) {
+                UserAttachments(message.attachments)
+                if (message.text.isNotBlank()) Spacer(Modifier.height(6.dp))
+            }
+            if (message.text.isNotBlank()) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    if (message.retryTargetId != null) {
+                        // 官方做法：失败那轮在气泡左侧挂一个橙色实心圆 + 白色重试图标，
+                        // 圆钮与气泡**最后一行文字**对齐（气泡内边距 10dp，这里补回来）
+                        Box(
+                            modifier = Modifier
+                                .padding(bottom = 10.dp, end = 8.dp)
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(palette.warning)
+                                .clickable(onClick = onRetry),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = TcIcons.Regenerate,
+                                contentDescription = "重试",
+                                tint = palette.brandOn,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
                     }
+                    Text(
+                        text = message.text,
+                        style = TcTypography.bodyLarge,
+                        color = palette.labelPrimary,
+                        modifier = Modifier
+                            .widthIn(max = 300.dp)
+                            .background(palette.bubble, BubbleShape)
+                            .combinedClickable(onClick = onTap, onLongClick = onCopyMessage)
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
                 }
+            }
+            if (message.hasFailedAttachment) {
+                Spacer(Modifier.height(6.dp))
                 Text(
-                text = message.text,
-                style = TcTypography.bodyLarge,
-                color = palette.labelPrimary,
-                modifier = Modifier
-                    .widthIn(max = 300.dp)
-                    .background(palette.bubble, BubbleShape)
-                    .combinedClickable(onClick = onTap, onLongClick = onCopyMessage)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    text = "附件上传失败，点击重试",
+                    style = TcTypography.bodySmall,
+                    color = palette.warning,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(onClick = onRetryAttachment)
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
                 )
             }
             message.retryHint?.let { hint ->
@@ -1037,6 +1135,11 @@ private fun InputCard(
     onToggleSearch: () -> Unit,
     onSelectModel: (String, ThinkingEffort) -> Unit,
     onCancelEdit: () -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+    onPickImages: () -> Unit,
+    onPickFiles: () -> Unit,
+    canTakePhoto: Boolean,
+    onTakePhoto: () -> Unit,
 ) {
     val palette = TcTheme.palette
     val dark = isSystemInDarkTheme()
@@ -1044,6 +1147,8 @@ private fun InputCard(
     val cardColor = if (dark) palette.bgLayer2 else palette.bg
     val inputFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    var attachSheet by remember { mutableStateOf(false) }
+    var previewImage by remember { mutableStateOf<DraftAttachment?>(null) }
 
     // 输入框内容由外部（state.input）驱动：从外面写进来时（例如点消息进入编辑）
     // 光标要落在**末尾**，否则会停在开头还要手动挪。
@@ -1097,6 +1202,25 @@ private fun InputCard(
             }
         }
 
+        // 附件预览行（M4-1）：选中后立刻能删，发送时一起上传
+        if (state.attachments.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                state.attachments.forEach { draft ->
+                    DraftChip(
+                        draft = draft,
+                        onRemove = { onRemoveAttachment(draft.id) },
+                        onOpen = { if (draft.isImage) previewImage = draft },
+                    )
+                }
+            }
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1138,14 +1262,47 @@ private fun InputCard(
             Spacer(Modifier.width(8.dp))
             SearchPill(enabled = state.searchEnabled, onClick = onToggleSearch)
             Spacer(Modifier.weight(1f))
-            CircleIcon(TcIcons.Attach, "附件", palette.labelSecondary) {}
-            Spacer(Modifier.width(4.dp))
+            // 编辑态不给加附件（编辑只改文字；进入编辑时草稿已清空）
+            if (state.editingMessageId == null && state.canAttach) {
+                CircleIcon(TcIcons.Attach, "附件", palette.labelSecondary) { attachSheet = true }
+                Spacer(Modifier.width(4.dp))
+            }
             when {
                 state.isStreaming -> CircleIcon(TcIcons.Stop, "停止生成", palette.brand, filled = true, onClick = onStop)
-                state.input.isNotBlank() -> CircleIcon(TcIcons.Send, "发送", palette.brand, filled = true, onClick = onSend)
+                state.input.isNotBlank() || state.attachments.isNotEmpty() ->
+                    CircleIcon(TcIcons.Send, "发送", palette.brand, filled = true, onClick = onSend)
                 else -> CircleIcon(TcIcons.Mic, "语音输入", palette.labelSecondary) {}
             }
         }
+    }
+
+    // 附件来源选择（M4-1/2）：相册 / 拍照 / 文件
+    if (attachSheet) {
+        AttachmentSheet(
+            showCamera = canTakePhoto,
+            onDismiss = { attachSheet = false },
+            onImages = {
+                attachSheet = false
+                onPickImages()
+            },
+            onCamera = {
+                attachSheet = false
+                onTakePhoto()
+            },
+            onFiles = {
+                attachSheet = false
+                onPickFiles()
+            },
+        )
+    }
+
+    // 点缩略图放大看（草稿阶段的图直接按缩略图画，原件还没落盘）
+    previewImage?.let { draft ->
+        AttachmentPreviewDialog(
+            thumbPath = draft.thumbPath,
+            title = draft.fileName,
+            onDismiss = { previewImage = null },
+        )
     }
 }
 
@@ -1298,4 +1455,359 @@ private fun CircleIcon(
             modifier = Modifier.size(if (filled) 18.dp else 22.dp),
         )
     }
+}
+
+// ——————————————————————————————————————————————————————————————
+// 附件（M4）
+// ——————————————————————————————————————————————————————————————
+
+/**
+ * 消息里的附件（M4-4），版式对齐 chat-demo 的官方实现
+ * （`UserMessage.module.css` + `MessageFile.module.css`）：
+ *
+ * - 一列 `flex-wrap`、右贴边、间距 10dp；
+ * - 图片是**正方形缩略图**：只有图片时 120dp，与文档混排时缩到 64dp；
+ * - 圆角 16dp、1dp 描边、`object-fit: cover`；上传中压 30% 黑蒙层 + 转圈，失败描红边 + 重试图标。
+ *
+ * 注意：不是「1 张 1:1 / 2 张 2 列 / 3 张 3 列」的九宫格 —— 那是照截图猜的，
+ * 参考实现用的是固定尺寸缩略图自动折行（2026-11-19 按 chat-demo 更正）。
+ */
+@Composable
+private fun UserAttachments(attachments: List<ChatAttachment>) {
+    val palette = TcTheme.palette
+    val hasDocuments = attachments.any { !it.isImage }
+    val size = if (hasDocuments) 64.dp else 120.dp
+    val gap = 10.dp
+    var previewIndex by remember { mutableStateOf<Int?>(null) }
+    val images = attachments.filter { it.isImage }
+
+    // ⚠️ 必须给 BoxWithConstraints 指定 contentAlignment：里面的 Column 是 wrap-content，
+    // Column(horizontalAlignment = End) 只对**它自己的宽度**生效，靠不满整行。
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.BottomEnd,
+    ) {
+        val perRow = (((maxWidth - gap) / (size + gap)).toInt()).coerceAtLeast(1)
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            attachments.chunked(perRow).forEach { rowItems ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    rowItems.forEach { item ->
+                        if (item.isImage) {
+                            val indexInImages = images.indexOf(item)
+                            AttachmentThumb(
+                                attachment = item,
+                                size = size,
+                                onClick = { previewIndex = indexInImages },
+                            )
+                        } else {
+                            FileAttachmentCard(attachment = item, palette = palette)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    previewIndex?.let { index ->
+        val item = images.getOrNull(index) ?: return@let
+        AttachmentPreviewDialog(
+            thumbPath = item.thumbPath,
+            title = item.fileName,
+            onDismiss = { previewIndex = null },
+        )
+    }
+}
+
+@Composable
+private fun AttachmentThumb(attachment: ChatAttachment, size: Dp, onClick: () -> Unit) {
+    val palette = TcTheme.palette
+    val bitmap = rememberAttachmentBitmap(attachment.thumbPath, (size.value * 3).toInt())
+    val uploading = attachment.state == AttachmentState.UPLOADING ||
+        attachment.state == AttachmentState.LOCAL
+    val failed = attachment.state == AttachmentState.FAILED
+
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(16.dp))
+            .background(palette.bubble)
+            .border(
+                width = 1.dp,
+                color = if (failed) palette.danger else palette.bubble,
+                shape = RoundedCornerShape(16.dp),
+            )
+            .clickable(enabled = attachment.thumbPath != null && !uploading, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = attachment.fileName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Icon(
+                imageVector = if (attachment.isMissing) TcIcons.PhotoError else TcIcons.Photo,
+                contentDescription = attachment.fileName,
+                tint = palette.labelSecondary,
+                modifier = Modifier.size(28.dp),
+            )
+        }
+
+        // 上传中：30% 黑蒙层 + 转圈（官方同款）
+        if (uploading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.3f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = Color.White,
+                    strokeWidth = 2.dp,
+                )
+            }
+        } else if (failed) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = TcIcons.Regenerate,
+                    contentDescription = "附件上传失败",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 消息内的文件卡：40dp 图标 + 名 + 「扩展名 大小」（官方 FileCard 版式） */
+@Composable
+private fun FileAttachmentCard(attachment: ChatAttachment, palette: TcPalette) {
+    Row(
+        modifier = Modifier
+            .widthIn(max = 300.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(palette.bubble)
+            .border(
+                width = 1.dp,
+                color = if (attachment.isFailed) palette.danger else palette.bubble,
+                shape = RoundedCornerShape(16.dp),
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(palette.brand.copy(alpha = 0.10f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(TcIcons.File, null, tint = palette.brand, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(
+                text = attachment.fileName,
+                style = TcTypography.bodySmall,
+                color = palette.labelPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = when {
+                    attachment.isMissing -> "原件未导入"
+                    attachment.state == AttachmentState.UPLOADING ||
+                        attachment.state == AttachmentState.LOCAL -> "上传中"
+                    attachment.isFailed -> "上传失败"
+                    else -> attachment.fileDescription
+                },
+                style = TcTypography.bodySmall,
+                color = if (attachment.isFailed || attachment.isMissing) {
+                    palette.danger.takeIf { attachment.isFailed } ?: palette.labelTertiary
+                } else {
+                    palette.labelTertiary
+                },
+            )
+        }
+    }
+}
+
+/** 输入框上方的草稿缩略图（64dp，右上角删除） */
+@Composable
+private fun DraftChip(draft: DraftAttachment, onRemove: () -> Unit, onOpen: () -> Unit) {
+    val palette = TcTheme.palette
+    val bitmap = rememberAttachmentBitmap(draft.thumbPath, 192)
+    Box(modifier = Modifier.size(56.dp)) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(palette.bubble)
+                .clickable(onClick = onOpen),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (draft.isImage && bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = draft.fileName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(TcIcons.File, null, tint = palette.labelSecondary, modifier = Modifier.size(20.dp))
+                    Text(
+                        text = draft.fileName.substringAfterLast('.').uppercase().take(4),
+                        style = TcTypography.bodySmall,
+                        color = palette.labelTertiary,
+                    )
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 4.dp, y = (-4).dp)
+                .size(18.dp)
+                .clip(CircleShape)
+                .background(palette.labelSecondary)
+                .clickable(onClick = onRemove),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = TcIcons.Close,
+                contentDescription = "移除附件",
+                tint = palette.bg,
+                modifier = Modifier.size(10.dp),
+            )
+        }
+    }
+}
+
+/** 附件来源面板（相册 / 拍照 / 文件） */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AttachmentSheet(
+    showCamera: Boolean,
+    onDismiss: () -> Unit,
+    onImages: () -> Unit,
+    onCamera: () -> Unit,
+    onFiles: () -> Unit,
+) {
+    val palette = TcTheme.palette
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = palette.bg,
+    ) {
+        Column(
+            modifier = Modifier
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            SheetAction(TcIcons.Photo, "从相册选择", onImages)
+            if (showCamera) SheetAction(TcIcons.Camera, "拍照", onCamera)
+            SheetAction(TcIcons.Folder, "选择文件", onFiles)
+        }
+    }
+}
+
+@Composable
+private fun SheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    val palette = TcTheme.palette
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = palette.labelSecondary, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(text = label, style = TcTypography.bodyLarge, color = palette.labelPrimary)
+    }
+}
+
+/** 放大看一张图（草稿与消息共用；只读缩略图，不解析原图，省内存） */
+@Composable
+private fun AttachmentPreviewDialog(thumbPath: String?, title: String, onDismiss: () -> Unit) {
+    if (thumbPath == null) return
+    val bitmap = rememberAttachmentBitmap(thumbPath, 1080)
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.Black)
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = title,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                Text(
+                    text = "图片已不在本机",
+                    style = TcTypography.bodySmall,
+                    color = Color.White,
+                    modifier = Modifier.padding(24.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 按目标像素降采样解码，避免把 4000px 的原图整张读进内存 */
+@Composable
+private fun rememberAttachmentBitmap(path: String?, targetPx: Int): ImageBitmap? {
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, path, targetPx) {
+        value = if (path.isNullOrBlank()) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(path, bounds)
+                    if (bounds.outWidth <= 0) return@runCatching null
+                    var sample = 1
+                    while (bounds.outWidth / (sample * 2) >= targetPx && bounds.outHeight / (sample * 2) >= targetPx) {
+                        sample *= 2
+                    }
+                    BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+                        ?.asImageBitmap()
+                }.getOrNull()
+            }
+        }
+    }
+    return bitmap
+}
+
+/** 拍照的落点：cache/camera/ 下，用 FileProvider 授权给相机 App */
+private fun createCameraUri(context: Context): Uri? {
+    val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+    val file = File(dir, "capture-${System.currentTimeMillis()}.jpg")
+    return runCatching {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    }.getOrNull()
 }

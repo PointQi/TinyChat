@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 /**
@@ -67,6 +68,17 @@ data class TitleFlag(val enabled: Boolean)
  */
 @Serializable
 data class WireMessage(val role: String, val content: JsonElement) {
+
+    /**
+     * 这条消息里有没有附件块（`document` / `image`）。
+     * 有就得带 `anthropic-beta: files-api-2025-04-14`，否则服务端不认 `file_id`。
+     */
+    val hasAttachmentBlocks: Boolean
+        get() = (content as? kotlinx.serialization.json.JsonArray)?.any { element ->
+            val type = ((element as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull
+            type == "document" || type == "image"
+        } == true
+
     companion object {
         const val ROLE_USER = "user"
         const val ROLE_ASSISTANT = "assistant"
@@ -151,7 +163,7 @@ object DeepSeekMessagesProtocol {
             headers = buildMap {
                 put("Content-Type", "application/json")
                 put("x-api-key", apiKey)
-                if (command.hasFileBlocks) {
+                if (command.hasFileBlocks || command.messages.any { it.hasAttachmentBlocks }) {
                     put("anthropic-beta", "files-api-2025-04-14")
                 }
             },

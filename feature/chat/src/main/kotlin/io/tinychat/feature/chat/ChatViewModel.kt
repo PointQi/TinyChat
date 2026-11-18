@@ -1,5 +1,6 @@
 package io.tinychat.feature.chat
 
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -7,13 +8,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import io.tinychat.data.attachment.AttachmentStore
+import io.tinychat.data.attachment.PickedFile
 import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.chat.RunOutcome
 import io.tinychat.data.db.FragmentEntity
 import io.tinychat.data.db.MessageWithFragments
+import io.tinychat.model.AttachmentState
 import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.BranchNode
 import io.tinychat.model.ErrorKind
+import io.tinychat.model.FilePayload
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.RequestPayload
@@ -29,10 +34,12 @@ import io.tinychat.model.ToolSearchPayload
 import io.tinychat.model.versionPointer
 import io.tinychat.net.transport.ChatException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -85,6 +92,57 @@ data class ChatSource(
 /** 正文里的一处角标：位置 + 指向哪条来源 */
 data class SourceAnchor(val anchor: Int, val index: Int)
 
+/** 消息里的一个附件（已入库）。图片用 `thumbPath` 画，文件用名字+大小画卡。 */
+data class ChatAttachment(
+    val id: String,
+    val fileName: String,
+    val size: Long,
+    val isImage: Boolean,
+    val width: Int?,
+    val height: Int?,
+    /** 缩略图绝对路径；导入的老数据没有原件时为 null */
+    val thumbPath: String?,
+    val state: AttachmentState,
+) {
+    val isMissing: Boolean get() = state == AttachmentState.MISSING
+    val isFailed: Boolean get() = state == AttachmentState.FAILED
+    val isUploading: Boolean get() = state == AttachmentState.UPLOADING || state == AttachmentState.LOCAL
+
+    /** 「1.2 MB」这种，列表里只显示大小 */
+    val sizeText: String get() = formatBytes(size)
+
+    /** 文件卡第二行：「PDF 1.2 MB」（官方 FileCard：扩展名 + 大小） */
+    val fileDescription: String
+        get() = listOf(fileName.substringAfterLast('.', "").uppercase(), sizeText)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+}
+
+/** 输入框里还没发送的附件（草稿）：只带 Uri 与元信息，原件等发送时才落盘 */
+data class DraftAttachment(
+    val id: String,
+    val uri: Uri,
+    val fileName: String,
+    val size: Long,
+    val mime: String?,
+    val isImage: Boolean,
+    val width: Int?,
+    val height: Int?,
+    val thumbPath: String?,
+) {
+    val sizeText: String get() = formatBytes(size)
+}
+
+internal fun formatBytes(size: Long): String {
+    if (size <= 0) return "未知大小"
+    if (size < 1024) return "$size B"
+    val kb = size / 1024.0
+    if (kb < 1024) return String.format("%.0f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format("%.1f MB", mb)
+    return String.format("%.1f GB", mb / 1024.0)
+}
+
 /** 会话页的一条消息（已从碎片拼好）。 */
 data class ChatMessage(
     val id: Long,
@@ -99,6 +157,8 @@ data class ChatMessage(
     val thinkingSeconds: Double?,
     val isThinking: Boolean,
     val status: MessageStatus,
+    /** 本轮提问带的附件（M4）；只有用户消息会有 */
+    val attachments: List<ChatAttachment> = emptyList(),
     /** 同一条提问下的第几版回答 / 同一位置的第几次提问（1 基）；只有一版时为 1/1 */
     val versionIndex: Int = 1,
     val versionCount: Int = 1,
@@ -113,11 +173,16 @@ data class ChatMessage(
     val retryHint: String? = null,
 ) {
     val hasThinking: Boolean get() = timeline.isNotEmpty()
+
+    /** 附件上传失败：输入区下面给一行可点的重试 */
+    val hasFailedAttachment: Boolean get() = attachments.any { it.isFailed }
 }
 
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val input: String = "",
+    /** 输入框里待发送的附件（M4-1/2） */
+    val attachments: List<DraftAttachment> = emptyList(),
     val isStreaming: Boolean = false,
     val error: String? = null,
     /** 错误分类：决定文案与「去设置」这类动作 */
@@ -134,7 +199,17 @@ data class ChatUiState(
     val searchEnabled: Boolean = false,
     /** 非空 = 正在编辑这条用户消息 */
     val editingMessageId: Long? = null,
-)
+) {
+    /** 当前模型能不能收图片（v4-pro 不支持，M4-6） */
+    val canAttachImage: Boolean
+        get() = KnownProviders.deepSeek.model(modelId)?.capabilities?.imageInput == true
+
+    /** 能不能带文件 */
+    val canAttachFile: Boolean
+        get() = KnownProviders.deepSeek.model(modelId)?.capabilities?.fileUpload == true
+
+    val canAttach: Boolean get() = canAttachImage || canAttachFile
+}
 
 /**
  * 会话页状态机。发送/停止、底栏模型与强度都在这里收口。
@@ -143,6 +218,8 @@ data class ChatUiState(
 class ChatViewModel(
     private val repository: ChatRepository,
     private val apiKey: String,
+    /** 附件落盘（M4）：选完文件后先读元信息 + 生成缩略图 */
+    private val attachmentStore: AttachmentStore,
 ) : ViewModel() {
 
     var state by mutableStateOf(ChatUiState())
@@ -285,12 +362,90 @@ class ChatViewModel(
         state = state.copy(input = text)
     }
 
+    // —— 附件（M4-1/2）——
+
+    /**
+     * 选择器回来：读元信息 + 生成缩略图（在 IO 线程，图片要解码）。
+     * 同一张图重复选中就跳过，避免出现两个一模一样的缩略图。
+     */
+    fun addAttachments(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val existing = state.attachments.map { it.uri }.toSet()
+        val fresh = uris.filterNot { it in existing }
+        if (fresh.isEmpty()) return
+        viewModelScope.launch {
+            val picked = withContext(Dispatchers.IO) {
+                fresh.mapNotNull { uri ->
+                    runCatching { attachmentStore.inspect(uri) }.getOrNull()
+                }
+            }
+            if (picked.isEmpty()) {
+                state = state.copy(error = "打不开选中的文件")
+                return@launch
+            }
+            val oversized = picked.filter { it.size > AttachmentStore.MAX_BYTES }
+            val accepted = picked - oversized.toSet()
+            state = state.copy(
+                attachments = state.attachments + accepted.map { it.toDraft() },
+                error = if (oversized.isNotEmpty()) "附件超过 100MiB，已跳过" else state.error,
+            )
+        }
+    }
+
+    fun removeAttachment(id: String) {
+        val removed = state.attachments.firstOrNull { it.id == id } ?: return
+        runCatching { attachmentStore.delete(removed.id, null) }
+        state = state.copy(attachments = state.attachments.filterNot { it.id == id })
+    }
+
+    private fun PickedFile.toDraft() = DraftAttachment(
+        id = id,
+        uri = uri,
+        fileName = fileName,
+        size = size,
+        mime = mime,
+        isImage = isImage,
+        width = width,
+        height = height,
+        thumbPath = thumbPath,
+    )
+
+    /** 附件上传失败后点「重试」：重传这一轮的附件再重新请求，不新建提问 */
+    fun retryAttachment(message: ChatMessage) {
+        val id = sessionId ?: return
+        if (state.isStreaming) return
+        state = state.copy(isStreaming = true, error = null, errorKind = null)
+        job = viewModelScope.launch {
+            try {
+                state = state.withOutcomeError(repository.retryTurn(id, message.id, apiKey))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ChatException) {
+                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
+            } catch (e: Exception) {
+                state = state.copy(error = "附件上传失败，请重试", errorKind = null)
+            } finally {
+                state = state.copy(isStreaming = false)
+            }
+        }
+    }
+
     fun send() {
         val text = state.input.trim()
-        if (text.isEmpty() || state.isStreaming) return
+        val drafts = state.attachments
+        // 只有附件没有文字也能发（真实 App 就是这样）
+        if ((text.isEmpty() && drafts.isEmpty()) || state.isStreaming) return
 
         val editingId = state.editingMessageId
-        state = state.copy(input = "", isStreaming = true, error = null, errorKind = null, editingMessageId = null)
+        val sendingAttachments = drafts
+        state = state.copy(
+            input = "",
+            attachments = emptyList(),
+            isStreaming = true,
+            error = null,
+            errorKind = null,
+            editingMessageId = null,
+        )
         job = viewModelScope.launch {
             try {
                 val id = sessionId ?: repository.createSession(
@@ -307,7 +462,24 @@ class ChatViewModel(
                     // 编辑重发：在新分支上跑，旧分支留库
                     repository.editMessage(id, editingId, text, apiKey)
                 } else {
-                    repository.send(id, text, apiKey)
+                    repository.send(
+                        sessionId = id,
+                        text = text,
+                        apiKey = apiKey,
+                        attachments = sendingAttachments.map {
+                            PickedFile(
+                                id = it.id,
+                                uri = it.uri,
+                                fileName = it.fileName,
+                                size = it.size,
+                                mime = it.mime,
+                                isImage = it.isImage,
+                                width = it.width,
+                                height = it.height,
+                                thumbPath = it.thumbPath,
+                            )
+                        },
+                    )
                 }
                 state = state.copy(
                     title = repository.session(id)?.title ?: outcome.title,
@@ -328,7 +500,9 @@ class ChatViewModel(
     /** 点一下用户消息：进入编辑重发 */
     fun startEdit(message: ChatMessage) {
         if (message.isUser.not() || state.isStreaming) return
-        state = state.copy(editingMessageId = message.id, input = message.text)
+        // 编辑重发只改文字；手上的草稿先清掉，免得用户以为会被一起发出去
+        state.attachments.forEach { runCatching { attachmentStore.delete(it.id, null) } }
+        state = state.copy(editingMessageId = message.id, input = message.text, attachments = emptyList())
     }
 
     fun cancelEdit() {
@@ -404,6 +578,8 @@ class ChatViewModel(
         job?.cancel()
         observing?.cancel()
         sessionId = null
+        // 草稿附件的缩略图要跟着清掉，别在磁盘上留垃圾
+        state.attachments.forEach { runCatching { attachmentStore.delete(it.id, null) } }
         state = ChatUiState(
             modelId = state.modelId,
             effort = state.effort,
@@ -538,6 +714,45 @@ class ChatViewModel(
         return path.toList()
     }
 
+    /**
+     * 用户消息的附件：优先读 `attachments` 表；表里没有时退回 `FILE` 碎片
+     * （导入的老数据只有碎片、没有原件，标成 MISSING 才不会假装能预览）。
+     */
+    private fun MessageWithFragments.attachmentsOfMessage(
+        fragments: List<FragmentEntity> = orderedFragments,
+    ): List<ChatAttachment> {
+        if (attachments.isNotEmpty()) {
+            return attachments.map { entity ->
+                ChatAttachment(
+                    id = entity.id,
+                    fileName = entity.fileName,
+                    size = entity.fileSize,
+                    isImage = entity.isImage,
+                    width = entity.width,
+                    height = entity.height,
+                    thumbPath = attachmentStore.thumbFile(entity.id)
+                        .takeIf { it.isFile }?.absolutePath,
+                    state = entity.state,
+                )
+            }
+        }
+        return fragments
+            .mapNotNull { FragmentPayloadCodec.decode(it.payload) as? FilePayload }
+            .flatMap { it.files }
+            .map { ref ->
+                ChatAttachment(
+                    id = ref.id,
+                    fileName = ref.fileName,
+                    size = ref.fileSize,
+                    isImage = ref.isImage,
+                    width = ref.width,
+                    height = ref.height,
+                    thumbPath = null,
+                    state = AttachmentState.MISSING,
+                )
+            }
+    }
+
     private fun MessageWithFragments.toChatMessage(): ChatMessage? {
         val fragments = orderedFragments
         val isUser = message.role == Role.USER
@@ -547,7 +762,9 @@ class ChatViewModel(
                 .filter { it.type == "REQUEST" }
                 .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
                 .joinToString("")
-            if (request.isBlank()) return null
+            val attachments = attachmentsOfMessage(fragments = fragments)
+            // 只有图片/文件、没写字的那一轮也要显示（真实样本里就没有 REQUEST 碎片）
+            if (request.isBlank() && attachments.isEmpty()) return null
             return ChatMessage(
                 id = message.id,
                 isUser = true,
@@ -558,6 +775,7 @@ class ChatViewModel(
                 thinkingSeconds = null,
                 isThinking = false,
                 status = message.status,
+                attachments = attachments,
             )
         }
 
@@ -724,8 +942,12 @@ private fun StringBuilder.trimmedEnd(): Int {
     }
 
     companion object {
-        fun factory(repository: ChatRepository, apiKey: String) = viewModelFactory {
-            initializer { ChatViewModel(repository, apiKey) }
+        fun factory(
+            repository: ChatRepository,
+            apiKey: String,
+            attachmentStore: AttachmentStore,
+        ) = viewModelFactory {
+            initializer { ChatViewModel(repository, apiKey, attachmentStore) }
         }
     }
 }

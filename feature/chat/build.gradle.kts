@@ -28,6 +28,9 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(project(":core:markdown"))
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    // 附件选择（M4-1/2）：rememberLauncherForActivityResult + Photo Picker 契约
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.core.ktx)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)
     implementation(libs.compose.foundation)
