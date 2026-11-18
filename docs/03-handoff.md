@@ -18,7 +18,7 @@
 | **M1 聊天内核** | ✅ | M1-1 ~ M1-13；真机验过发送/停止/编辑重发/重新生成/版本切换/继续生成/抽屉 |
 | **M2 渲染** | ✅ 2026-11-19 | M2-1/2、M2-3（抖动三坑）、M2-4、M2-5/M2-6、M2-7、M2-8、M2-9 全部落地并真机对照；宽公式「自然宽度 + 左贴边 + 横向滚动」已对照（`6248c97`） |
 | **M3 联网** | ✅ 已真机在用 | `server_tool_use` / `web_search_tool_result` 解析、搜索阶段碎片与卡片、来源胶囊 + 来源页、「N 个网页」聚合、`deepseek_web_search` / `deepseek_read_url` 声明；工具报文见 §6 |
-| **M4 附件** | ✅ **主链路 + 重试 + 清理已验**（2026-11-19） | 相册多选/拍照入口、SAF 文件、草稿预览与删除、落盘（`attachments/{messageId}/` + `thumbs/`）、Files API 流式上传、`purpose` 自动判定、请求块（文件/图片在前、文本在后）、消息内 120dp/64dp 缩略图与文件卡、v4-pro 隐藏入口、断网失败→联网重试可续、删会话清附件——模拟器实拍 + 真实接口用例；唯一遗留：SAF 回落真机待验 |
+| **M4 附件** | ✅ **全部验完**（2026-11-19） | 相册多选、SAF 选文件、拍照入口（按 `resolveActivity` 判空）、草稿预览与删除、落盘（`attachments/{messageId}/` + `thumbs/`）、Files API 流式上传、`purpose` 自动判定、请求块（文件/图片在前、文本在后）、消息内 120dp/64dp 缩略图与文件卡、v4-pro 隐藏入口、断网失败→联网重试可续、删会话清附件——模拟器实拍 + 真实接口用例。仅剩「拍照」未在真机验（模拟器无相机 App）与确认文案分支（并入 M6） |
 | **M5 语音** | ⬜ 未实现 | `Asr` / `SpeechRecognizer` / 录音相关 0 处；TTS 只有 `Provider.kt` 的能力位与 `TtsVoice` 枚举（决策 3），**没有播放实现** |
 | **M6 数据管理** | 🚧 基本在 | v3 导入导出已实现（导出 27 处、导入 8 处，流式 ZIP + SAF）；「3340 会话 100% 往返」的验收还没写进记录 |
 | **M7 用量与费用** | 🚧 大半在 | `Usage` / `Cost` / 余额接口都在（`余额` 8 处）；**上下文饼图未做**（`PieChart` / `饼图` 0 处） |
@@ -659,15 +659,17 @@ adb logcat -d | Select-String "bench cold"
 | 只有图片没有文字 | ✅ 用户消息 0 碎片、请求里只有 image 块，正常回答 |
 | v4-pro 下附件入口 | ✅ 切到 `V4 Pro 最大` 后输入区**不再有回形针** |
 | 文档块端到端（真实接口） | ✅ `LiveSmokeTest."文档块端到端"`：上传 md（`user_data`）→ `document` 块 → 模型答出文档里的杜撰代号 `BLUEHARBOR`；同时断言有 beta 头 |
+| SAF 选文件（M4-2）→ 文档问答 | ✅ `选择文件` → DocumentsUI 的 Recent 里（**要先往下滚**，推到 /sdcard/Download 的文件在列表下方）选 `tc_note.md` → 草稿显示 `MD` 方块 → 发送后附件 `state=UPLOADED`、`remote_id=file-api-…`，消息里是文件卡「tc_note.md / MD 93 B」，回答 `The codename is BLUEHARBOR.` |
 | 断网 → 发送 → 联网 → 重试（M4-3 验收） | ✅ 断网时附件落 `FAILED`（无 `remote_id`）、消息下方出现「附件上传失败，点击重试」；联网后点它：`FAILED→UPLOADED` 拿到新 `file_id`，**复用同一条提问**（用户消息 17 未重复），生成回答 18 |
 | 删会话清附件 | ✅ 删掉带附件的会话后：缩略图 `thumbs/{id}.webp` 与原件 `attachments/{messageId}/*` 都删了，`attachments/{messageId}/` 空目录也一并收敛（`AttachmentStore.delete` 里 prune） |
 
 **还没做的（都记在账上，别当成已完成）**
 
-- **SAF「选择文件」回落没实测通**：面板能打开（`OpenMultipleDocuments`），但模拟器 DocumentsUI 的 Recent 不收录 `adb push` 的非媒体文件，`Show roots` 抽屉又 dump 不出来 → 真机待验。文档块本身已由真实接口用例证明。
 - 上传只有不确定进度（转圈），没有百分比——**官方也是转圈**（`FileCard` 的 spinner + 蒙层），所以不算缺口。
 - 删会话确认文案还没按「含附件」分支（02 §12.3 要求两句不同的话）；抽屉不知道附件数，等 M6 清理由一处收口时一起做。
+- 拍过的照片缩略图/原件不会自动清理（只有删会话时清）；M6「清空所有对话」一起收口。
 - 更早期留下的孤儿文件（先在旧包上删过两个会话）：`attachments/13|15|17` 与两个 thumb 是**修好之前**删会话留下的，新代码不会再产生。
+- 模拟器上没有相机 App（`ACTION_IMAGE_CAPTURE` 解析不到），所以「拍照」入口在模拟器里**不出现**（代码按 `resolveActivity` 判空隐藏）；真机要再验一次 FileProvider 那条路。
 
 
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**
