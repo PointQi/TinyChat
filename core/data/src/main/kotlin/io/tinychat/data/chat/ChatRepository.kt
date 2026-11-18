@@ -1,4 +1,4 @@
-﻿package io.tinychat.data.chat
+package io.tinychat.data.chat
 
 import io.tinychat.data.db.MessageEntity
 import io.tinychat.data.db.MessageWithFragments
@@ -233,6 +233,81 @@ class ChatRepository(
         val leaf = pickVersion(nodes, messageId, delta) ?: return null
         db.sessionDao().setCurrentMessage(sessionId, leaf.id, clock())
         return leaf.id
+    }
+
+    /**
+     * 继续生成（M1-9）：把已停止/截断的回答接着写下去。
+     *
+     * 做法是把「提问 + 已生成的部分正文」作为 assistant 预填发过去，模型从断点续写；
+     * 新内容仍落在同一条消息上（`ord` 递增追加），所以界面上是原地接续。
+     *
+     * 三个前置条件（02 §5.1）任一不满足就抛错，按钮本身在 UI 侧已经置灰：
+     * 1. 该轮没调用过服务端工具（服务端会 400）；
+     * 2. 状态是 INCOMPLETE（用户停止 / max_tokens / 中断）；
+     * 3. 不含模板块、正文非空。
+     *
+     * 预填属于 assistant 末尾消息，按 Anthropic 规矩**不能**同时开思考，因此这一轮关掉思考。
+     */
+    suspend fun continueGeneration(
+        sessionId: String,
+        assistantMessageId: Long,
+        apiKey: String,
+    ): RunOutcome {
+        val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
+        val target = db.messageDao().byId(assistantMessageId) ?: error("消息不存在：$assistantMessageId")
+        require(target.status == MessageStatus.INCOMPLETE) { "这条回答已经完整，不需要继续" }
+
+        val userMessageId = target.parentId ?: error("这条回答没有对应的提问，无法继续生成")
+        val question = db.messageDao().byId(userMessageId) ?: error("找不到对应的提问：$userMessageId")
+        val fragments = db.fragmentDao().byMessage(assistantMessageId)
+
+        require(fragments.none { it.type.startsWith("TOOL_") }) { "这一轮用过联网工具，不能继续生成" }
+        require(fragments.none { it.type == "TEMPLATE_RESPONSE" }) { "这一轮是模板回复，不能继续生成" }
+
+        val partial = fragments
+            .filter { it.type == "RESPONSE" }
+            .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? ResponsePayload)?.content }
+            .joinToString("")
+        require(partial.isNotBlank()) { "没有可继续的内容" }
+
+        val userText = db.fragmentDao().byMessage(userMessageId)
+            .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
+            .joinToString("")
+
+        val modelInfo = KnownProviders.deepSeek.model(session.model) ?: KnownProviders.flash
+        val history = chainTurns(sessionId, question.parentId)
+        val reminder = question.reminderSnapshot ?: ReminderBuilder.build(date = LocalDate.now(), location = null)
+
+        val command = ChatCommand(
+            capabilities = modelInfo.capabilities,
+            model = session.model,
+            systemPrompt = session.systemPromptSnapshot,
+            systemMode = session.systemPromptMode,
+            thinkingEnabled = false,
+            effort = session.effort,
+            searchEnabled = false,
+            includeTitle = false,
+            messages = ContextRebuilder.build(history, reminder) +
+                WireMessage.text(WireMessage.ROLE_USER, userText) +
+                WireMessage.text(WireMessage.ROLE_ASSISTANT, partial),
+        )
+
+        val request = DeepSeekMessagesProtocol.build(
+            baseUrl = KnownProviders.deepSeek.baseUrl,
+            apiKey = apiKey,
+            command = command,
+        )
+
+        db.messageDao().setStatus(assistantMessageId, MessageStatus.WIP)
+        val outcome = try {
+            runner.run(assistantMessageId, request, transport)
+        } catch (e: Throwable) {
+            // 失败要把状态退回「未完成」，否则界面一直显示生成中，还挡住下一次继续
+            runCatching { db.messageDao().setStatus(assistantMessageId, MessageStatus.INCOMPLETE) }
+            throw e
+        }
+        db.sessionDao().touch(sessionId, clock())
+        return outcome
     }
 
     private suspend fun sendInternal(

@@ -1,4 +1,4 @@
-package io.tinychat.data.chat
+﻿package io.tinychat.data.chat
 
 import io.tinychat.data.db.FragmentDao
 import io.tinychat.data.db.MessageDao
@@ -48,6 +48,9 @@ class ChatStreamRunner(
         transport: ChatTransport,
     ): RunOutcome {
         val assembler = MessageAssembler(clock)
+        // 继续生成（M1-9）会复用一条已有消息：新碎片的 ord 必须接在已有碎片后面，
+        // 否则撞上 fragments(message_id, ord) 的唯一索引。
+        val ordBase = fragmentDao.nextOrd(assistantMessageId)
         val rowIds = HashMap<Int, Long>()
         val written = HashMap<Int, String>()
         var lastFlush = 0L
@@ -59,7 +62,7 @@ class ChatStreamRunner(
                 if (written[fragment.ord] == json) continue
                 val rowId = rowIds[fragment.ord]
                 if (rowId == null) {
-                    rowIds[fragment.ord] = fragmentDao.insert(fragment.forMessage(assistantMessageId).toEntity())
+                    rowIds[fragment.ord] = fragmentDao.insert(fragment.forMessage(assistantMessageId, ordBase).toEntity())
                 } else {
                     fragmentDao.updateTypeAndPayload(rowId, fragment.payload.typeWire, json)
                 }
@@ -147,5 +150,6 @@ class ChatStreamRunner(
         )
     }
 
-    private fun Fragment.forMessage(messageId: Long): Fragment = copy(messageId = messageId)
+    private fun Fragment.forMessage(messageId: Long, ordBase: Int): Fragment =
+        copy(messageId = messageId, ord = ordBase + ord)
 }

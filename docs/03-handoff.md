@@ -424,7 +424,8 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 **冷启动恢复**（M1-6 已修）：启动时读 `updated_at` 最大的未删除会话并直接打开；没有会话才停在新对话（会话首次发送才落库）。
 
 | M1-8 消息树 | **完成** | 编辑重发（提问多版本）、重新生成（回答多版本）、‹ 2/3 › 版本切换；切换后指针落到目标分支叶子。分支算法在 `core/model/MessageBranch.kt`，6 个单测 |
-| M1-9 及之后 | 未开始 | 继续生成、错误映射、read_link 签名 |
+| M1-9 继续生成 | **完成** | 末尾 ASSISTANT 预填续写（thinking 关）；三个前置条件不满足就不给按钮；真机验证 3471→11761 字、ord 递增追加 |
+| M1-11/1-13/1-12 | 未开始 | 错误映射、read_link 签名回传、Files 客户端 |
 
 **M1-10 上下文重建**：`core/net/context/ContextRebuilder.kt` + `ReminderBuilder.kt`，8 个用例。
 
@@ -436,7 +437,7 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | ④ 历史只回传正文、思考不回传 | **部分**：正文已做，`read_link` 的 `signature` 回传**未做** |
 | ⑤ reminder 快照去重 | 完成（`messages.reminder_snapshot` 落库） |
 | ⑥ 末尾接本轮 USER | 完成（附件块待 M4） |
-| ⑦ 继续生成补未完成 ASSISTANT | 归 M1-9 |
+| ⑦ 继续生成补未完成 ASSISTANT | 完成：预填 assistant 末尾续写（M1-9） |
 
 > **规则 ④ 的缺口要补**：现在碎片只存了结果侧（url/title/signature 在 results 里），无法还原
 > `server_tool_use` + `web_fetch_tool_result` 这一对。补法是给 `READ_LINK` 增加

@@ -1,4 +1,4 @@
-﻿package io.tinychat.feature.chat
+package io.tinychat.feature.chat
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +68,8 @@ data class ChatMessage(
     /** 同一条提问下的第几版回答 / 同一位置的第几次提问（1 基）；只有一版时为 1/1 */
     val versionIndex: Int = 1,
     val versionCount: Int = 1,
+    /** 这条回答是停住/截断的，且没动用服务端工具 —— 可以「继续生成」 */
+    val canContinue: Boolean = false,
 ) {
     val hasThinking: Boolean get() = timeline.isNotEmpty()
 }
@@ -315,6 +317,27 @@ class ChatViewModel(
         }
     }
 
+    /** 继续生成（M1-9）：把停住的回答接着写下去，内容原地追加 */
+    fun continueGeneration(message: ChatMessage) {
+        val id = sessionId ?: return
+        if (state.isStreaming || message.isUser || !message.canContinue) return
+
+        state = state.copy(isStreaming = true, error = null)
+        job = viewModelScope.launch {
+            try {
+                repository.continueGeneration(id, message.id, apiKey)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ChatException) {
+                state = state.copy(error = e.message ?: "继续生成失败")
+            } catch (e: Exception) {
+                state = state.copy(error = e.message ?: "继续生成失败")
+            } finally {
+                state = state.copy(isStreaming = false)
+            }
+        }
+    }
+
     /** 复制整个会话（纯文本，用户/AI 交替） */
     fun conversationText(): String = buildString {
         state.messages.forEach { message ->
@@ -455,6 +478,11 @@ class ChatViewModel(
             .takeIf { it.isNotEmpty() }
             ?.sum()
 
+        val canContinue = message.status == MessageStatus.INCOMPLETE &&
+            timeline.none { it is TimelineItem.Tool } &&
+            fragments.none { it.type == "TEMPLATE_RESPONSE" } &&
+            text.isNotBlank()
+
         return ChatMessage(
             id = message.id,
             isUser = false,
@@ -464,6 +492,7 @@ class ChatViewModel(
             thinkingSeconds = seconds,
             isThinking = message.status == MessageStatus.WIP,
             status = message.status,
+            canContinue = canContinue,
         )
     }
 

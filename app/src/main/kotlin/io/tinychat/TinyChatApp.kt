@@ -124,6 +124,7 @@ fun TinyChatApp() {
                         conversationText = chatViewModel::conversationText,
                         onSwitchVersion = chatViewModel::switchVersion,
                         onRegenerate = chatViewModel::regenerate,
+                        onContinue = chatViewModel::continueGeneration,
                     )
                 }
                 composable(Routes.SETTINGS) {

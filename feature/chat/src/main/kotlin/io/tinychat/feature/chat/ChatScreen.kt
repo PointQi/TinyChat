@@ -96,6 +96,7 @@ fun ChatScreen(
     conversationText: () -> String,
     onSwitchVersion: (Long, Int) -> Unit,
     onRegenerate: (ChatMessage) -> Unit,
+    onContinue: (ChatMessage) -> Unit,
 ) {
     val palette = TcTheme.palette
 
@@ -127,6 +128,7 @@ fun ChatScreen(
                 conversationText = conversationText,
                 onSwitchVersion = onSwitchVersion,
                 onRegenerate = onRegenerate,
+                onContinue = onContinue,
             )
         }
 
@@ -206,6 +208,7 @@ private fun MessageList(
     conversationText: () -> String,
     onSwitchVersion: (Long, Int) -> Unit,
     onRegenerate: (ChatMessage) -> Unit,
+    onContinue: (ChatMessage) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -258,6 +261,7 @@ private fun MessageList(
                     onCopyConversation = { clipboard.setText(AnnotatedString(conversationText())) },
                     onSwitchVersion = { delta -> onSwitchVersion(message.id, delta) },
                     onRegenerate = if (!message.isUser && isLatest) ({ onRegenerate(message) }) else null,
+                    onContinue = if (!message.isUser && isLatest && message.canContinue) ({ onContinue(message) }) else null,
                 )
             }
         }
@@ -303,6 +307,7 @@ private fun MessageRow(
     onCopyConversation: () -> Unit,
     onSwitchVersion: (Int) -> Unit,
     onRegenerate: (() -> Unit)?,
+    onContinue: (() -> Unit)?,
 ) {
     val palette = TcTheme.palette
 
@@ -360,9 +365,21 @@ private fun MessageRow(
             }
 
             // 最后一条回答给「重新生成」；任一条有兄弟分支时给版本切换
-            if (onRegenerate != null || message.versionCount > 1) {
+            if (onContinue != null || onRegenerate != null || message.versionCount > 1) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onContinue != null) {
+                        Text(
+                            text = "继续生成",
+                            style = TcTypography.bodySmall,
+                            color = palette.brand,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(onClick = onContinue)
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                    }
                     if (onRegenerate != null) {
                         TcIconButton(
                             icon = TcIcons.Regenerate,
