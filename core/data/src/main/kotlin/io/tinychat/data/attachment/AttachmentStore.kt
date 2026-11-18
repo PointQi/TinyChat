@@ -142,7 +142,13 @@ class AttachmentStore(private val context: Context) {
     /** 删除某个附件相关的本地文件（原件 + 缩略图），用于草稿移除/消息删除 */
     fun delete(attachmentId: String, localPath: String?) {
         runCatching { thumbFile(attachmentId).delete() }
-        localPath?.let { runCatching { File(it).delete() } }
+        val file = localPath?.let { File(it) }
+        file?.let { runCatching { it.delete() } }
+        // 顺手收敛空目录：一块附件都没有了，`attachments/{messageId}/` 就别留着
+        val parent = file?.parentFile
+        if (parent != null && parent.isDirectory && parent.listFiles()?.isEmpty() == true) {
+            runCatching { parent.delete() }
+        }
     }
 
     /** 删除整个消息目录（删消息/删会话的清理路径，M6-6 也会用） */
