@@ -15,9 +15,9 @@
 | 规划 | ✅ 开发计划 + 交互设计完成（02 号文档） |
 | Spike | ✅ 4/4（SSE 离线 40/40、导出包 PASS、渲染定 API、公式图表定 WebView、在线 SSE 跑通） |
 | 代码 | ✅ **M1 完成（2026-11-18）**：M1-1 ~ M1-13 全部完成，单测 118 个 + lint 全绿；真机验过发送/停止/编辑重发/重新生成/版本切换/继续生成/抽屉会话管理与搜索 |
-| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）已落地并真机对照；M2-3 抖动三坑待压测，M2-5/6（KaTeX / mermaid）待做 |
+| M2 渲染 | 🚧 **进行中**：M2-1/2（Markdown + 流式帧合并）、M2-4（代码块）、M2-7（思维链折叠动画）、M2-8（引用角标 + 来源胶囊/来源页）、M2-9（消息操作栏）、**M2-5/M2-6（块级公式 + mermaid，共用离屏位图宿主）** 已落地并真机对照；M2-3 抖动三坑待压测；行内公式目前只吞定界符（位图升级待做） |
 | 阻塞项 | 无。Key 走 `.local/dev-key.txt`（debug 注入），M8-6 换 Keystore |
-| 下一步 | **M2-5/M2-6 WebView 批**（KaTeX `0.19.1` + mermaid `11.12.0`，共用 WebView host + 高度回调 + 深色主题 + 图表/代码切换），随后 M2-3 抖动压测 |
+| 下一步 | **行内公式位图升级**（流式结束后把 `$…$` 换成 KaTeX 内联位图），随后 M2-3 抖动压测 |
 
 ---
 
@@ -508,6 +508,10 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | 操作栏布局（M2-9） | 固定两行、官方版式：第一行 `复制` `朗读` `分享` 靠左贴边 + `重新生成` 靠右贴边；第二行 `‹ 2/3 ›` 靠左贴边 + `继续生成` 靠右贴边。`ActionIcon` 统一 40dp 触达 / 18dp 图形 / `LabelTertiary` 无底色（相邻图形间距 22dp）；`VersionSwitcher` 的箭头盒子也统一成 40dp，否则第二行左缘比第一行缩进 6dp |
 | 操作栏可见性 | 抽成纯函数 `resolveFooterState(status, hasText, versionCount, isLatest, canContinue)`（`MessageFooterState.kt`），9 个单测钉死矩阵：WIP/FAILED/TIMEOUT 整栏不出；**INCOMPLETE 只要已有正文照给左三件**（用户明确要求，手动停止后内容仍可复制/朗读）；只有「正文为空」才只剩重新生成。**别把判断写回 Composable** |
 | 操作栏动作 | 复制=本条回答纯文本（`onCopyMessage`，图标变对勾 1.5s，不弹 Toast）；分享=`ACTION_SEND` text/plain 系统面板（M8-2 换成出图抽屉）；朗读=M5-4 前的空占位（`onClick = {}`，点了无动作）；赞踩官方已确认不做 |
+| 公式/图表宿主（M2-5/6） | 全应用**一个不挂窗口的 WebView** 出位图（`TcRenderHost`，LRU 24MB），列表里只放 `Image`：这样没有 WebView 存量、也不吞竖向手势。资源离线 vendor 进 `core:markdown/src/main/assets/`（katex 0.19.1 + 20 个 woff2 + mermaid 11.12.0，共约 3.2MB） |
+| 宿主四个坑（都实测过） | ① **CSS 像素 ≠ 物理像素**：下发前除以 density、回传后乘回来，否则公式被放大 3 倍只画出两个符号；② **WebView 必须 attach**（挂进 decor 后 translate 到屏幕外），完全离屏的实例只光栅化默认视口，`draw()` 拿到的永远是旧内容；③ **背景要透明**：`setBackgroundColor(TRANSPARENT)` + 页面 `background:transparent`，否则位图整块白底；④ **改完尺寸要再量一次**：先量再 resize 会让公式重排、被裁掉半行，`tcMeasure()` 只增不减补两轮 |
+| mermaid 缩放 | `useMaxWidth: false`（否则 mermaid 默认把图拉满容器，字号被放大）；显示端按位图长宽比 `aspectRatio` 等比铺满，超宽图缩到正文宽度 |
+| 渲染实验室 | `app/src/debug/`（release 不打包）：`adb shell am start -n io.tinychat/io.tinychat.debug.RenderLabActivity`，含 5 类图、错误态样例、`--ez dark true` 深色开关与「测耗时」（`TcRenderLab.benchMath` 冷启/稳态各一轮） |
 
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**
 

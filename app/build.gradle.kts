@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
@@ -67,6 +67,7 @@ dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:designsystem"))
     implementation(project(":core:ui"))
+    debugImplementation(project(":core:markdown"))
     implementation(project(":feature:chat"))
     implementation(project(":feature:sessions"))
     implementation(project(":feature:settings"))

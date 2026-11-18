@@ -161,4 +161,4 @@ internal fun TcCodeBlock(code: String, language: String?, style: TextStyle) {
 }
 
 /** 顶部栏文字：13sp，比正文小一档，不跟正文字号缩放联动 */
-private val MarkdownCodeBannerStyle = TextStyle(fontSize = 13.sp, lineHeight = 18.sp)
+internal val MarkdownCodeBannerStyle = TextStyle(fontSize = 13.sp, lineHeight = 18.sp)

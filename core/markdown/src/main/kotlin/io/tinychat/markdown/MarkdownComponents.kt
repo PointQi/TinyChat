@@ -2,12 +2,15 @@ package io.tinychat.markdown
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.ui.text.buildAnnotatedString
@@ -92,7 +95,17 @@ internal fun tcMarkdownComponents(): MarkdownComponents = markdownComponents(
     checkbox = { model -> TcCheckbox(model) },
     codeFence = { model ->
         MarkdownCodeFence(model.content, model.node, model.typography.code) { code, language, style ->
-            TcCodeBlock(code = code, language = language, style = style)
+            when (language?.trim()?.lowercase()) {
+                // ```math / ```latex：模型偶尔不用 $$ 包块公式，而用围栏
+                "math", "latex", "tex" -> TcMath(
+                    latex = code.trim(),
+                    display = true,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+                // ```mermaid：图画在 TcMermaidBlock 里，图/码切换也归它管
+                "mermaid", "mmd" -> TcMermaidBlock(code = code, style = style)
+                else -> TcCodeBlock(code = code, language = language, style = style)
+            }
         }
     },
     codeBlock = { model ->
@@ -128,10 +141,31 @@ private val listMarkerModifier: RowScope.() -> Modifier = { Modifier.padding(end
  */
 @Composable
 private fun TcParagraph(model: MarkdownComponentModel) {
+    // 块级公式 `$$…$$`：GFM 不认它，会把它当普通文字。这里在**组件层**切段渲染，
+    // 绝不改写正文 —— 引用角标的偏移是对着原文算的，改一个字就全线错位。
+    // 注意 allowParagraphText：模型经常写成「文字\n$$ … $$」而不空行，GFM 会把它整段当一个段落，
+    // 所以段落内部也要能切开（只处理整段判断会把这类公式当源码糊在正文里）。
+    val raw = model.node.getTextInNode(model.content).toString()
+    val blocks = remember(raw) { findBlockMath(raw) }
+    if (blocks.isNotEmpty()) {
+        Column(modifier = Modifier.padding(vertical = LocalBlockSpacing.current)) {
+            var cursor = 0
+            blocks.forEach { block ->
+                val before = raw.substring(cursor, block.start).trim()
+                if (before.isNotEmpty()) ParagraphSlice(before, model)
+                TcMath(latex = block.latex, display = true)
+                cursor = block.end
+            }
+            val after = raw.substring(cursor).trim()
+            if (after.isNotEmpty()) ParagraphSlice(after, model)
+        }
+        return
+    }
+
     val anchors = LocalCitationAnchors.current
     val mine = anchorsIn(anchors, model.node.startOffset, model.node.endOffset)
     val settings = annotatorSettings()
-    val text = buildAnnotatedString {
+    val built = buildAnnotatedString {
         pushStyle(model.typography.paragraph.toSpanStyle())
         buildMarkdownAnnotatedString(
             content = model.content,
@@ -141,11 +175,31 @@ private fun TcParagraph(model: MarkdownComponentModel) {
         pop()
         mine.forEach { anchor -> appendInlineContent(CitationTagPrefix + anchor.index) }
     }
+    // 行内公式：先只吞掉 `$` 定界符（宽度稳定、零异步）。位图升级要等内联内容
+    // 的尺寸先量出来，那一步单独做，别混在流式路径里。
+    val formulas = remember(built) { findInlineMath(built.text) }
+    val text = remember(formulas) { built.applyInlineMath(formulas, replace = false) }
 
     MarkdownText(
         content = text,
         node = model.node,
         modifier = Modifier.padding(vertical = LocalBlockSpacing.current),
+        style = model.typography.paragraph,
+    )
+}
+
+/** 块级公式段落里被切开的那截普通文字（不再走 AST，避免和原 node 偏移打架） */
+@Composable
+private fun ParagraphSlice(text: String, model: MarkdownComponentModel) {
+    val payload = remember(text) {
+        buildAnnotatedString {
+            pushStyle(model.typography.paragraph.toSpanStyle())
+            append(text)
+            pop()
+        }
+    }
+    Text(
+        text = payload,
         style = model.typography.paragraph,
     )
 }
