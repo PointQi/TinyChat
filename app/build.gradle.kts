@@ -42,6 +42,15 @@ android {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        // 性能对照专用：release 的编译/运行语义（isDebuggable=false，走 ART 优化路径），
+        // 但挂 debug 签名并注入开发 Key，这样能直接装到测试机上量帧率。
+        // ⚠️ 判断「卡不卡」必须用它，拿 debug 包量出来的是假的（实测 debug 50th 18ms、release 6ms）。
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("String", "DEV_API_KEY", "\"$devApiKey\"")
+            matchingFallbacks += listOf("release")
+        }
     }
 
     packaging {

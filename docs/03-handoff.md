@@ -501,6 +501,23 @@ feature/settings/        设置树 + 服务商 / 数据管理 / 关于 三个占
 | 列表符号 | 库默认 `"• "`（带空格），宽度随字号浮动 → 自定义 `BulletHandler` 返回 `"•"`，用 `markerModifier` 的 6dp 尾距控制间隙 |
 | 版本 | 渲染库 `com.mikepenz:multiplatform-markdown-renderer:0.46.0` + `-m3`（已实测可解析、API 与本文一致） |
 
+**滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**
+
+| 构建 | 渲染 | Janky | 50th | 95th |
+|---|---|---|---|---|
+| debug | Markdown | 23.6% | 18ms | 38ms |
+| debug | 纯文本（A/B） | 22.4% | 18ms | 36ms |
+| **benchmark** | 纯文本 | 0.6% | 6ms | — |
+| **benchmark** | Markdown（一次性渲染 + LRU 缓存） | 20–35% | 21–25ms | 40ms+ |
+| **benchmark** | Markdown（流式通道，最终版） | **3.8–9.0%** | **11–12ms** | 19–27ms |
+| 对照：系统设置列表 | — | 0.7–2.3% | 8ms | 15ms |
+
+1. **绝不能用 debug 包判断卡不卡**：同一份代码 debug 50th 18ms、release 语义 6–12ms，差 2–3 倍。为此新增 `benchmark` 构建变体（`initWith(release)` + debug 签名 + 注入 Key），`./gradlew :app:assembleBenchmark` 直接装机量帧率。**所有“流畅度”结论以它为准**；
+2. 测量方法：`dumpsys gfxinfo io.tinychat` 看 `Janky frames` / `50th` / `95th`；`reset` 后跑固定手势（1900↔500、150ms、3 个来回）；对照组用系统设置列表。EMUI 关掉了 `framestats`，拿不到逐阶段拆解；
+3. **被证伪的方案（别再做）**：把「已结束的消息」改成 `parseMarkdown()` + `Markdown(state=…)` 一次性渲染，并加 LRU + 后台预热。同包 A/B 反而更差（20–35% vs 4–9%）。原因：一次性渲染把整棵 AST 的组合压进正在滚动的帧；缓存用 `@Synchronized`，后台预热解析大消息时会挡住主线程。**结论：所有消息都走流式通道，让内容经 StateFlow 错开一帧出现**；
+4. 保留下来的两处微优化：EOL 节点过滤、`toString()` 用 `remember(snapshot)` 缓存；行内代码画笔只在正文含 ``` ` ``` 时才挂（省掉整条 extend/onTextLayout/drawBehind）。
+
+
 ---
 
 ## 8. 压缩后的自检清单
