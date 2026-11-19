@@ -121,7 +121,7 @@ fun TinyChatApp() {
                 composable(Routes.CHAT) {
                     ChatScreen(
                         state = chatViewModel.state,
-                        hasApiKey = chatViewModel.state.hasApiKey,
+                        hasApiKey = hasKey,
                         autoSpeak = chatViewModel.state.autoSpeak,
                         onInputChange = chatViewModel::onInputChange,
                         onSend = chatViewModel::send,
@@ -173,7 +173,7 @@ fun TinyChatApp() {
                         onOpenProvider = { navController.navigate(Routes.PROVIDER) },
                         onOpenData = { navController.navigate(Routes.DATA) },
                         onOpenAbout = { navController.navigate(Routes.ABOUT) },
-                        hasKey = chatViewModel.state.hasApiKey,
+                        hasKey = hasKey,
                         currentPromptPreset = promptPreset,
                         ttsVoice = chatViewModel.state.ttsVoice,
                         onSelectTtsVoice = chatViewModel::setTtsVoice,
@@ -194,6 +194,7 @@ fun TinyChatApp() {
                                 is KeyCheck.Failed -> result.message
                             }
                         },
+                        onTestStored = { container.checkStoredKey() },
                         onSave = { container.saveApiKey(it) },
                         onClear = { container.clearApiKey() },
                     )

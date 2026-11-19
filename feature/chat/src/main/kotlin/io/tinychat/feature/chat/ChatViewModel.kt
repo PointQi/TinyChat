@@ -762,9 +762,14 @@ class ChatViewModel(
             effort = state.effort,
             thinkingEnabled = state.thinkingEnabled,
             searchEnabled = state.searchEnabled,
-            // 这两个是全局设置，开新对话不能跟着重置
+            // 这些都是全局状态，开新对话不能跟着重置（尤其是 hasApiKey：
+            // 之前漏了它，开新对话后顶部会误报「尚未配置服务商」）
             autoSpeak = state.autoSpeak,
             ttsVoice = state.ttsVoice,
+            hasApiKey = state.hasApiKey,
+            showUsage = state.showUsage,
+            reminderEnabled = state.reminderEnabled,
+            balanceText = state.balanceText,
         )
     }
 

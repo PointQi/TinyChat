@@ -13,6 +13,7 @@ import io.tinychat.data.settings.SecretStore
 import io.tinychat.data.settings.UserSettings
 import io.tinychat.feature.chat.voice.VoiceController
 import io.tinychat.net.account.AccountClient
+import io.tinychat.net.account.KeyCheck
 import io.tinychat.net.transport.OkHttpChatTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -97,6 +98,17 @@ class AppContainer(context: Context) {
         val trimmed = key.trim()
         secrets.write(trimmed)
         _apiKey.value = trimmed
+    }
+
+    /** 校验**已存的** Key（服务商页「测试连接」在输入框为空时用） */
+    suspend fun checkStoredKey(): String? {
+        val key = apiKey.value
+        if (key.isBlank()) return "尚未配置 API Key"
+        return when (val result = account.checkKey(key)) {
+            KeyCheck.Ok -> null
+            KeyCheck.Invalid -> "Key 无效"
+            is KeyCheck.Failed -> result.message
+        }
     }
 
     suspend fun clearApiKey() {

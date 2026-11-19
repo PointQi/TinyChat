@@ -869,6 +869,8 @@ chat-demo 是 Web 实现（点一下开始、再点结束、结果回填输入�
 - 抽屉用 overlay + `slideInHorizontally`，**不要嵌套第二个 `ModalNavigationDrawer`**（会和左抽屉抢手势）。
 - 会话合计用一条 `SUM(...)` 查询（含被丢弃分支，那是真花掉的钱），别把当前分支的消息加起来当合计。
 - 设置里新增两行（`显示每轮用量`、`用户元信息`）会挤动现有顺序，按 02 §12.5 的分组放，别插到「语音」组。
+- **`newChat()` 会从零重建 `ChatUiState`**：任何新增的全局字段（`hasApiKey`、`showUsage`、`usageSummary`、`balanceText`…）都要在那一处显式带过去，否则「开新对话」会把它悄悄清掉（M7 真机 bug：顶部误报「尚未配置服务商」）。同理，**不要**把「有没有 Key」这类跨页状态只存在 VM 的 state 里，直接读 `container.apiKey` 这条流。
+- 服务商页按钮的可用性别绑「输入框非空」：用户手里已经有 Key 时，「测试连接」必须能测**已存**的 Key（`onTestStored`），否则永远灰着，看着像坏了。
 
 ---
 

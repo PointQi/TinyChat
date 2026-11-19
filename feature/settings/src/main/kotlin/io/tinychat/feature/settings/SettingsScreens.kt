@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -194,6 +195,8 @@ fun ProviderSettingsScreen(
     onBack: () -> Unit,
     /** 返回 `null` = 校验通过，否则是给用户看的一行错误文案（`GET /models`，不计费） */
     onCheck: suspend (String) -> String?,
+    /** 校验**已存**的 Key（输入框为空时「测试连接」用它） */
+    onTestStored: suspend () -> String? = { null },
     onSave: suspend (String) -> Unit,
     onClear: suspend () -> Unit,
 ) {
@@ -205,6 +208,24 @@ fun ProviderSettingsScreen(
     var message by remember { mutableStateOf<String?>(null) }
     var failed by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+
+    fun testConnection() {
+        if (busy) return
+        scope.launch {
+            busy = true
+            message = null
+            failed = false
+            val candidate = field.trim()
+            val error = if (candidate.isEmpty()) onTestStored() else onCheck(candidate)
+            if (error == null) {
+                message = "连接正常"
+            } else {
+                failed = true
+                message = error
+            }
+            busy = false
+        }
+    }
 
     fun checkThenSave() {
         val candidate = field.trim()
@@ -267,6 +288,18 @@ fun ProviderSettingsScreen(
                     visualTransformation =
                         if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
                     modifier = Modifier.weight(1f),
+                    decorationBox = { inner ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (field.isEmpty()) {
+                                Text(
+                                    text = "粘贴新的 API Key",
+                                    style = TcTypography.bodyLarge,
+                                    color = palette.labelTertiary,
+                                )
+                            }
+                            inner()
+                        }
+                    },
                 )
                 Text(
                     text = if (reveal) "隐藏" else "显示",
@@ -297,8 +330,8 @@ fun ProviderSettingsScreen(
                     Text("保存并验证", color = if (field.isNotBlank() && !busy) palette.brand else palette.labelTertiary)
                 }
                 TextButton(
-                    onClick = ::checkThenSave,
-                    enabled = field.isNotBlank() && !busy,
+                    onClick = ::testConnection,
+                    enabled = !busy,
                     modifier = Modifier.padding(start = 4.dp),
                 ) {
                     Text("测试连接", color = palette.labelSecondary)
