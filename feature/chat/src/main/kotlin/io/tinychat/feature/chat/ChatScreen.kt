@@ -1173,8 +1173,16 @@ private fun InputCard(
     val cardColor = if (dark) palette.bgLayer2 else palette.bg
     val inputFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     var attachSheet by remember { mutableStateOf(false) }
     var previewImage by remember { mutableStateOf<DraftAttachment?>(null) }
+
+    /** 取消编辑：清空由 ViewModel 做，这里负责「失焦 + 收起输入法」 */
+    val cancelEdit: () -> Unit = {
+        onCancelEdit()
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+    }
 
     // 输入框内容由外部（state.input）驱动：从外面写进来时（例如点消息进入编辑）
     // 光标要落在**末尾**，否则会停在开头还要手动挪。
@@ -1222,7 +1230,8 @@ private fun InputCard(
                     color = palette.labelSecondary,
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
-                        .clickable(onClick = onCancelEdit)
+                        // 取消要清空 + 失焦 + 收起输入法（只清空的话，键盘会留在原地）
+                        .clickable(onClick = cancelEdit)
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
