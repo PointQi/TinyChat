@@ -159,6 +159,8 @@ fun ChatScreen(
     onRemoveAttachment: (String) -> Unit,
     /** 附件上传失败后重试这一轮 */
     onRetryAttachment: (ChatMessage) -> Unit,
+    /** 图片快捷提问：带着当前附件直接发送 */
+    onQuickSend: (String) -> Unit,
 ) {
     val palette = TcTheme.palette
     val context = LocalContext.current
@@ -282,6 +284,7 @@ fun ChatScreen(
             },
             onPickFiles = { runCatching { filePicker.launch(arrayOf("*/*")) } },
             canTakePhoto = canTakePhoto,
+            onQuickSend = onQuickSend,
             onTakePhoto = {
                 val uri = createCameraUri(context)
                 if (uri != null) {
@@ -1161,6 +1164,8 @@ private fun InputCard(
     onPickFiles: () -> Unit,
     canTakePhoto: Boolean,
     onTakePhoto: () -> Unit,
+    /** 图片快捷提问：点一下就用这句话 + 当前附件直接发出去 */
+    onQuickSend: (String) -> Unit,
 ) {
     val palette = TcTheme.palette
     val dark = isSystemInDarkTheme()
@@ -1238,6 +1243,25 @@ private fun InputCard(
                         onRemove = { onRemoveAttachment(draft.id) },
                         onOpen = { if (draft.isImage) previewImage = draft },
                     )
+                }
+            }
+        }
+
+        // 图片快捷提问（官方同款）：只要有图片草稿就出一排可横滑的圆角按钮，
+        // 点一下就用这句话 + 全部附件直接发出去，省掉一次输入。
+        if (state.attachments.any { it.isImage } &&
+            state.editingMessageId == null &&
+            !state.isStreaming
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ImageQuickPrompts.forEach { prompt ->
+                    QuickPromptChip(text = prompt, onClick = { onQuickSend(prompt) })
                 }
             }
         }
@@ -1670,6 +1694,30 @@ private fun FileAttachmentCard(attachment: ChatAttachment, palette: TcPalette) {
                 },
             )
         }
+    }
+}
+
+/** 图片快捷提问（官方同款）：点一下直接带着图发出去 */
+private val ImageQuickPrompts = listOf("这是什么", "分析一下", "怎么办", "解释一下")
+
+@Composable
+private fun QuickPromptChip(text: String, onClick: () -> Unit) {
+    val palette = TcTheme.palette
+    Box(
+        modifier = Modifier
+            .height(32.dp)
+            .clip(RoundedCornerShape(100.dp))
+            .background(palette.bubble)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = TcTypography.bodySmall,
+            color = palette.labelPrimary,
+            maxLines = 1,
+        )
     }
 }
 

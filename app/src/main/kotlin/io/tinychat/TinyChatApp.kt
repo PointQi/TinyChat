@@ -133,6 +133,7 @@ fun TinyChatApp() {
                         onAddAttachments = chatViewModel::addAttachments,
                         onRemoveAttachment = chatViewModel::removeAttachment,
                         onRetryAttachment = chatViewModel::retryAttachment,
+                        onQuickSend = chatViewModel::quickSend,
                     )
                 }
                 composable(Routes.SETTINGS) {

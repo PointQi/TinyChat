@@ -441,6 +441,18 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * 图片快捷提问（官方同款）：把这句话当作用户输入直接发出去，附件一起带上。
+     *
+     * 已经是"点一下就走"，所以**覆盖**输入框里还没发的内容（官方也是这个行为）。
+     */
+    fun quickSend(text: String) {
+        if (state.isStreaming) return
+        if (text.isBlank()) return
+        state = state.copy(input = text)
+        send()
+    }
+
     fun send() {
         val text = state.input.trim()
         val drafts = state.attachments
