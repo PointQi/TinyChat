@@ -164,10 +164,24 @@ fun ChatScreen(
     val context = LocalContext.current
 
     // —— 附件选择器（M4-1/2）——
-    // Photo Picker 走系统选择器，不需要存储权限；一次最多 9 张
-    val imagePicker = rememberLauncherForActivityResult(
+    // 选图有三个落点，优先"能进系统相册"的那个（详见 ImagePick 的注释）：
+    //   ① 系统照片选择器（13+）② ACTION_PICK 进相册 ③ DocumentsUI 兜底
+    val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(9),
     ) { uris -> onAddAttachments(uris) }
+    val galleryPicker = rememberLauncherForActivityResult(
+        contract = PickImagesFromGallery(),
+    ) { uris -> onAddAttachments(uris) }
+    val documentsPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris -> onAddAttachments(uris) }
+    val pickImageSource = remember(context) {
+        when {
+            ImagePick.hasPhotoPicker(context) -> ImagePickSource.PHOTO_PICKER
+            ImagePick.hasGallery(context) -> ImagePickSource.GALLERY
+            else -> ImagePickSource.DOCUMENTS
+        }
+    }
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris -> onAddAttachments(uris) }
@@ -257,9 +271,13 @@ fun ChatScreen(
             // 选图/拍照/选文件交给系统选择器，回调统一走 onAddAttachments
             onPickImages = {
                 runCatching {
-                    imagePicker.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                    )
+                    when (pickImageSource) {
+                        ImagePickSource.PHOTO_PICKER -> photoPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                        ImagePickSource.GALLERY -> galleryPicker.launch(Unit)
+                        ImagePickSource.DOCUMENTS -> documentsPicker.launch(arrayOf("image/*"))
+                    }
                 }
             },
             onPickFiles = { runCatching { filePicker.launch(arrayOf("*/*")) } },

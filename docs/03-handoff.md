@@ -727,7 +727,7 @@ total diff sessions 0 => PASS
 
 **清空所有对话（M6-6，已验）**：设置 → 数据管理 → 清空所有对话 → 二次确认。实现顺序是**先删附件文件、再删行**（行没了就找不到 `local_path`，文件会变成永远清不掉的垃圾），一次 `attachmentDao().all()` 查出全库附件，不逐会话查库。模拟器实测：3340 会话清空后 `sessions`/`messages` 归零、`files/attachments` 与 `files/thumbs` 清空。
 
-**真机（FIN-AL60 / Android 12）首轮测试发现并修掉的 6 个问题（2026-11-19 上午）**
+**真机（FIN-AL60 / Android 12）首轮测试发现并修掉的 7 个问题（2026-11-19 上午）**
 
 | # | 现象 | 根因 | 修法 |
 |---|---|---|---|
@@ -737,6 +737,7 @@ total diff sessions 0 => PASS
 | 4 | 导入的历史**联网对话没有正文角标** | **导出包本身没有 `citations` 字段**（真样本 11643 个 RESPONSE 碎片里 0 个带），角标数据在流式 chunk 里、没进归档 | 数据没有就是没有（官方 App 同样显示不出）；但 `TOOL_SEARCH` 结果还在 → 正文末尾的「N 个网页」胶囊改由搜索结果兜底 |
 | 5 | 点开图片时**先闪一下「图片已不在本机」**再出图 | 解码是异步的，`produceState` 第一帧必然为 null，而空 bitmap 被当成"文件没了"直接出了文案 | 抽出 `BitmapLoad(bitmap, loading)` 三态：加载中画转圈、解码失败才说那句话；缩略图加载中留空（别闪占位图标） |
 | 6 | 点开图片时**先出现一条又宽又矮的黑条，出图后位置再往上跳一下** | 预览弹窗的盒子尺寸由内容撑出来：加载态只有转圈（高 124dp），出图后变成图片高度 → 弹窗按新高度重新居中，看着像"往上蹿" | 盒子**第一帧就按附件宽高比定尺寸**（`Modifier.aspectRatio(w/h)`），加载态与出图态同尺寸；没有宽高的老数据退化成 `heightIn(min = 160.dp)` |
+| 7 | 「从相册选择」**进的是文件浏览器，不是手机相册** | 用的是 `PickVisualMedia`（照片选择器）；这台机器是 Android 12、没有照片选择器，于是 `ActivityResultContracts` 回落到 `ACTION_OPEN_DOCUMENT`。实测 `ACTION_GET_CONTENT image/*` 在这台机器上只被 `com.android.documentsui` 与华为文件管理接住，**`com.huawei.photos` 根本不接** | 新增 `ImagePick` 三级落点：① 系统照片选择器（13+）② **`ACTION_PICK` + `MediaStore.Images.Media.EXTERNAL_CONTENT_URI`**（这台机器由 `com.huawei.photos/.gallery.app.materialselect.ThirdSelectSlotAlbumActivity` 接住，就是"直接进相册"）③ DocumentsUI 兜底。新契约 `PickImagesFromGallery` 同时兼容单选（`data`）与多选（`clipData`） |
 
 > 顺带确认：文件卡显示**「原件未导入」是正常的**——官方导出只带 79 个图片原件，PDF/Word 之类的原件根本不进包（只有元数据）。它们的附件行是 `MISSING`，卡片给"原件未导入"、不可点。
 
