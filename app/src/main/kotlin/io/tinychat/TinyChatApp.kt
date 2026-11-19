@@ -48,7 +48,6 @@ object Routes {
 @Composable
 fun TinyChatApp() {
     val palette = TcTheme.palette
-    var autoSpeak by rememberSaveable { mutableStateOf(false) }
     val promptPreset = PromptPreset.DEFAULT
 
     val context = LocalContext.current
@@ -58,6 +57,8 @@ fun TinyChatApp() {
             repository = container.repository,
             apiKey = container.apiKey,
             attachmentStore = container.attachmentStore,
+            voice = container.voiceController,
+            settings = container.userSettings,
         ),
     )
 
@@ -112,7 +113,7 @@ fun TinyChatApp() {
                     ChatScreen(
                         state = chatViewModel.state,
                         hasApiKey = chatViewModel.hasApiKey,
-                        autoSpeak = autoSpeak,
+                        autoSpeak = chatViewModel.state.autoSpeak,
                         onInputChange = chatViewModel::onInputChange,
                         onSend = chatViewModel::send,
                         onStop = chatViewModel::stop,
@@ -121,7 +122,9 @@ fun TinyChatApp() {
                         onSelectModel = chatViewModel::selectModel,
                         onOpenDrawer = { scope.launch { drawerState.open() } },
                         onNewChat = chatViewModel::newChat,
-                        onToggleAutoSpeak = { autoSpeak = !autoSpeak },
+                        onToggleAutoSpeak = {
+                            chatViewModel.setAutoSpeak(!chatViewModel.state.autoSpeak)
+                        },
                         onOpenProviderSettings = { navController.navigate(Routes.PROVIDER) },
                         onEditMessage = chatViewModel::startEdit,
                         onCancelEdit = chatViewModel::cancelEdit,
@@ -134,6 +137,18 @@ fun TinyChatApp() {
                         onRemoveAttachment = chatViewModel::removeAttachment,
                         onRetryAttachment = chatViewModel::retryAttachment,
                         onQuickSend = chatViewModel::quickSend,
+                        spectrum = chatViewModel.spectrum,
+                        onToggleVoiceMode = chatViewModel::toggleVoiceMode,
+                        onVoicePress = chatViewModel::startVoiceRecording,
+                        onVoiceRelease = { cancelled ->
+                            if (cancelled) {
+                                chatViewModel.cancelVoiceRecording()
+                            } else {
+                                chatViewModel.finishVoiceRecording()
+                            }
+                        },
+                        onReadAloud = chatViewModel::toggleSpeak,
+                        onClearHint = chatViewModel::clearHint,
                     )
                 }
                 composable(Routes.SETTINGS) {
@@ -143,6 +158,8 @@ fun TinyChatApp() {
                         onOpenData = { navController.navigate(Routes.DATA) },
                         onOpenAbout = { navController.navigate(Routes.ABOUT) },
                         currentPromptPreset = promptPreset,
+                        ttsVoice = chatViewModel.state.ttsVoice,
+                        onSelectTtsVoice = chatViewModel::setTtsVoice,
                     )
                 }
                 composable(Routes.PROVIDER) {

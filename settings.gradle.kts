@@ -34,6 +34,7 @@ rootProject.name = "TinyChat"
 include(":app")
 
 include(":core:model")
+include(":core:audio")
 include(":core:designsystem")
 include(":core:ui")
 include(":core:data")

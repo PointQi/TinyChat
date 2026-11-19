@@ -8,6 +8,8 @@ import io.tinychat.data.attachment.AttachmentUploader
 import io.tinychat.data.archive.ChatArchive
 import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.db.DatabaseFactory
+import io.tinychat.data.settings.UserSettings
+import io.tinychat.feature.chat.voice.VoiceController
 import io.tinychat.net.transport.OkHttpChatTransport
 
 /**
@@ -35,6 +37,12 @@ class AppContainer(context: Context) {
 
     /** 导入/导出（M6）：v3 兼容包 */
     val archive = ChatArchive(context.applicationContext, database)
+
+    /** 本地设置（M5 起用它）：自动朗读、朗读音色 */
+    val userSettings = UserSettings(context.applicationContext)
+
+    /** 语音（M5）：录音、频谱、ASR、TTS */
+    val voiceController = VoiceController(context.applicationContext)
 
     val repository = ChatRepository(
         db = database,

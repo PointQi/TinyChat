@@ -19,14 +19,14 @@
 | **M2 渲染** | ✅ 2026-11-19 | M2-1/2、M2-3（抖动三坑）、M2-4、M2-5/M2-6、M2-7、M2-8、M2-9 全部落地并真机对照；宽公式「自然宽度 + 左贴边 + 横向滚动」已对照（`6248c97`） |
 | **M3 联网** | ✅ 已真机在用 | `server_tool_use` / `web_search_tool_result` 解析、搜索阶段碎片与卡片、来源胶囊 + 来源页、「N 个网页」聚合、`deepseek_web_search` / `deepseek_read_url` 声明；工具报文见 §6 |
 | **M4 附件** | ✅ **全部验完**（2026-11-19） | 相册多选、SAF 选文件、拍照入口（按 `resolveActivity` 判空）、草稿预览与删除、落盘（`attachments/{messageId}/` + `thumbs/`）、Files API 流式上传、`purpose` 自动判定、请求块（文件/图片在前、文本在后）、消息内 120dp/64dp 缩略图与文件卡、v4-pro 隐藏入口、断网失败→联网重试可续、删会话清附件——模拟器实拍 + 真实接口用例。仅剩「拍照」未在真机验（模拟器无相机 App）与确认文案分支（并入 M6） |
-| **M5 语音** | ⬜ 未实现 | `Asr` / `SpeechRecognizer` / 录音相关 0 处；TTS 只有 `Provider.kt` 的能力位与 `TtsVoice` 枚举（决策 3），**没有播放实现** |
+| **M5 语音** | ✅ **真机全通**（2026-11-19） | 点麦克风 → 键盘图标 + 居中「按住说话」→ 按住录音（频谱 + 秒数）→ 松手识别并**直接发送**；上滑取消；顶栏自动朗读（DataStore 持久化）+ 操作栏单条朗读；设置里两个官方音色。端点实测见 §7「M5 语音」 |
 | **M6 数据管理** | ✅ **导入导出 + 清空全通，3340 会话往返 PASS**（2026-11-19） | 流式 ZIP 读（`ZipFile` 中央目录）、v3 解析/校验（未知条目整包失败、索引 message_count 交叉校验）、单事务整包替换 + 文件副作用回滚、导出（官方条目顺序，不新增条目/字段）、数据管理页接 SAF（导入与清空都要二次确认）、**清空所有对话**（先删文件再删行）。**真样本 3340 会话 / 23580 消息 / 39665 碎片 / 79 附件往返，字段级 diff = 0**；导出只有文本进度、没有进度条 |
 | **M7 用量与费用** | 🚧 大半在 | `Usage` / `Cost` / 余额接口都在（`余额` 8 处）；**上下文饼图未做**（`PieChart` / `饼图` 0 处） |
 | **M7.5 提示词** | 🚧 基本在 | 预设体系在（`Preset` 165 处、`内置预设` 4 处）；三种组合模式与会话快照固化待对验收 |
 | **M8 打磨** | 🚧 部分 | 设置页在（`SettingsScreens.kt`）；**分享出图、i18n、引导页都没做**（`ShareImage` / `I18n` / `Onboarding` 各 0 处） |
 | **M9 发布** | ⬜ 未开始 | 签名仍是 debug（决策 14，`M8-6` 才换 Keystore）；`NOTICE` 0 处 |
 | 阻塞项 | 无 | Key 走 `.local/dev-key.txt`（debug 注入） |
-| 下一步 | — | 建议顺序：M6 收尾（M6-6 清空所有对话 + 确认文案分支） → M5 语音（等真机） → M8 分享出图 / i18n → M9 发布 |
+| 下一步 | — | M7-2 上下文饼图 → M8 分享出图 / i18n → M9 发布 |
 
 
 ---
@@ -302,9 +302,9 @@ Content-Type: multipart/form-data   # purpose 必须排在 file 之前
 |---|---|---|
 | 校验 Key | `GET /models`（`Authorization: Bearer`） | 不计费 |
 | 余额 | `GET /user/balance` | 返回 `is_available` + `balance_infos[{currency,total_balance,granted_balance,topped_up_balance}]`，字符串金额 |
-| ASR | `POST /v1/tools/asr`（multipart `file`） | 16-bit PCM WAV 或 Ogg Opus；≤8MiB、≤120s；返回 `{text,duration_ms}`；不支持流式 |
-| TTS | `POST /v1/tools/tts` | `{text,voice_id:"stella"\|"tide",format:"wav"\|"pcm"}`；wav 或 24k/16bit/mono |
-| TTS 流式 | `wss://api.deepseek.com/v1/tools/tts` | 语音边生成边播；会话 ≤30 分钟 |
+| ASR | `POST /v1/tools/asr`（multipart `file`） | 16-bit PCM WAV / Ogg Opus；≤8MiB、≤120s；WAV 采样率只接受 8k/16k/22.05k/24k/32k/44.1k/48k；返回 `{request_id,text,duration_ms}`；不支持流式。**静音/纯音轨返回 200 + `text:""`**（不是错误）；空文件才 400；>8MiB 是 413、上传超 10 分钟是 408 |
+| TTS | `POST /v1/tools/tts` | `{text,voice_id:"stella"\|"tide",format:"wav"\|"pcm",filter_markdown}`；`filter_markdown` **默认 true**；wav 或 24k/16bit/mono PCM；`text` ≤10000 **计费字符**（**汉字算 2 个**，≈5000 汉字）、请求体 ≤64KiB、单次最多 30 分钟音频。400 = 无文本/纯符号/内容审核；还有 429/503/504。**中途断流要当失败** |
+| TTS 流式 | `wss://api.deepseek.com/v1/tools/tts` | 语音边生成边播；会话 ≤30 分钟。**v1 不用**：HTTP 整段接口本身就边合成边返回（实测首字节 0.95s） |
 
 ### 6.7 计费口径（写 `CostCalculator` 时照此）
 
@@ -742,6 +742,81 @@ total diff sessions 0 => PASS
 > 顺带确认：文件卡显示**「原件未导入」是正常的**——官方导出只带 79 个图片原件，PDF/Word 之类的原件根本不进包（只有元数据）。它们的附件行是 `MISSING`，卡片给"原件未导入"、不可点。
 
 **图片快捷提问（官方同款，2026-11-19 加）**：只要草稿里**有图片**、不是生成中、也不在编辑态，输入区就在「缩略图行」与「输入框」之间插一排横向滚动的**描线**圆角按钮（`borderL2` 1dp 描边、不填充，文案后带 `→`）：`这是什么 →` `分析一下 →` `怎么办 →` `解释一下 →`。点一下 = 把这句当作提问 + 带上当前全部附件**直接发送**（`ChatViewModel.quickSend`，会覆盖输入框里没发的文字，官方也是这个行为）。
+
+---
+
+**M5 语音（2026-11-19 起步）**
+
+先纠正一处**文档错**：`01 §4.8` 原来写「ASR 返回后填入输入框，不自动发送（与官方一致）」——**这是错的**。
+chat-demo 是 Web 实现（点一下开始、再点结束、结果回填输入框），**官方 App 不是这样**。用户核对后的真实交互：
+
+> 点麦克风 → 按钮变**键盘图标**、输入框位置整块变成居中的「按住说话」→ **按住录音** → **松手直接转写并发送**；
+> 没识别出内容弹提示、不回填输入框；再点键盘图标回文字输入。
+
+**端点实测（2026-11-19，脚本 `.local/probe_speech.py` + `probe_speech2.py`，不入库；总花费约 3 分钱）**
+
+| 项 | 结果 |
+|---|---|
+| TTS wav / pcm | 均 200；pcm `Content-Type: audio/pcm; rate=24000; encoding=signed-integer; bits=16; channels=1` |
+| TTS 是否真流式 | ✅ 570 字请求 **首字节 0.95s**，17.8s 出完 108s 音频（≈6 倍速）→ 边收边播有意义 |
+| TTS `wav` 头 | **`data` 长度是流式占位 `0x7FFFFFFF`**（解出来 89478 秒）。落文件喂 `MediaPlayer` 会算疯，所以一律走 `pcm` + `AudioTrack` |
+| TTS 400 的三种含义 | `text must not be empty` / `No readable text to synthesize`（纯符号）/ 内容审核 `Content Exists Risk` |
+| ASR 静音 / 纯正弦 1s | 均 **200 + `text:""`**（不是错误）→「未识别到语音内容」是客户端判空 |
+| ASR 空文件 | 400 `Unsupported audio format: expected 16-bit PCM WAV or Ogg Opus` |
+| 计费 | TTS 汉字算 **2 个**计费字符，10000 上限 ≈ 5000 汉字；ASR 0.78 元/小时 |
+
+**架构**（新增 `:core:audio`，别把录音/播放塞进 `core:data`）：
+
+| 位置 | 职责 |
+|---|---|
+| `core:audio/VoiceRecorder` | `AudioRecord` 16k/mono/16bit；预写 44 字节 WAV 头、`stop()` 回填长度；120s 自动停；边录边吐 PCM 帧 |
+| `core:audio/Fft` + `SpectrumAnalyser` | 512 点 FFT → 100–4000Hz 对数分段 → 0..1 柱高；纯 Kotlin 可单测 |
+| `core:audio/WavHeader` | 写 + 解析（容忍 `0x7FFFFFFF` 占位），纯 Kotlin 可单测 |
+| `core:audio/TtsPlayer` | `AudioTrack` MODE_STREAM（24k/mono/s16le）+ `AudioFocusRequest`（26+）+ `become noisy` |
+| `core:net/SpeechApi` | `transcribe()`（multipart `file`）、`synthesize()`（流式 chunk 回调）；`call.cancel()` 真取消 |
+| `feature:chat` | ViewModel 语音状态机（`IDLE/RECORDING/TRANSCRIBING` + `playingMessageId`）；输入区麦克风/键盘切换、频谱行、操作栏朗读、顶栏自动朗读 |
+
+**四个别再踩的坑**
+
+1. 自定义 WAV 头别忘了录音时长上限后**回填** RIFF/data 长度，否则 ASR 可能按 0 长度拒（我们探针里空文件就是 400）。
+2. TTS 断流要当失败（官方文档明写），不能当成"播完了"。
+3. 朗读长文必须按句切分：5000 汉字正好是 10000 计费字符上限。
+4. 顶栏 🔊 是**自动朗读开关**（开关状态要能看出来，现在两个状态同一个图标）；消息操作栏的「朗读」是**单条**朗读，两者不是一件事。
+
+**落地记录（2026-11-19 真机 PASS）**
+
+| 模块 | 文件 |
+|---|---|
+| 录音 / WAV / 频谱 / 播放 | `core/audio/`：`VoiceRecorder`、`WavHeader`、`Fft`、`SpectrumAnalyser`、`TtsPlayer` |
+| ASR / TTS 请求 | `core/net/speech/`：`SpeechRequests`（可离线断言）、`SpeechClient`（流式 chunk） |
+| 长文切分 | `feature/chat/voice/TtsTextChunker`（按句 + 硬切，汉字算 2 计费字符） |
+| 编排 | `feature/chat/voice/VoiceController`（录音/识别/朗读三件事 + 事件流） |
+| 状态机 | `ChatViewModel`：`voiceMode` / `voiceStatus` / `voiceSeconds` / `speakingMessageId` / `autoSpeak` |
+| 持久化 | `core/data/settings/UserSettings`（DataStore：`auto_speak`、`tts_voice`） |
+
+**两个真机踩出来的坑（都已修）**
+
+1. **点「停止朗读」会弹「朗读失败，请稍后再试」**：停止走的是 `TtsPlayer.stop()` → 正在 `write` 的协程抛 `PlaybackStopped`；它不是 `CancellationException`，被 `catch (Exception)` 当成真失败。修法：`PlaybackStopped` 在 `VoiceController.play` 与 `ChatViewModel.speak` 里都按**正常结束**吞掉。
+2. **按住就立刻结束**：`pointerInput` 的 key 里带了录音状态，状态一变手势协程被重启，正在按住的这次手势直接取消。修法：key 固定 `Unit`，状态用 `rememberUpdatedState` 取；手势用 `awaitEachGesture` + `try/finally` 保证任何情况下都收尾（不然录音线程会一直录）。
+
+**真机验收（FIN-AL60 / Android 12）**
+
+| 用例 | 结果 |
+|---|---|
+| 点麦克风 → 弹权限 → 允许 | ✅ 授予「仅使用期间允许」后进入语音模式：键盘图标 + 居中「按住说话」 |
+| 按住 3s 不说话 → 松手 | ✅ 录音中有频谱与秒数（dump 到 `3s` / `松开发送`），松手后弹「未识别到语音内容」 |
+| 按住说「你好。」松手 | ✅ 识别正确并**直接发送**（用户实测） |
+| 上滑取消 | ✅ 横竖位移判定，松手丢弃（用户实测） |
+| 操作栏朗读 | ✅ 出声、再点停止；停止后**不再弹失败提示** |
+| 顶栏自动朗读 | ✅ 打开后 `files/datastore/user_settings.preferences_pb` 写入 `auto_speak=true`，重启后图标仍为品牌色；用户实测「生成完毕后自动触发朗读」 |
+| 录满 120s 自动停 | ⬜ 未实测到点（逻辑与单测在，真机没等满 2 分钟） |
+
+**还没做的（别当已完成）**
+
+- 长文按句切分的**真机**效果没跑过（5000 字以上回答才会触发第二段），只有单测；
+- 音色切到「暗潮」后的实际听感没验（只验了默认海星）；
+- 朗读中切会话/删会话会停，但**没有**做「朗读进度」或「边生成边读」（服务端支持 WebSocket 流式，v1 明确不做）；
+- 语音输入没有做「说话时间太短」的独立文案，<600ms 一律并入「未识别到语音内容」。
 
 
 

@@ -101,6 +101,21 @@ object TcIcons {
         strokeIcon("tc_pin", "M5,4 H19 M12,20 V8 M7,13 L12,8 L17,13")
     }
 
+    /**
+     * 键盘（M5 语音模式里替换麦克风，chat-demo 无素材）：外框 + 两排按键 + 空格键。
+     *
+     * 同样只用折线不画圆弧（见下面附件图标的说明）。
+     */
+    val Keyboard: ImageVector by lazy {
+        strokeIcon(
+            name = "tc_keyboard",
+            pathData = "M3,6 H21 V18 H3 Z " +
+                "M6.5,9 V10 M9.5,9 V10 M12.5,9 V10 M15.5,9 V10 M18,9 V10 " +
+                "M6.5,12 V13 M9.5,12 V13 M12.5,12 V13 M15.5,12 V13 M18,12 V13 " +
+                "M8,15 H16",
+        )
+    }
+
     // —— 附件（M4）：chat-demo 没有相册/拍照/文件图标，按 24 网格手绘 ——
     // 只用折线不画圆弧：PathParser 的 A 指令在这些小尺寸下容易糊，菱形/三角在 18dp 更清楚。
 

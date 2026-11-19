@@ -4,6 +4,8 @@
     <!-- 聊天必须联网；M0 不联网所以漏了，M1 真机联调时补上 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 语音输入（M5-1）：运行时权限，第一次进语音模式时申请 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!--
       Android 11+ 的包可见性：不声明这段，`resolveActivity(ACTION_IMAGE_CAPTURE)` 恒为 null，

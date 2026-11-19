@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,6 +65,8 @@ fun TcIconButton(
     contentDescription: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    /** 覆盖图标颜色：用于「开/关」要能看出来的开关（例如顶栏自动朗读）。null = 主题默认 */
+    tint: Color? = null,
 ) {
     val palette = TcTheme.palette
     Row(
@@ -76,7 +79,7 @@ fun TcIconButton(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = if (enabled) palette.labelPrimary else palette.labelTertiary,
+            tint = tint ?: if (enabled) palette.labelPrimary else palette.labelTertiary,
             modifier = Modifier.size(22.dp),
         )
     }

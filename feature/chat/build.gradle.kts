@@ -24,6 +24,8 @@ kotlin {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:data"))
+    // api：ChatViewModel 对外暴露 SpectrumAnalyser，宿主（:app）要能引用这个类型
+    api(project(":core:audio"))
     implementation(project(":core:designsystem"))
     implementation(project(":core:ui"))
     implementation(project(":core:markdown"))

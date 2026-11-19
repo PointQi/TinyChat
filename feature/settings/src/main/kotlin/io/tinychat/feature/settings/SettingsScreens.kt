@@ -31,6 +31,7 @@ import io.tinychat.ui.TcListRow
 import io.tinychat.ui.TcSectionLabel
 import io.tinychat.ui.TcTopBar
 import io.tinychat.model.PromptPreset
+import io.tinychat.model.TtsVoice
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -42,8 +43,12 @@ fun SettingsScreen(
     onOpenData: () -> Unit,
     onOpenAbout: () -> Unit,
     currentPromptPreset: PromptPreset = PromptPreset.DEFAULT,
+    /** 当前朗读音色（M5-4，只有官方两个） */
+    ttsVoice: TtsVoice = TtsVoice.STELLA,
+    onSelectTtsVoice: (TtsVoice) -> Unit = {},
 ) {
     val palette = TcTheme.palette
+    var voicePicker by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -77,7 +82,12 @@ fun SettingsScreen(
             )
 
             TcSectionLabel("语音")
-            TcListRow(title = "朗读音色", subtitle = "Stella", onClick = {})
+            // 只有官方两个音色（决策 3），不做系统 TTS 兜底
+            TcListRow(
+                title = "朗读音色",
+                subtitle = ttsVoice.displayLabel,
+                onClick = { voicePicker = true },
+            )
 
             TcSectionLabel("关于")
             TcListRow(title = "版本", subtitle = "0.1.0-m0", onClick = onOpenAbout)
@@ -85,7 +95,38 @@ fun SettingsScreen(
             TcListRow(title = "帮助与反馈", onClick = {})
         }
     }
+
+    if (voicePicker) {
+        AlertDialog(
+            onDismissRequest = { voicePicker = false },
+            title = { Text("朗读音色") },
+            text = {
+                Column {
+                    TtsVoice.entries.forEach { voice ->
+                        TcListRow(
+                            title = voice.displayLabel,
+                            subtitle = if (voice == ttsVoice) "当前" else null,
+                            onClick = {
+                                onSelectTtsVoice(voice)
+                                voicePicker = false
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { voicePicker = false }) { Text("关闭") }
+            },
+        )
+    }
 }
+
+/** 官方两个音色的中文名（`stella` 海星女声 / `tide` 暗潮男声）。 */
+private val TtsVoice.displayLabel: String
+    get() = when (this) {
+        TtsVoice.STELLA -> "海星（女）"
+        TtsVoice.TIDE -> "暗潮（男）"
+    }
 
 /** 服务商与 API Key（docs/02 §12.6）。M0 只有壳。 */
 @Composable

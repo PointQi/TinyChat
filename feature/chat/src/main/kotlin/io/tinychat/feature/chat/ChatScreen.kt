@@ -1,27 +1,37 @@
 package io.tinychat.feature.chat
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -71,7 +81,10 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,11 +92,16 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -103,6 +121,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
+import io.tinychat.audio.SpectrumAnalyser
 import io.tinychat.designsystem.BubbleShape
 import io.tinychat.designsystem.TcFavicon
 import io.tinychat.designsystem.TcIcons
@@ -161,6 +181,18 @@ fun ChatScreen(
     onRetryAttachment: (ChatMessage) -> Unit,
     /** 图片快捷提问：带着当前附件直接发送 */
     onQuickSend: (String) -> Unit,
+    /** 频谱数据（录音时画竖条，帧循环里直接读，不参与重组） */
+    spectrum: SpectrumAnalyser,
+    /** 麦克风 ↔ 键盘切换 */
+    onToggleVoiceMode: () -> Unit,
+    /** 按下「按住说话」 */
+    onVoicePress: () -> Unit,
+    /** 松手；参数 true = 上滑取消（丢掉这段录音），false = 正常结束去识别 */
+    onVoiceRelease: (Boolean) -> Unit,
+    /** 操作栏「朗读」：同一条再点 = 停止 */
+    onReadAloud: (ChatMessage) -> Unit,
+    /** 语音相关的一次性提示（录音太短/没识别出内容/朗读失败）已弹过 */
+    onClearHint: () -> Unit,
 ) {
     val palette = TcTheme.palette
     val context = LocalContext.current
@@ -206,6 +238,33 @@ fun ChatScreen(
         }.getOrDefault(false)
     }
 
+    // —— 麦克风权限（M5）：Android 6+ 运行时权限，第一次进语音模式才要 ——
+    val micPermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            onToggleVoiceMode()
+        } else {
+            Toast.makeText(context, "无法使用麦克风，请在系统设置里允许录音", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val onMicClick: () -> Unit = {
+        when {
+            state.voiceMode -> onToggleVoiceMode()
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED -> onToggleVoiceMode()
+
+            else -> runCatching { micPermission.launch(Manifest.permission.RECORD_AUDIO) }
+        }
+    }
+
+    // 语音/朗读的一次性提示（未识别到语音内容、朗读失败……）
+    LaunchedEffect(state.hint) {
+        val hint = state.hint ?: return@LaunchedEffect
+        Toast.makeText(context, hint, Toast.LENGTH_SHORT).show()
+        onClearHint()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -215,10 +274,12 @@ fun ChatScreen(
             leading = { TcIconButton(TcIcons.Menu, "会话列表", onOpenDrawer) },
             title = state.title,
             trailing = {
+                // 顶栏播音键 = **自动朗读开关**，开着时染品牌色（否则两个状态长得一样）
                 TcIconButton(
                     icon = TcIcons.Speak,
                     contentDescription = if (autoSpeak) "关闭自动朗读" else "开启自动朗读",
                     onClick = onToggleAutoSpeak,
+                    tint = if (autoSpeak) palette.brand else palette.labelSecondary,
                 )
                 TcIconButton(TcIcons.PlusCircle, "新建对话", onNewChat)
             },
@@ -237,6 +298,7 @@ fun ChatScreen(
                 onContinue = onContinue,
                 onRetry = onRetry,
                 onRetryAttachment = onRetryAttachment,
+                onReadAloud = onReadAloud,
             )
         }
 
@@ -292,6 +354,10 @@ fun ChatScreen(
                     runCatching { cameraPicker.launch(uri) }
                 }
             },
+            spectrum = spectrum,
+            onMicClick = onMicClick,
+            onVoicePress = onVoicePress,
+            onVoiceRelease = onVoiceRelease,
         )
 
         if (state.messages.isNotEmpty()) {
@@ -346,6 +412,7 @@ private fun MessageList(
     onContinue: (ChatMessage) -> Unit,
     onRetry: (ChatMessage) -> Unit,
     onRetryAttachment: (ChatMessage) -> Unit,
+    onReadAloud: (ChatMessage) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -406,6 +473,8 @@ private fun MessageList(
                     onContinue = if (!message.isUser && isLatest && message.canContinue) ({ onContinue(message) }) else null,
                     onRetry = { onRetry(message) },
                     onRetryAttachment = { onRetryAttachment(message) },
+                    isSpeaking = state.speakingMessageId == message.id,
+                    onReadAloud = { onReadAloud(message) },
                 )
             }
         }
@@ -454,6 +523,9 @@ private fun MessageRow(
     onContinue: (() -> Unit)?,
     onRetry: () -> Unit,
     onRetryAttachment: () -> Unit,
+    /** 这条正在朗读（图标换成跳动的横条） */
+    isSpeaking: Boolean,
+    onReadAloud: () -> Unit,
 ) {
     val palette = TcTheme.palette
 
@@ -605,12 +677,27 @@ private fun MessageRow(
                                 copied = true
                             },
                         )
-                        // 朗读占位：官方在 M5-4 才接 TTS，这里先做成点了没反应
-                        ActionIcon(
-                            icon = TcIcons.Speak,
-                            description = "朗读",
-                            onClick = {},
-                        )
+                        // 朗读（M5-4）：点了开始读本条，朗读中图标变成跳动的横条，再点停止
+                        if (isSpeaking) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(onClick = onReadAloud),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                ReadingBars(
+                                    modifier = Modifier.size(width = 14.dp, height = 12.dp),
+                                    tint = palette.brand,
+                                )
+                            }
+                        } else {
+                            ActionIcon(
+                                icon = TcIcons.Speak,
+                                description = "朗读",
+                                onClick = onReadAloud,
+                            )
+                        }
                         ActionIcon(
                             icon = TcIcons.Share,
                             description = "分享",
@@ -848,6 +935,202 @@ private fun SourceCapsule(
             style = TcTypography.bodySmall,
             color = palette.labelSecondary,
         )
+    }
+}
+
+/**
+ * 录音频谱行（M5-2）：2dp 竖条 + 3dp 间距，根数按可用宽度自适应（同 chat-demo）。
+ *
+ * 性能：每帧只让 **draw 阶段**失效（在 Canvas 的绘制 lambda 里读一下帧号），
+ * 不重组、不分配数组——柱高来自 `SpectrumAnalyser` 复用的 FloatArray。
+ */
+@Composable
+private fun SpectrumRow(
+    spectrum: SpectrumAnalyser,
+    modifier: Modifier = Modifier,
+    seconds: Int = 0,
+) {
+    val palette = TcTheme.palette
+    val frame = remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameNanos { }
+            frame.intValue++
+        }
+    }
+
+    Row(
+        modifier = modifier.height(32.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BoxWithConstraints(modifier = Modifier.weight(1f)) {
+            // 手机宽度算下来 60 根左右，与 chat-demo 一致
+            val bars = ((maxWidth.value + BAR_GAP_DP) / (BAR_WIDTH_DP + BAR_GAP_DP))
+                .toInt()
+                .coerceIn(4, SpectrumAnalyser.MAX_BANDS)
+            LaunchedEffect(bars) { spectrum.resize(bars) }
+
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                frame.intValue // 读帧号：只让绘制阶段失效，不触发重组
+                val levels = spectrum.levels
+                val barWidth = BAR_WIDTH_DP.dp.toPx()
+                val gap = BAR_GAP_DP.dp.toPx()
+                val minHeight = BAR_MIN_DP.dp.toPx()
+                val maxHeight = BAR_MAX_DP.dp.toPx()
+                val centerY = size.height / 2f
+                val count = minOf(levels.size, ((size.width + gap) / (barWidth + gap)).toInt())
+                for (index in 0 until count) {
+                    val level = levels[index].coerceIn(0f, 1f)
+                    val height = minHeight + (maxHeight - minHeight) * level
+                    drawRoundRect(
+                        color = palette.brand,
+                        topLeft = Offset(index * (barWidth + gap), centerY - height / 2f),
+                        size = Size(barWidth, height),
+                        cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+                    )
+                }
+            }
+        }
+        if (seconds > 0) {
+            Text(
+                text = "${seconds}s",
+                style = TcTypography.labelMedium,
+                color = palette.labelTertiary,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 语音模式的输入区：居中「按住说话」，按下即录、松手即识别并发送；
+ * **按住时上滑超过阈值 = 取消**（早期微信的交互）。
+ *
+ * ⚠️ 手势**不能**以录音状态为 key：状态一变就会重启 `pointerInput`，
+ * 正在按住的这次手势会被取消（现象是"一按下马上就收掉"）。所以 key 固定为 Unit，
+ * 状态靠 `rememberUpdatedState` 取最新值。
+ */
+@Composable
+private fun VoiceHoldArea(
+    status: VoiceStatus,
+    onPress: () -> Unit,
+    onRelease: (cancelled: Boolean) -> Unit,
+) {
+    val palette = TcTheme.palette
+    val idle by rememberUpdatedState(status == VoiceStatus.IDLE)
+    val press by rememberUpdatedState(onPress)
+    val release by rememberUpdatedState(onRelease)
+    var cancelArmed by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .pointerInput(Unit) {
+                val threshold = CANCEL_SLIDE_DP.dp.toPx()
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (!idle) return@awaitEachGesture
+                    press()
+                    var cancelled = false
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.changedToUp()) break
+                            val dx = change.position.x - down.position.x
+                            val dy = change.position.y - down.position.y
+                            // 主要往上滑才算取消：横向滑动不误判
+                            val armed = dy < -threshold && dy < -kotlin.math.abs(dx)
+                            if (armed != cancelled) {
+                                cancelled = armed
+                                cancelArmed = armed
+                            }
+                            change.consume()
+                        }
+                    } finally {
+                        // 手势被系统打断也要收尾，否则录音线程会一直录下去
+                        cancelArmed = false
+                        release(cancelled)
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = when {
+                    status == VoiceStatus.TRANSCRIBING -> "识别中…"
+                    cancelArmed -> "松开取消"
+                    status == VoiceStatus.RECORDING -> "松开发送"
+                    else -> "按住说话"
+                },
+                style = TcTypography.bodyLarge,
+                color = when {
+                    cancelArmed -> palette.danger
+                    status == VoiceStatus.RECORDING -> palette.brand
+                    else -> palette.labelTertiary
+                },
+            )
+            if (status == VoiceStatus.RECORDING && !cancelArmed) {
+                Text(
+                    text = "上滑取消",
+                    style = TcTypography.labelMedium,
+                    color = palette.labelTertiary,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+    }
+}
+
+private const val CANCEL_SLIDE_DP = 56
+
+private const val BAR_WIDTH_DP = 2
+private const val BAR_GAP_DP = 3
+private const val BAR_MIN_DP = 5
+private const val BAR_MAX_DP = 28
+
+/**
+ * 朗读中替代播放三角的三根跳动横条（chat-demo 的 `ReadingBars`）。
+ *
+ * 纯装饰：不反映音量，只是"正在出声"的指示，所以用固定相位错开的循环动画。
+ */
+@Composable
+private fun ReadingBars(
+    modifier: Modifier = Modifier,
+    tint: Color,
+) {
+    val transition = rememberInfiniteTransition(label = "reading-bars")
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(3) { index ->
+            val height by transition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(
+                        durationMillis = 520,
+                        delayMillis = index * 120,
+                        easing = FastOutSlowInEasing,
+                    ),
+                    repeatMode = RepeatMode.Reverse,
+                ),
+                label = "bar-$index",
+            )
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .fillMaxHeight(height)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(tint),
+            )
+        }
     }
 }
 
@@ -1166,6 +1449,14 @@ private fun InputCard(
     onTakePhoto: () -> Unit,
     /** 图片快捷提问：点一下就用这句话 + 当前附件直接发出去 */
     onQuickSend: (String) -> Unit,
+    /** 录音频谱（录音时画竖条） */
+    spectrum: SpectrumAnalyser,
+    /** 右下角麦克风 / 键盘：进/出语音模式（含权限申请） */
+    onMicClick: () -> Unit,
+    /** 按住「按住说话」开始录音 */
+    onVoicePress: () -> Unit,
+    /** 松手：停录并识别（cancelled = 上滑取消，丢掉这段） */
+    onVoiceRelease: (Boolean) -> Unit,
 ) {
     val palette = TcTheme.palette
     val dark = isSystemInDarkTheme()
@@ -1275,31 +1566,51 @@ private fun InputCard(
             }
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(end = 4.dp),
-        ) {
-            if (state.input.isEmpty()) {
-                Text(
-                    text = "发消息或按住说话",
-                    style = TcTypography.bodyLarge,
-                    color = palette.labelTertiary,
-                )
-            }
-            BasicTextField(
-                value = fieldValue,
-                onValueChange = { newValue ->
-                    fieldValue = newValue
-                    onInputChange(newValue.text)
-                },
-                textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
-                cursorBrush = SolidColor(palette.brand),
+        // 录音频谱行（M5-2）：只在录音时出现，占输入框上方一行
+        if (state.voiceStatus == VoiceStatus.RECORDING) {
+            SpectrumRow(
+                spectrum = spectrum,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusRequester(inputFocus),
-                maxLines = 8,
+                    .padding(bottom = 6.dp),
+                seconds = state.voiceSeconds,
             )
+        }
+
+        if (state.voiceMode) {
+            // 语音模式：输入框位置整块变成居中的「按住说话」（官方交互，不弹输入法）
+            VoiceHoldArea(
+                status = state.voiceStatus,
+                onPress = onVoicePress,
+                onRelease = onVoiceRelease,
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(end = 4.dp),
+            ) {
+                if (state.input.isEmpty()) {
+                    Text(
+                        text = "发消息或按住说话",
+                        style = TcTypography.bodyLarge,
+                        color = palette.labelTertiary,
+                    )
+                }
+                BasicTextField(
+                    value = fieldValue,
+                    onValueChange = { newValue ->
+                        fieldValue = newValue
+                        onInputChange(newValue.text)
+                    },
+                    textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
+                    cursorBrush = SolidColor(palette.brand),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(inputFocus),
+                    maxLines = 8,
+                )
+            }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -1323,9 +1634,20 @@ private fun InputCard(
             }
             when {
                 state.isStreaming -> CircleIcon(TcIcons.Stop, "停止生成", palette.brand, filled = true, onClick = onStop)
+                state.voiceMode -> when (state.voiceStatus) {
+                    // 识别中：转圈，点一下取消
+                    VoiceStatus.TRANSCRIBING -> CircleIcon(
+                        TcIcons.Keyboard,
+                        "取消识别并回到键盘输入",
+                        palette.labelSecondary,
+                        onClick = onMicClick,
+                    )
+                    // 语音模式：键盘图标（再点回文字输入）
+                    else -> CircleIcon(TcIcons.Keyboard, "切换到键盘输入", palette.labelSecondary, onClick = onMicClick)
+                }
                 state.input.isNotBlank() || state.attachments.isNotEmpty() ->
                     CircleIcon(TcIcons.Send, "发送", palette.brand, filled = true, onClick = onSend)
-                else -> CircleIcon(TcIcons.Mic, "语音输入", palette.labelSecondary) {}
+                else -> CircleIcon(TcIcons.Mic, "语音输入", palette.labelSecondary, onClick = onMicClick)
             }
         }
     }

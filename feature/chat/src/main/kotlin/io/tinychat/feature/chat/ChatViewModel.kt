@@ -14,6 +14,10 @@ import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.chat.RunOutcome
 import io.tinychat.data.db.FragmentEntity
 import io.tinychat.data.db.MessageWithFragments
+import io.tinychat.data.settings.UserSettings
+import io.tinychat.audio.PlaybackStopped
+import io.tinychat.feature.chat.voice.VoiceController
+import io.tinychat.feature.chat.voice.VoiceEvent
 import io.tinychat.model.AttachmentState
 import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.BranchNode
@@ -31,13 +35,17 @@ import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ToolFindPayload
 import io.tinychat.model.ToolOpenPayload
 import io.tinychat.model.ToolSearchPayload
+import io.tinychat.model.TtsVoice
 import io.tinychat.model.versionPointer
+import io.tinychat.net.speech.SpeechException
 import io.tinychat.net.transport.ChatException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.contentOrNull
@@ -210,6 +218,22 @@ data class ChatUiState(
     val searchEnabled: Boolean = false,
     /** 非空 = 正在编辑这条用户消息 */
     val editingMessageId: Long? = null,
+
+    // ---- 语音（M5）----
+
+    /** 语音输入模式：输入框变成居中的「按住说话」，右下角按钮变成键盘 */
+    val voiceMode: Boolean = false,
+    val voiceStatus: VoiceStatus = VoiceStatus.IDLE,
+    /** 本次录音已经录了几秒（录音中才递增） */
+    val voiceSeconds: Int = 0,
+    /** 正在朗读哪条回答；null = 没在读 */
+    val speakingMessageId: Long? = null,
+    /** 顶栏喇叭开关（持久化）：开着就自动朗读每条新回答 */
+    val autoSpeak: Boolean = false,
+    /** 朗读音色（持久化，只有官方两个） */
+    val ttsVoice: TtsVoice = TtsVoice.STELLA,
+    /** 一次性提示（未识别到语音内容等）；UI 弹完调 clearHint */
+    val hint: String? = null,
 ) {
     /** 当前模型能不能收图片（v4-pro 不支持，M4-6） */
     val canAttachImage: Boolean
@@ -223,6 +247,11 @@ data class ChatUiState(
 }
 
 /**
+ * 语音输入的三个状态，对应官方交互：按住（RECORDING）→ 松手识别（TRANSCRIBING）→ 直接发送。
+ */
+enum class VoiceStatus { IDLE, RECORDING, TRANSCRIBING }
+
+/**
  * 会话页状态机。发送/停止、底栏模型与强度都在这里收口。
  * 停止 = `job.cancel()`，取消会一路传到 OkHttp 的 `call.cancel()`。
  */
@@ -231,6 +260,10 @@ class ChatViewModel(
     private val apiKey: String,
     /** 附件落盘（M4）：选完文件后先读元信息 + 生成缩略图 */
     private val attachmentStore: AttachmentStore,
+    /** 语音（M5）：录音、频谱、ASR、TTS 播放 */
+    private val voice: VoiceController,
+    /** 自动朗读 / 朗读音色的持久化 */
+    private val settings: UserSettings,
 ) : ViewModel() {
 
     var state by mutableStateOf(ChatUiState())
@@ -246,8 +279,18 @@ class ChatViewModel(
     private var job: Job? = null
     private var observing: Job? = null
     private var searchJob: Job? = null
+    private var speakingJob: Job? = null
+    private var transcribeJob: Job? = null
+    private var voiceTicker: Job? = null
+    private var voiceStartedAt = 0L
+
+    /** 本轮生成结束后要不要自动朗读（开关是全局的，但只在"自己发起的这一轮"才读）。 */
+    private var autoSpeakPending = false
 
     val hasApiKey: Boolean get() = apiKey.isNotBlank()
+
+    /** 频谱数据（Canvas 直接在帧循环里读，不参与重组）。 */
+    val spectrum get() = voice.spectrum
 
     init {
         viewModelScope.launch {
@@ -262,12 +305,46 @@ class ChatViewModel(
                 )
             }
         }
+        viewModelScope.launch {
+            settings.autoSpeak.distinctUntilChanged().collect { enabled ->
+                state = state.copy(autoSpeak = enabled)
+            }
+        }
+        viewModelScope.launch {
+            settings.ttsVoice.distinctUntilChanged().collect { voice ->
+                state = state.copy(ttsVoice = voice)
+            }
+        }
+        viewModelScope.launch {
+            voice.events.collect { event ->
+                when (event) {
+                    VoiceEvent.RecordingLimitReached -> {
+                        if (state.voiceStatus == VoiceStatus.RECORDING) {
+                            finishVoiceRecording()
+                            state = state.copy(hint = "已达到单次录音时长上限")
+                        }
+                    }
+
+                    VoiceEvent.PlaybackFinished -> {
+                        // 主动停止时我们自己也清过，这里只管"真播完了"
+                        if (speakingJob?.isActive != true) state = state.copy(speakingMessageId = null)
+                    }
+
+                    // 来电/别人抢焦点：AudioTrack 已自行暂停，按钮保持"朗读中"，用户可再点停止
+                    VoiceEvent.PlaybackPaused -> Unit
+
+                    VoiceEvent.PlaybackNoisy -> stopSpeaking()
+                }
+            }
+        }
     }
 
     /** 抽屉里点一条会话 */
     fun openSession(id: String) {
         if (id == sessionId) return
         job?.cancel()
+        stopSpeaking()
+        autoSpeakPending = false
         sessionId = id
         state = state.copy(
             isStreaming = false,
@@ -461,6 +538,9 @@ class ChatViewModel(
 
         val editingId = state.editingMessageId
         val sendingAttachments = drafts
+        // 新问题开始 = 停止正在读的上一条（chat-demo 同款行为）
+        stopSpeaking()
+        autoSpeakPending = state.autoSpeak
         state = state.copy(
             input = "",
             attachments = emptyList(),
@@ -544,6 +624,8 @@ class ChatViewModel(
         val id = sessionId ?: return
         if (state.isStreaming || message.isUser) return
 
+        stopSpeaking()
+        autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
@@ -566,6 +648,8 @@ class ChatViewModel(
         val id = sessionId ?: return
         if (state.isStreaming || message.isUser || !message.canContinue) return
 
+        stopSpeaking()
+        autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
@@ -609,6 +693,8 @@ class ChatViewModel(
     fun newChat() {
         job?.cancel()
         observing?.cancel()
+        stopSpeaking()
+        autoSpeakPending = false
         sessionId = null
         // 草稿附件的缩略图要跟着清掉，别在磁盘上留垃圾
         state.attachments.forEach { runCatching { attachmentStore.delete(it.id, null) } }
@@ -617,6 +703,9 @@ class ChatViewModel(
             effort = state.effort,
             thinkingEnabled = state.thinkingEnabled,
             searchEnabled = state.searchEnabled,
+            // 这两个是全局设置，开新对话不能跟着重置
+            autoSpeak = state.autoSpeak,
+            ttsVoice = state.ttsVoice,
         )
     }
 
@@ -654,6 +743,8 @@ class ChatViewModel(
         val id = sessionId ?: return
         if (state.isStreaming) return
 
+        stopSpeaking()
+        autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null, errorKind = null)
         job = viewModelScope.launch {
             try {
@@ -687,6 +778,185 @@ class ChatViewModel(
             effort = state.effort,
             model = state.modelId,
         )
+    }
+
+    // ---------------- 语音输入（M5） ----------------
+
+    /**
+     * 右下角按钮：文字模式点麦克风进语音模式；语音模式点键盘回文字模式。
+     *
+     * 官方交互：进入语音模式后输入框整块变成居中的「按住说话」，**不弹输入法**。
+     */
+    fun toggleVoiceMode() {
+        if (state.isStreaming) return
+        if (state.voiceMode) {
+            exitVoiceMode()
+        } else {
+            state = state.copy(voiceMode = true, editingMessageId = null)
+        }
+    }
+
+    fun exitVoiceMode() {
+        if (state.voiceStatus == VoiceStatus.RECORDING) {
+            voice.cancelRecording()
+            stopVoiceTicker()
+        }
+        transcribeJob?.cancel()
+        transcribeJob = null
+        state = state.copy(voiceMode = false, voiceStatus = VoiceStatus.IDLE, voiceSeconds = 0)
+    }
+
+    /** 按下「按住说话」。 */
+    fun startVoiceRecording() {
+        if (!state.voiceMode || state.voiceStatus != VoiceStatus.IDLE || state.isStreaming) return
+        try {
+            voice.startRecording()
+        } catch (error: SecurityException) {
+            state = state.copy(voiceMode = false, hint = "无法使用麦克风，请检查权限后重试")
+            return
+        } catch (error: Exception) {
+            state = state.copy(voiceMode = false, hint = "无法开始录音，请稍后重试")
+            return
+        }
+        voiceStartedAt = System.currentTimeMillis()
+        state = state.copy(voiceStatus = VoiceStatus.RECORDING, voiceSeconds = 0)
+        startVoiceTicker()
+    }
+
+    /**
+     * 松手：停录 → 识别 → **直接发送**（官方行为，不经过输入框）。
+     *
+     * 没录到 / 太短 / 没识别出内容都只弹提示，不发送、不改输入框。
+     */
+    fun finishVoiceRecording() {
+        if (state.voiceStatus != VoiceStatus.RECORDING) return
+        stopVoiceTicker()
+        val audio = voice.stopRecording()
+        if (audio == null || audio.durationMs < MIN_VOICE_MS) {
+            state = state.copy(voiceStatus = VoiceStatus.IDLE, voiceSeconds = 0, hint = "未识别到语音内容")
+            return
+        }
+        state = state.copy(voiceStatus = VoiceStatus.TRANSCRIBING, voiceSeconds = 0)
+        transcribeJob = viewModelScope.launch {
+            try {
+                val text = voice.transcribe(apiKey, audio)
+                if (text.isBlank()) {
+                    state = state.copy(hint = "未识别到语音内容")
+                } else {
+                    quickSend(text)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: SpeechException) {
+                state = state.copy(hint = error.failure.userMessage)
+            } catch (error: Exception) {
+                state = state.copy(hint = "语音识别失败，请稍后再试")
+            } finally {
+                if (state.voiceStatus == VoiceStatus.TRANSCRIBING) {
+                    state = state.copy(voiceStatus = VoiceStatus.IDLE)
+                }
+            }
+        }
+    }
+
+    /** 识别中又点了键盘图标：丢弃这次结果。 */
+    fun cancelVoiceTranscribe() {
+        transcribeJob?.cancel()
+        transcribeJob = null
+        state = state.copy(voiceStatus = VoiceStatus.IDLE)
+    }
+
+    /** 按住说话时上滑取消：丢掉这段录音，什么都不发。 */
+    fun cancelVoiceRecording() {
+        if (state.voiceStatus != VoiceStatus.RECORDING) return
+        stopVoiceTicker()
+        voice.cancelRecording()
+        state = state.copy(voiceStatus = VoiceStatus.IDLE, voiceSeconds = 0)
+    }
+
+    private fun startVoiceTicker() {
+        voiceTicker?.cancel()
+        voiceTicker = viewModelScope.launch {
+            while (isActive && state.voiceStatus == VoiceStatus.RECORDING) {
+                delay(500)
+                if (state.voiceStatus == VoiceStatus.RECORDING) {
+                    state = state.copy(
+                        voiceSeconds = ((System.currentTimeMillis() - voiceStartedAt) / 1000).toInt(),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun stopVoiceTicker() {
+        voiceTicker?.cancel()
+        voiceTicker = null
+    }
+
+    // ---------------- 朗读（M5-4） ----------------
+
+    /** 操作栏「朗读」：同一条再点一次 = 停止。 */
+    fun toggleSpeak(message: ChatMessage) {
+        if (state.speakingMessageId == message.id) {
+            stopSpeaking()
+            return
+        }
+        if (message.isUser || message.text.isBlank()) return
+        speak(message.id, message.text)
+    }
+
+    fun stopSpeaking() {
+        speakingJob?.cancel()
+        speakingJob = null
+        voice.stopPlayback()
+        state = state.copy(speakingMessageId = null)
+    }
+
+    private fun speak(messageId: Long, text: String) {
+        stopSpeaking()
+        state = state.copy(speakingMessageId = messageId)
+        val voiceId = state.ttsVoice
+        speakingJob = viewModelScope.launch {
+            try {
+                voice.play(apiKey, text, voiceId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: PlaybackStopped) {
+                // 用户主动停止：原本就是它想要的，不提示
+            } catch (error: SpeechException) {
+                state = state.copy(speakingMessageId = null, hint = error.failure.userMessage)
+            } catch (error: Exception) {
+                state = state.copy(speakingMessageId = null, hint = "朗读失败，请稍后再试")
+            } finally {
+                if (state.speakingMessageId == messageId) state = state.copy(speakingMessageId = null)
+            }
+        }
+    }
+
+    /** 顶栏喇叭开关；关掉时立刻停掉正在读的那条。 */
+    fun setAutoSpeak(enabled: Boolean) {
+        state = state.copy(autoSpeak = enabled)
+        viewModelScope.launch { settings.setAutoSpeak(enabled) }
+        if (!enabled) stopSpeaking()
+    }
+
+    fun setTtsVoice(voice: TtsVoice) {
+        state = state.copy(ttsVoice = voice)
+        viewModelScope.launch { settings.setTtsVoice(voice) }
+    }
+
+    /** 提示弹过了，清掉（否则同一句不会再弹）。 */
+    fun clearHint() {
+        state = state.copy(hint = null)
+    }
+
+    /** 本轮生成结束：开关开着就自动朗读最后一条回答（只读自己发起的那一轮）。 */
+    private fun maybeAutoSpeak(messages: List<ChatMessage>) {
+        if (!autoSpeakPending) return
+        val last = messages.lastOrNull() ?: return
+        if (last.isUser || last.status != MessageStatus.FINISHED || last.text.isBlank()) return
+        autoSpeakPending = false
+        speak(last.id, last.text)
     }
 
     private fun observe(id: String) {
@@ -728,6 +998,8 @@ class ChatViewModel(
                         },
                         title = session?.title,
                     )
+                    // 自动朗读：等这一轮真的落成 FINISHED 再读，别读半截
+                    maybeAutoSpeak(state.messages)
                 }
         }
     }
@@ -997,12 +1269,17 @@ private fun StringBuilder.trimmedEnd(): Int {
     }
 
     companion object {
+        /** 短于这个时长直接当"没说话"（省一次请求，也符合直觉：点一下就松手不算）。 */
+        private const val MIN_VOICE_MS = 600L
+
         fun factory(
             repository: ChatRepository,
             apiKey: String,
             attachmentStore: AttachmentStore,
+            voice: VoiceController,
+            settings: UserSettings,
         ) = viewModelFactory {
-            initializer { ChatViewModel(repository, apiKey, attachmentStore) }
+            initializer { ChatViewModel(repository, apiKey, attachmentStore, voice, settings) }
         }
     }
 }
