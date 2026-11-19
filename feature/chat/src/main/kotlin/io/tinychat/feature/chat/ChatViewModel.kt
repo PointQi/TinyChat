@@ -102,11 +102,22 @@ data class ChatAttachment(
     val height: Int?,
     /** 缩略图绝对路径；导入的老数据没有原件时为 null */
     val thumbPath: String?,
+    /** 原件本地路径；有原件但没缩略图时（早期导入的数据）可以退回来按需解码 */
+    val localPath: String? = null,
     val state: AttachmentState,
 ) {
     val isMissing: Boolean get() = state == AttachmentState.MISSING
     val isFailed: Boolean get() = state == AttachmentState.FAILED
-    val isUploading: Boolean get() = state == AttachmentState.UPLOADING || state == AttachmentState.LOCAL
+
+    /**
+     * 只有**正在上传**才算"上传中"。
+     * ⚠️ `LOCAL` 只是"原件在本机、还没传"——导入的历史附件永远停在这个状态，
+     * 早期把 LOCAL 也算进来，结果导入的图片一直在转圈。
+     */
+    val isUploading: Boolean get() = state == AttachmentState.UPLOADING
+
+    /** 画图时用的路径：优先缩略图，其次原件 */
+    val imagePath: String? get() = thumbPath ?: localPath
 
     /** 「1.2 MB」这种，列表里只显示大小 */
     val sizeText: String get() = formatBytes(size)
@@ -741,6 +752,7 @@ class ChatViewModel(
                     height = entity.height,
                     thumbPath = attachmentStore.thumbFile(entity.id)
                         .takeIf { it.isFile }?.absolutePath,
+                    localPath = entity.localPath,
                     state = entity.state,
                 )
             }
@@ -840,6 +852,28 @@ class ChatViewModel(
             }
         }
         val text = textBuilder.toString()
+
+        // v3 导出包里**没有** citations 字段（真样本 11643 个 RESPONSE 碎片里 0 个带），
+        // 所以导入的历史没有正文角标；但搜索结果还在 TOOL_SEARCH 里，
+        // 末尾的「N 个网页」胶囊按它补，否则历史联网对话看着像没搜过。
+        if (sources.isEmpty() && searchByUrl.isNotEmpty()) {
+            val seen = HashSet<String>()
+            searchByUrl.values.forEach { result ->
+                if (result.url.isBlank() || !seen.add(result.url)) return@forEach
+                val host = runCatching { java.net.URI(result.url).host }.getOrNull()
+                    ?.removePrefix("www.")
+                sources += ChatSource(
+                    index = sources.size + 1,
+                    title = result.title,
+                    url = result.url,
+                    site = result.siteName ?: host.orEmpty(),
+                    iconUrl = result.siteIcon
+                        ?: host?.let { "https://cdn.deepseek.com/site-icons/$it" },
+                    publishedAt = result.publishedAt,
+                    snippet = result.snippet,
+                )
+            }
+        }
 
         val timeline = buildTimeline(fragments)
         if (text.isBlank() && timeline.isEmpty()) return null

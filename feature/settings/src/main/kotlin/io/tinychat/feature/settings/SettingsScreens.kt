@@ -15,7 +15,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +31,7 @@ import io.tinychat.ui.TcListRow
 import io.tinychat.ui.TcSectionLabel
 import io.tinychat.ui.TcTopBar
 import io.tinychat.model.PromptPreset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** 设置树（docs/02 §12.5）。M0 只有导航与占位项。 */
@@ -125,11 +125,37 @@ fun DataManagementScreen(
     var status by remember { mutableStateOf<String?>(null) }
     var confirmImport by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
-    var pendingUri by remember { mutableStateOf<Uri?>(null) }
+
+    /**
+     * 导入必须从**回调里直接 launch**，不能像之前那样「先存 pendingUri 再 LaunchedEffect」：
+     * 那样在 effect 里把 key 置空会让 Compose 立刻取消这个协程，导入刚开始就被掐断，
+     * 而取消异常又被 `catch (e: Exception)` 吞成一句「The coroutine scope left the composition」。
+     */
+    fun startImport(uri: Uri) {
+        if (busy) return
+        busy = true
+        status = "正在导入…"
+        scope.launch {
+            try {
+                val report = archive.import(uri)
+                status = "已导入 ${report.sessions} 个会话、${report.messages} 条消息、" +
+                    "${report.files} 个附件（丢弃 ${report.droppedFragments} 条提示碎片，" +
+                    "用时 ${report.durationMs / 1000}s）"
+                onImported()
+            } catch (e: CancellationException) {
+                // 离开页面时被取消很正常，别当成"导入失败"显示给用户
+                throw e
+            } catch (e: Exception) {
+                status = "导入失败：${e.message ?: e::class.simpleName}"
+            } finally {
+                busy = false
+            }
+        }
+    }
 
     val importPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
-    ) { uri -> pendingUri = uri }
+    ) { uri -> if (uri != null) startImport(uri) }
 
     val exportPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
@@ -145,29 +171,13 @@ fun DataManagementScreen(
                 }
                 status = "已导出 ${report.sessions} 个会话、${report.messages} 条消息，" +
                     "${formatSize(report.bytes)}（用时 ${report.durationMs / 1000}s）"
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 status = "导出失败：${e.message ?: e::class.simpleName}"
             } finally {
                 busy = false
             }
-        }
-    }
-
-    LaunchedEffect(pendingUri) {
-        val uri = pendingUri ?: return@LaunchedEffect
-        pendingUri = null
-        busy = true
-        status = "正在导入…"
-        try {
-            val report = archive.import(uri)
-            status = "已导入 ${report.sessions} 个会话、${report.messages} 条消息、" +
-                "${report.files} 个附件（丢弃 ${report.droppedFragments} 条提示碎片，" +
-                "用时 ${report.durationMs / 1000}s）"
-            onImported()
-        } catch (e: Exception) {
-            status = "导入失败：${e.message ?: e::class.simpleName}"
-        } finally {
-            busy = false
         }
     }
 

@@ -98,7 +98,9 @@ class AttachmentStore(private val context: Context) {
             val bounds = decodeBounds(uri)
             width = bounds?.first
             height = bounds?.second
-            thumbPath = runCatching { writeThumb(id, uri) }.getOrNull()?.absolutePath
+            thumbPath = runCatching {
+                writeThumb(id) { context.contentResolver.openInputStream(uri) }
+            }.getOrNull()?.absolutePath
         }
 
         return PickedFile(
@@ -162,6 +164,15 @@ class AttachmentStore(private val context: Context) {
         return file.isFile && file.length() > 0
     }
 
+    /**
+     * 给一个**已在磁盘上的**图片补缩略图（导入路径用：导入只拷原件，不生成缩略图，
+     * 消息列表就会退化成"每次都解码原图"甚至占位图）。
+     */
+    fun writeThumbFromFile(id: String, source: File): File? {
+        if (!source.isFile) return null
+        return runCatching { writeThumb(id) { source.inputStream() } }.getOrNull()
+    }
+
     // —— 内部 ——
 
     private fun decodeBounds(uri: Uri): Pair<Int, Int>? = runCatching {
@@ -170,17 +181,19 @@ class AttachmentStore(private val context: Context) {
         if (options.outWidth > 0 && options.outHeight > 0) options.outWidth to options.outHeight else null
     }.getOrNull()
 
-    /** 缩略图：短边按 2 的幂降采样后再压到最长边 512px */
-    private fun writeThumb(id: String, uri: Uri): File? {
-        val bounds = decodeBounds(uri) ?: return null
+    /** 缩略图：按 2 的幂降采样后压到最长边 512px */
+    private fun writeThumb(id: String, open: () -> InputStream?): File? {
+        val bounds = open()?.use { stream ->
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeStream(stream, null, options)
+            if (options.outWidth > 0) options.outWidth to options.outHeight else null
+        } ?: return null
         val longest = maxOf(bounds.first, bounds.second)
         var sample = 1
         while (longest / (sample * 2) >= THUMB_MAX_PX) sample *= 2
 
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bitmap = context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, options)
-        } ?: return null
+        val bitmap = open()?.use { BitmapFactory.decodeStream(it, null, options) } ?: return null
 
         val scaled = if (maxOf(bitmap.width, bitmap.height) > THUMB_MAX_PX) {
             val ratio = THUMB_MAX_PX.toFloat() / maxOf(bitmap.width, bitmap.height)

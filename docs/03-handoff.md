@@ -727,6 +727,18 @@ total diff sessions 0 => PASS
 
 **清空所有对话（M6-6，已验）**：设置 → 数据管理 → 清空所有对话 → 二次确认。实现顺序是**先删附件文件、再删行**（行没了就找不到 `local_path`，文件会变成永远清不掉的垃圾），一次 `attachmentDao().all()` 查出全库附件，不逐会话查库。模拟器实测：3340 会话清空后 `sessions`/`messages` 归零、`files/attachments` 与 `files/thumbs` 清空。
 
+**真机（FIN-AL60 / Android 12）首轮测试发现并修掉的 4 个问题（2026-11-19 上午）**
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 附件面板里**没有「拍照」**（模拟器上"正常"，因为模拟器真没相机） | Android 11+ 包可见性：manifest 没声明 `<queries>`，`resolveActivity(ACTION_IMAGE_CAPTURE)` **恒为 null** | manifest 加 `<intent><action android:name="android.media.action.IMAGE_CAPTURE"/></intent>`；判断改用 `queryIntentActivities(..., 0)`（华为相机的 capture activity 不一定带 DEFAULT） |
+| 2 | 导入**秒失败**，报 `The coroutine scope left the composition` | 导入写成「存 `pendingUri` + `LaunchedEffect(pendingUri)`」，却在 effect 里把 key 置空 → Compose 立刻取消协程；取消异常又被 `catch (Exception)` 当成业务失败显示 | 改成**从选择器回调直接 `scope.launch`**；`CancellationException` 单独 rethrow |
+| 3 | 导入的历史**图片一直转圈** | ① `LOCAL` 被当成"上传中"（导入的附件永远停在 LOCAL）；② 导入只拷原件、**没生成缩略图** | ① `isUploading` 只认 `UPLOADING`；② `ChatArchive` 导入后补缩略图（`writeThumbFromFile`），UI 再退一步"没有缩略图就用原件解码"（`imagePath = thumbPath ?: localPath`） |
+| 4 | 导入的历史**联网对话没有正文角标** | **导出包本身没有 `citations` 字段**（真样本 11643 个 RESPONSE 碎片里 0 个带），角标数据在流式 chunk 里、没进归档 | 数据没有就是没有（官方 App 同样显示不出）；但 `TOOL_SEARCH` 结果还在 → 正文末尾的「N 个网页」胶囊改由搜索结果兜底 |
+
+> 顺带确认：文件卡显示**「原件未导入」是正常的**——官方导出只带 79 个图片原件，PDF/Word 之类的原件根本不进包（只有元数据）。它们的附件行是 `MISSING`，卡片给"原件未导入"、不可点。
+
+
 
 **滚动性能：measurement 口径与被证伪的“优化”（2026-11-18）**
 

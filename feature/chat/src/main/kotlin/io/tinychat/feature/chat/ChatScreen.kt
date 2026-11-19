@@ -177,13 +177,14 @@ fun ChatScreen(
         cameraUri = null
         if (ok && uri != null) onAddAttachments(listOf(uri))
     }
-    // 没有相机 App（部分模拟器镜像）就不必给「拍照」入口
+    // 没有相机 App（或系统不允许查询到相机）就不必给「拍照」入口。
+    // ⚠️ Android 11+ 需要 manifest 里的 <queries> 声明，否则这里恒为 null —— 真机上
+    // 曾经因为漏了那段，导致「拍照」直接不出现。
     val canTakePhoto = remember(context) {
         runCatching {
-            context.packageManager.resolveActivity(
-                Intent(MediaStore.ACTION_IMAGE_CAPTURE),
-                PackageManager.MATCH_DEFAULT_ONLY,
-            ) != null
+            context.packageManager
+                .queryIntentActivities(Intent(MediaStore.ACTION_IMAGE_CAPTURE), 0)
+                .isNotEmpty()
         }.getOrDefault(false)
     }
 
@@ -1517,7 +1518,7 @@ private fun UserAttachments(attachments: List<ChatAttachment>) {
     previewIndex?.let { index ->
         val item = images.getOrNull(index) ?: return@let
         AttachmentPreviewDialog(
-            thumbPath = item.thumbPath,
+            thumbPath = item.imagePath,
             title = item.fileName,
             onDismiss = { previewIndex = null },
         )
@@ -1527,9 +1528,9 @@ private fun UserAttachments(attachments: List<ChatAttachment>) {
 @Composable
 private fun AttachmentThumb(attachment: ChatAttachment, size: Dp, onClick: () -> Unit) {
     val palette = TcTheme.palette
-    val bitmap = rememberAttachmentBitmap(attachment.thumbPath, (size.value * 3).toInt())
-    val uploading = attachment.state == AttachmentState.UPLOADING ||
-        attachment.state == AttachmentState.LOCAL
+    val bitmap = rememberAttachmentBitmap(attachment.imagePath, (size.value * 3).toInt())
+    // 只有正在上传才转圈；LOCAL（导入的历史附件）表示原件在本机、无需再传
+    val uploading = attachment.state == AttachmentState.UPLOADING
     val failed = attachment.state == AttachmentState.FAILED
 
     Box(
@@ -1542,7 +1543,7 @@ private fun AttachmentThumb(attachment: ChatAttachment, size: Dp, onClick: () ->
                 color = if (failed) palette.danger else palette.bubble,
                 shape = RoundedCornerShape(16.dp),
             )
-            .clickable(enabled = attachment.thumbPath != null && !uploading, onClick = onClick),
+            .clickable(enabled = attachment.imagePath != null && !uploading, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (bitmap != null) {
@@ -1630,8 +1631,7 @@ private fun FileAttachmentCard(attachment: ChatAttachment, palette: TcPalette) {
             Text(
                 text = when {
                     attachment.isMissing -> "原件未导入"
-                    attachment.state == AttachmentState.UPLOADING ||
-                        attachment.state == AttachmentState.LOCAL -> "上传中"
+                    attachment.state == AttachmentState.UPLOADING -> "上传中"
                     attachment.isFailed -> "上传失败"
                     else -> attachment.fileDescription
                 },

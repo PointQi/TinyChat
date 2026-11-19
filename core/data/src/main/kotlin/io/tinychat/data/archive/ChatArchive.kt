@@ -32,8 +32,8 @@ class ChatArchive(
                 runCatching { staged.delete() }
             }
         }
-        // 替换后旧会话的附件文件已经没人引用，顺手清掉
-        withContext(Dispatchers.IO) { purgeOrphanAttachmentDirs() }
+        // 替换后旧会话的附件文件已经没人引用，顺手清掉；再补一遍缩略图
+        afterImport()
         return report
     }
 
@@ -54,8 +54,21 @@ class ChatArchive(
         val report = withContext(Dispatchers.IO) {
             V3Importer(db, attachmentsDir, clock).import(file)
         }
-        withContext(Dispatchers.IO) { purgeOrphanAttachmentDirs() }
+        afterImport()
         return report
+    }
+
+    /** 导入后收尾：补缩略图 + 清孤儿文件 */
+    private suspend fun afterImport() = withContext(Dispatchers.IO) {
+        val store = io.tinychat.data.attachment.AttachmentStore(context)
+        // 导入只拷原件，不生成缩略图；图片消息会退化成"每次都解码原图"
+        db.attachmentDao().all().forEach { row ->
+            if (!row.isImage) return@forEach
+            val path = row.localPath ?: return@forEach
+            if (store.thumbFile(row.id).isFile) return@forEach
+            store.writeThumbFromFile(row.id, java.io.File(path))
+        }
+        purgeOrphanAttachmentDirs()
     }
 
     suspend fun exportFile(
