@@ -1528,7 +1528,7 @@ private fun UserAttachments(attachments: List<ChatAttachment>) {
 @Composable
 private fun AttachmentThumb(attachment: ChatAttachment, size: Dp, onClick: () -> Unit) {
     val palette = TcTheme.palette
-    val bitmap = rememberAttachmentBitmap(attachment.imagePath, (size.value * 3).toInt())
+    val load = rememberBitmapLoad(attachment.imagePath, (size.value * 3).toInt())
     // 只有正在上传才转圈；LOCAL（导入的历史附件）表示原件在本机、无需再传
     val uploading = attachment.state == AttachmentState.UPLOADING
     val failed = attachment.state == AttachmentState.FAILED
@@ -1546,15 +1546,16 @@ private fun AttachmentThumb(attachment: ChatAttachment, size: Dp, onClick: () ->
             .clickable(enabled = attachment.imagePath != null && !uploading, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
+        when {
+            load.bitmap != null -> Image(
+                bitmap = load.bitmap,
                 contentDescription = attachment.fileName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
-        } else {
-            Icon(
+            // 解码中：留空，别闪一个占位图标（会被误看成"图没了"）
+            load.loading -> Unit
+            else -> Icon(
                 imageVector = if (attachment.isMissing) TcIcons.PhotoError else TcIcons.Photo,
                 contentDescription = attachment.fileName,
                 tint = palette.labelSecondary,
@@ -1650,7 +1651,7 @@ private fun FileAttachmentCard(attachment: ChatAttachment, palette: TcPalette) {
 @Composable
 private fun DraftChip(draft: DraftAttachment, onRemove: () -> Unit, onOpen: () -> Unit) {
     val palette = TcTheme.palette
-    val bitmap = rememberAttachmentBitmap(draft.thumbPath, 192)
+    val load = rememberBitmapLoad(draft.thumbPath, 192)
     Box(modifier = Modifier.size(56.dp)) {
         Box(
             modifier = Modifier
@@ -1660,9 +1661,9 @@ private fun DraftChip(draft: DraftAttachment, onRemove: () -> Unit, onOpen: () -
                 .clickable(onClick = onOpen),
             contentAlignment = Alignment.Center,
         ) {
-            if (draft.isImage && bitmap != null) {
+            if (draft.isImage && load.bitmap != null) {
                 Image(
-                    bitmap = bitmap,
+                    bitmap = load.bitmap,
                     contentDescription = draft.fileName,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -1745,11 +1746,16 @@ private fun SheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
     }
 }
 
-/** 放大看一张图（草稿与消息共用；只读缩略图，不解析原图，省内存） */
+/**
+ * 放大看一张图（草稿与消息共用）。
+ *
+ * ⚠️ 「还在解码」和「真的没有」必须分开：解码是异步的，第一帧必然是空。
+ * 早先把空当成"图没了"，于是点开图片会先闪一下「图片已不在本机」再出图。
+ */
 @Composable
 private fun AttachmentPreviewDialog(thumbPath: String?, title: String, onDismiss: () -> Unit) {
     if (thumbPath == null) return
-    val bitmap = rememberAttachmentBitmap(thumbPath, 1080)
+    val load = rememberBitmapLoad(thumbPath, 1080)
     Dialog(onDismissRequest = onDismiss) {
         Box(
             modifier = Modifier
@@ -1759,15 +1765,23 @@ private fun AttachmentPreviewDialog(thumbPath: String?, title: String, onDismiss
                 .clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap,
+            when {
+                load.bitmap != null -> Image(
+                    bitmap = load.bitmap,
                     contentDescription = title,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxWidth(),
                 )
-            } else {
-                Text(
+                // 还在解码：给个转圈，别说话
+                load.loading -> CircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(48.dp)
+                        .size(28.dp),
+                    color = Color.White,
+                    strokeWidth = 2.dp,
+                )
+                // 解码真的失败了（文件被删/损坏）才说这一句
+                else -> Text(
                     text = "图片已不在本机",
                     style = TcTypography.bodySmall,
                     color = Color.White,
@@ -1778,6 +1792,34 @@ private fun AttachmentPreviewDialog(thumbPath: String?, title: String, onDismiss
     }
 }
 
+/** 一次异步解码的三种状态：还在读 / 读出来了 / 读不出来 */
+private data class BitmapLoad(val bitmap: ImageBitmap? = null, val loading: Boolean = true)
+
+@Composable
+private fun rememberBitmapLoad(path: String?, targetPx: Int): BitmapLoad {
+    val state by produceState(BitmapLoad(), path, targetPx) {
+        value = BitmapLoad(loading = true)
+        val bitmap = if (path.isNullOrBlank()) null else withContext(Dispatchers.IO) {
+            runCatching { decodeSampled(path, targetPx) }.getOrNull()
+        }
+        value = BitmapLoad(bitmap = bitmap, loading = false)
+    }
+    return state
+}
+
+/** 按目标像素降采样解码，避免把 4000px 的原图整张读进内存 */
+private fun decodeSampled(path: String, targetPx: Int): ImageBitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0) return null
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= targetPx && bounds.outHeight / (sample * 2) >= targetPx) {
+        sample *= 2
+    }
+    return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+        ?.asImageBitmap()
+}
+
 /** 按目标像素降采样解码，避免把 4000px 的原图整张读进内存 */
 @Composable
 private fun rememberAttachmentBitmap(path: String?, targetPx: Int): ImageBitmap? {
@@ -1786,17 +1828,7 @@ private fun rememberAttachmentBitmap(path: String?, targetPx: Int): ImageBitmap?
             null
         } else {
             withContext(Dispatchers.IO) {
-                runCatching {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeFile(path, bounds)
-                    if (bounds.outWidth <= 0) return@runCatching null
-                    var sample = 1
-                    while (bounds.outWidth / (sample * 2) >= targetPx && bounds.outHeight / (sample * 2) >= targetPx) {
-                        sample *= 2
-                    }
-                    BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
-                        ?.asImageBitmap()
-                }.getOrNull()
+                runCatching { decodeSampled(path, targetPx) }.getOrNull()
             }
         }
     }
