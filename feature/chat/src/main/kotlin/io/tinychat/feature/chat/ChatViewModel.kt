@@ -1413,8 +1413,10 @@ class ChatViewModel(
             .takeIf { it.isNotEmpty() }
             ?.sum()
 
-        // 「继续生成」靠 assistant 预填，必须有正文：思考阶段就被掐断的那种给「重新生成」
+        // 「继续生成」靠 assistant 预填，必须有正文：思考阶段就被掐断的那种给「重新生成」；
+        // OpenAI 兼容链路没有 prefix 预填充，第三方会话不显示这个动作
         val canContinue = message.status == MessageStatus.INCOMPLETE &&
+            state.currentProvider?.protocol != io.tinychat.model.ProviderProtocol.OPENAI_CHAT &&
             timeline.none { it is TimelineItem.Tool } &&
             fragments.none { it.type == "TEMPLATE_RESPONSE" } &&
             text.isNotBlank()

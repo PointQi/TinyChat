@@ -64,7 +64,6 @@ fun TinyChatApp() {
 
     val context = LocalContext.current
     val container = remember { AppContainer(context.applicationContext) }
-    val apiKey by container.apiKey.collectAsState()
     // 服务商目录与凭据（M8-6）：设置页、服务商页、模型选择器都读它
     val providers by container.providers.collectAsState()
     val keyedProviders by container.keyedProviders.collectAsState()
