@@ -3,6 +3,7 @@ package io.tinychat.net.protocol
 import io.tinychat.model.Capabilities
 import io.tinychat.model.PromptMode
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.model.prompt.PromptSeeds
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -213,8 +214,8 @@ object DeepSeekMessagesProtocol {
         return tools.ifEmpty { null }
     }
 
-    /** 官方默认 system 句（一手证实：chat-demo `store.ts:38`） */
-    const val OFFICIAL_DEFAULT_SYSTEM = "该助手为DeepSeek，由深度求索公司创造。"
+    /** 官方默认 system 句（一手证实：chat-demo `store.ts:38`）。正文真值在 [PromptSeeds]。 */
+    const val OFFICIAL_DEFAULT_SYSTEM = PromptSeeds.OFFICIAL_SYSTEM
 
     /** 便于测试构造：把若干块拼成 user 消息 */
     fun userBlocks(vararg blocks: JsonObject): WireMessage =

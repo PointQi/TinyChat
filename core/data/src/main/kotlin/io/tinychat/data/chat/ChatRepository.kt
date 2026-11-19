@@ -17,6 +17,7 @@ import io.tinychat.model.ErrorKind
 import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
+import io.tinychat.model.ModelInfo
 import io.tinychat.model.pickVersion
 import io.tinychat.model.PromptMode
 import io.tinychat.model.RequestPayload
@@ -28,6 +29,9 @@ import io.tinychat.model.Usage
 import io.tinychat.model.billing.CostCalculator
 import io.tinychat.model.billing.PeakClock
 import io.tinychat.model.billing.UsageSummary
+import io.tinychat.data.prompt.PromptSnapshot
+import io.tinychat.model.prompt.PromptMeta
+import io.tinychat.model.prompt.PromptVariables
 import java.time.Instant
 import io.tinychat.model.buildSearchHit
 import io.tinychat.net.context.ContextRebuilder
@@ -43,6 +47,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.ZonedDateTime
 import java.util.UUID
 
 /**
@@ -63,6 +68,10 @@ class ChatRepository(
     private val attachmentStore: AttachmentStore,
     /** 附件上传（M4-3） */
     private val uploader: AttachmentUploader,
+    /** 新会话的系统提示词快照（M7.5）；返回 null 表示「不发 system」 */
+    private val promptSnapshot: suspend () -> PromptSnapshot = { PromptSnapshot(null, PromptMode.REPLACE) },
+    /** 用户元信息，供 `{{location}}` / `{{language}}` 求值 */
+    private val promptMeta: () -> PromptMeta = { PromptMeta() },
 ) {
 
     private val runner = ChatStreamRunner(db.messageDao(), db.fragmentDao(), clock)
@@ -126,8 +135,19 @@ class ChatRepository(
 
 
     /** 关掉开关时整条 reminder 消息都不发（M7-5） */
-    private fun currentReminder(): String? =
-        if (reminderEnabled()) ReminderBuilder.build(date = LocalDate.now(), location = null) else null
+    /**
+     * 本轮的用户元信息（02 §5.4）。所在地与语言取设置里的值（M7.5 起由 `PromptMeta` 提供）；
+     * 关掉开关就整条不发。
+     */
+    private fun currentReminder(): String? {
+        if (!reminderEnabled()) return null
+        val meta = promptMeta()
+        return ReminderBuilder.build(
+            date = LocalDate.now(),
+            location = meta.location.takeIf { it.isNotBlank() },
+            language = meta.language,
+        )
+    }
 
     suspend fun session(sessionId: String): SessionEntity? = db.sessionDao().byId(sessionId)
 
@@ -209,15 +229,26 @@ class ChatRepository(
         }
     }
 
+    /**
+     * 建会话。系统提示词走**全局当前预设**（M7.5）：创建时取一次快照写进会话，
+     * 之后用户在设置里怎么改都不影响这条会话（决策 10）。
+     * 显式传入 `systemPrompt` 时以传入为准（导入/测试用）。
+     */
     suspend fun createSession(
         thinkingEnabled: Boolean = true,
         searchEnabled: Boolean = false,
         effort: ThinkingEffort? = ThinkingEffort.HIGH,
         systemPrompt: String? = null,
         systemMode: PromptMode = PromptMode.REPLACE,
+        useCurrentPrompt: Boolean = true,
     ): String {
         val id = UUID.randomUUID().toString()
         val now = clock()
+        val snapshot = if (systemPrompt == null && useCurrentPrompt) {
+            promptSnapshot()
+        } else {
+            PromptSnapshot(content = systemPrompt, mode = systemMode)
+        }
         db.sessionDao().upsert(
             SessionEntity(
                 id = id,
@@ -228,8 +259,8 @@ class ChatRepository(
                 thinkingEnabled = thinkingEnabled,
                 searchEnabled = searchEnabled,
                 effort = effort,
-                systemPromptSnapshot = systemPrompt,
-                systemPromptMode = systemMode,
+                systemPromptSnapshot = snapshot.content,
+                systemPromptMode = snapshot.mode,
             ),
         )
         return id
@@ -385,7 +416,7 @@ class ChatRepository(
         val command = ChatCommand(
             capabilities = modelInfo.capabilities,
             model = session.model,
-            systemPrompt = session.systemPromptSnapshot,
+            systemPrompt = systemFor(session, modelInfo),
             systemMode = session.systemPromptMode,
             thinkingEnabled = false,
             effort = session.effort,
@@ -586,7 +617,7 @@ class ChatRepository(
         val command = ChatCommand(
             capabilities = modelInfo.capabilities,
             model = session.model,
-            systemPrompt = session.systemPromptSnapshot,
+            systemPrompt = systemFor(session, modelInfo),
             systemMode = session.systemPromptMode,
             thinkingEnabled = session.thinkingEnabled,
             effort = session.effort,
@@ -610,6 +641,24 @@ class ChatRepository(
         }
         db.sessionDao().touch(sessionId, clock())
         return outcome
+    }
+
+    /**
+     * 会话快照 → 本轮真正要发的 system。
+     *
+     * 变量在**发送时**求值：日期、星期、时间必须实时，所以库里存的是原文；
+     * 不在白名单里的变量原样保留（设置页负责报错，这里不做静默吞掉）。
+     */
+    private fun systemFor(session: SessionEntity, modelInfo: ModelInfo): String? {
+        val raw = session.systemPromptSnapshot ?: return null
+        val meta = promptMeta()
+        return PromptVariables.evaluate(
+            text = raw,
+            now = ZonedDateTime.now(PeakClock.ZONE),
+            location = meta.location,
+            language = meta.language,
+            model = modelInfo.displayName,
+        )
     }
 
     /** 从 leaf 往上回溯成 root → leaf 的顺序 */

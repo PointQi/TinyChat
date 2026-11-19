@@ -8,8 +8,10 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -21,6 +23,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import io.tinychat.data.db.PromptPresetEntity
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.feature.chat.ChatScreen
 import io.tinychat.feature.chat.UsageDrawer
@@ -28,9 +31,11 @@ import io.tinychat.feature.chat.ChatViewModel
 import io.tinychat.feature.sessions.SessionsDrawerContent
 import io.tinychat.feature.settings.AboutScreen
 import io.tinychat.feature.settings.DataManagementScreen
+import io.tinychat.feature.settings.PromptEditorScreen
+import io.tinychat.feature.settings.PromptPresetListScreen
 import io.tinychat.feature.settings.ProviderSettingsScreen
 import io.tinychat.feature.settings.SettingsScreen
-import io.tinychat.model.PromptPreset
+import io.tinychat.model.PromptMode
 import io.tinychat.net.account.KeyCheck
 import kotlinx.coroutines.launch
 
@@ -40,6 +45,8 @@ object Routes {
     const val PROVIDER = "settings/provider"
     const val DATA = "settings/data"
     const val ABOUT = "settings/about"
+    const val PROMPT = "settings/prompt"
+    const val PROMPT_EDIT = "settings/prompt/edit"
 }
 
 /**
@@ -51,7 +58,6 @@ object Routes {
 @Composable
 fun TinyChatApp() {
     val palette = TcTheme.palette
-    val promptPreset = PromptPreset.DEFAULT
 
     val context = LocalContext.current
     val container = remember { AppContainer(context.applicationContext) }
@@ -73,6 +79,18 @@ fun TinyChatApp() {
     var usageOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val closeDrawer = { scope.launch { drawerState.close() } }
+
+    // 系统提示词（M7.5）：列表与当前选中项在进入页面时读库，改完后就地刷新
+    var promptPresets by remember { mutableStateOf<List<PromptPresetEntity>>(emptyList()) }
+    var promptSelectedId by remember { mutableStateOf("default") }
+    var editingPromptId by remember { mutableStateOf<String?>(null) }
+    var creatingPrompt by remember { mutableStateOf(false) }
+    var promptReloadKey by remember { mutableStateOf(0) }
+    LaunchedEffect(promptReloadKey) {
+        promptPresets = container.promptStore.all()
+        promptSelectedId = container.promptStore.current().id
+    }
+    val promptName = promptPresets.firstOrNull { it.id == promptSelectedId }?.name ?: "默认"
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -174,7 +192,8 @@ fun TinyChatApp() {
                         onOpenData = { navController.navigate(Routes.DATA) },
                         onOpenAbout = { navController.navigate(Routes.ABOUT) },
                         hasKey = hasKey,
-                        currentPromptPreset = promptPreset,
+                        promptName = promptName,
+                        onOpenPrompt = { navController.navigate(Routes.PROMPT) },
                         ttsVoice = chatViewModel.state.ttsVoice,
                         onSelectTtsVoice = chatViewModel::setTtsVoice,
                         showUsage = chatViewModel.state.showUsage,
@@ -207,6 +226,89 @@ fun TinyChatApp() {
                         onImported = { chatViewModel.newChat() },
                         onClearAll = { chatViewModel.clearAllConversations() },
                     )
+                }
+                composable(Routes.PROMPT) {
+                    PromptPresetListScreen(
+                        presets = promptPresets,
+                        selectedId = promptSelectedId,
+                        onBack = { navController.popBackStack() },
+                        onOpen = { id ->
+                            editingPromptId = id
+                            creatingPrompt = false
+                            scope.launch {
+                                container.promptStore.select(id)
+                                promptSelectedId = id
+                            }
+                            navController.navigate(Routes.PROMPT_EDIT)
+                        },
+                        onNew = {
+                            editingPromptId = null
+                            creatingPrompt = true
+                            navController.navigate(Routes.PROMPT_EDIT)
+                        },
+                        onRestoreDefault = {
+                            scope.launch {
+                                container.promptStore.restoreDefault()
+                                promptPresets = container.promptStore.all()
+                                promptSelectedId = container.promptStore.current().id
+                                promptReloadKey++
+                            }
+                        },
+                    )
+                }
+                composable(Routes.PROMPT_EDIT) {
+                    val preset = promptPresets.firstOrNull { it.id == editingPromptId }
+                    val builtin = !creatingPrompt && preset?.builtin == true
+                    key(editingPromptId, creatingPrompt, promptReloadKey) {
+                        PromptEditorScreen(
+                            title = if (creatingPrompt) "新建预设" else "编辑预设",
+                            initialName = if (creatingPrompt) "" else preset?.name.orEmpty(),
+                            initialContent = if (creatingPrompt) "" else preset?.content.orEmpty(),
+                            initialMode = if (creatingPrompt) {
+                                PromptMode.REPLACE
+                            } else {
+                                preset?.mode ?: PromptMode.REPLACE
+                            },
+                            builtin = builtin,
+                            canDelete = !creatingPrompt && preset != null && !builtin,
+                            onBack = { navController.popBackStack() },
+                            onSave = { name, content, mode ->
+                                scope.launch {
+                                    val id = container.promptStore.save(
+                                        id = editingPromptId.takeIf { !creatingPrompt },
+                                        name = name,
+                                        content = content,
+                                        mode = mode,
+                                    )
+                                    container.promptStore.select(id)
+                                    promptSelectedId = id
+                                    promptPresets = container.promptStore.all()
+                                    creatingPrompt = false
+                                    editingPromptId = id
+                                    navController.popBackStack()
+                                }
+                            },
+                            onCopy = {
+                                val source = editingPromptId ?: return@PromptEditorScreen
+                                scope.launch {
+                                    val copied = container.promptStore.copyBuiltin(source) ?: return@launch
+                                    promptPresets = container.promptStore.all()
+                                    editingPromptId = copied
+                                    creatingPrompt = false
+                                }
+                            },
+                            onDelete = {
+                                val id = editingPromptId ?: return@PromptEditorScreen
+                                scope.launch {
+                                    container.promptStore.deleteCustom(id)
+                                    promptPresets = container.promptStore.all()
+                                    promptSelectedId = container.promptStore.current().id
+                                    promptReloadKey++
+                                    navController.popBackStack()
+                                }
+                            },
+                        )
+                    }
                 }
                 composable(Routes.ABOUT) {
                     AboutScreen(onBack = { navController.popBackStack() })

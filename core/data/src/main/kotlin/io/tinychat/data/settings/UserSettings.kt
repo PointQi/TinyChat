@@ -15,12 +15,10 @@ private val Context.settingsDataStore by preferencesDataStore(name = "user_setti
 /**
  * 本地设置（M5 起用它，M8 的外观/字号也走这里）。
  *
- * 现在只有两个键：
- * - `auto_speak`：顶栏那个喇叭开关，开着就自动朗读每条新回答；
- * - `tts_voice`：朗读音色，只有官方两个（决策 3）。
+ * 键：朗读开关与音色、用量行开关、用户元信息开关、当前系统提示词、
+ * 用户所在地与语言（喂 `{{location}}` / `{{language}}`）。
  *
- * ⚠️ 刻意**不**把 API Key 放这里：Key 目前来自 `BuildConfig`，M8-6 会换成
- * Keystore + DataStore，到那时再在这个文件里加加密存取。
+ * ⚠️ 刻意**不**把 API Key 放这里：它单独一份加密 DataStore（`credentials`，M7-6）。
  */
 class UserSettings(context: Context) {
 
@@ -35,6 +33,15 @@ class UserSettings(context: Context) {
 
     /** 用户元信息（`latest_reminder`）开关（M7-5）；默认开，与官方一致 */
     val reminderEnabled: Flow<Boolean> = store.data.map { it[REMINDER] ?: true }
+
+    /** 当前选中的系统提示词（M7.5）；内置 id 或自定义预设 id */
+    val promptPresetId: Flow<String> = store.data.map { it[PROMPT_PRESET] ?: "default" }
+
+    /** 用户所在地，喂给 `{{location}}` 与 `latest_reminder`；空 = 不填 */
+    val promptLocation: Flow<String> = store.data.map { it[PROMPT_LOCATION] ?: "" }
+
+    /** 用户常用语言，喂给 `{{language}}` 与 `latest_reminder` */
+    val promptLanguage: Flow<String> = store.data.map { it[PROMPT_LANGUAGE] ?: "中文" }
 
     suspend fun setAutoSpeak(enabled: Boolean) {
         store.edit { it[AUTO_SPEAK] = enabled }
@@ -52,11 +59,26 @@ class UserSettings(context: Context) {
         store.edit { it[REMINDER] = enabled }
     }
 
+    suspend fun setPromptPresetId(id: String) {
+        store.edit { it[PROMPT_PRESET] = id }
+    }
+
+    suspend fun setPromptLocation(location: String) {
+        store.edit { it[PROMPT_LOCATION] = location.trim() }
+    }
+
+    suspend fun setPromptLanguage(language: String) {
+        store.edit { it[PROMPT_LANGUAGE] = language }
+    }
+
     companion object {
         private val AUTO_SPEAK = booleanPreferencesKey("auto_speak")
         private val TTS_VOICE = stringPreferencesKey("tts_voice")
         private val SHOW_USAGE = booleanPreferencesKey("show_usage")
         private val REMINDER = booleanPreferencesKey("reminder_enabled")
+        private val PROMPT_PRESET = stringPreferencesKey("prompt_preset_id")
+        private val PROMPT_LOCATION = stringPreferencesKey("prompt_location")
+        private val PROMPT_LANGUAGE = stringPreferencesKey("prompt_language")
 
         /** 认不出的值一律退回默认音色（旧的/手改的文件不该把朗读弄挂）。 */
         internal fun voiceOf(raw: String?): TtsVoice =

@@ -8,10 +8,12 @@ import io.tinychat.data.attachment.AttachmentStore
 import io.tinychat.data.attachment.AttachmentUploader
 import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.db.DatabaseFactory
+import io.tinychat.data.prompt.PromptPresetStore
 import io.tinychat.data.settings.KeystoreSecretStore
 import io.tinychat.data.settings.SecretStore
 import io.tinychat.data.settings.UserSettings
 import io.tinychat.feature.chat.voice.VoiceController
+import io.tinychat.model.prompt.PromptMeta
 import io.tinychat.net.account.AccountClient
 import io.tinychat.net.account.KeyCheck
 import io.tinychat.net.transport.OkHttpChatTransport
@@ -21,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -64,10 +67,20 @@ class AppContainer(context: Context) {
     /** 账户接口（M7）：`GET /models` 验 Key、`GET /user/balance` 查余额 */
     val account = AccountClient()
 
+    /** 系统提示词预设（M7.5）：播种、选择、给新会话取快照 */
+    val promptStore = PromptPresetStore.create(
+        database = database,
+        selected = userSettings.promptPresetId,
+        selectPreset = { userSettings.setPromptPresetId(it) },
+    )
+
     private val _apiKey = MutableStateFlow("")
 
     /** 用户元信息开关的同步快照（仓库在 IO 线程按需读，不阻塞） */
     private val reminderEnabled = MutableStateFlow(true)
+
+    /** 提示词变量的同步快照（所在地/语言），同样按需读 */
+    private val promptMeta = MutableStateFlow(PromptMeta())
 
     /** 当前 Key；空串 = 未配置。所有请求每次现取，换 Key 立刻生效。 */
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
@@ -78,6 +91,15 @@ class AppContainer(context: Context) {
     init {
         scope.launch {
             userSettings.reminderEnabled.collect { reminderEnabled.value = it }
+        }
+        scope.launch {
+            combine(userSettings.promptLocation, userSettings.promptLanguage) { location, language ->
+                PromptMeta(location = location, language = language)
+            }.collect { promptMeta.value = it }
+        }
+        scope.launch {
+            // 内置预设对齐官方正文；失败不拦启动（表不在也能用代码里的兜底）
+            runCatching { promptStore.ensureSeeded() }
         }
         scope.launch {
             val stored = runCatching { secrets.read() }.getOrNull()
@@ -123,5 +145,7 @@ class AppContainer(context: Context) {
         attachmentStore = attachmentStore,
         uploader = AttachmentUploader(),
         reminderEnabled = { reminderEnabled.value },
+        promptSnapshot = { promptStore.snapshotForNewSession() },
+        promptMeta = { promptMeta.value },
     )
 }

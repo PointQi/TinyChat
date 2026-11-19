@@ -44,7 +44,6 @@ import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcListRow
 import io.tinychat.ui.TcSectionLabel
 import io.tinychat.ui.TcTopBar
-import io.tinychat.model.PromptPreset
 import io.tinychat.model.TtsVoice
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -58,7 +57,9 @@ fun SettingsScreen(
     onOpenAbout: () -> Unit,
     /** 是否已配置 Key（M7-6）：决定那一行的副标题 */
     hasKey: Boolean = false,
-    currentPromptPreset: PromptPreset = PromptPreset.DEFAULT,
+    /** 当前系统提示词的名字（M7.5）：显示为「当前预设：默认」 */
+    promptName: String = "默认",
+    onOpenPrompt: () -> Unit = {},
     /** 当前朗读音色（M5-4，只有官方两个） */
     ttsVoice: TtsVoice = TtsVoice.STELLA,
     onSelectTtsVoice: (TtsVoice) -> Unit = {},
@@ -99,8 +100,8 @@ fun SettingsScreen(
             TcListRow(title = "字体大小", subtitle = "标准", onClick = {})
             TcListRow(
                 title = "系统提示词",
-                subtitle = "当前预设：${currentPromptPreset.displayName}",
-                onClick = {},
+                subtitle = "当前预设：$promptName",
+                onClick = onOpenPrompt,
             )
 
             SettingsSwitch(title = "显示每轮用量", checked = showUsage, onCheckedChange = onToggleShowUsage)
