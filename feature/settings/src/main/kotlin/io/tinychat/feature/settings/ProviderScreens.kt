@@ -46,6 +46,7 @@ import io.tinychat.model.Provider
 import io.tinychat.model.ProviderCheck
 import io.tinychat.model.ProviderKind
 import io.tinychat.model.ProviderProtocol
+import io.tinychat.model.ThinkingMode
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcTopBar
 import io.tinychat.designsystem.TcIcons
@@ -164,7 +165,8 @@ private fun ProviderCard(
             modifier = Modifier.weight(1f, fill = false),
         )
         Spacer(Modifier.width(6.dp))
-        if (!provider.builtin) {
+        // 「自定义」只标用户自己填的服务商；目录里的 OpenCode Go 不算
+        if (provider.kind == ProviderKind.OPENAI_COMPATIBLE) {
             Text(
                 text = "自定义",
                 fontSize = 11.sp,
@@ -504,6 +506,7 @@ fun ProviderEditorScreen(
                     canFetch = editableCustom || (pickedCatalog ?: provider)?.kind == ProviderKind.OPENCODE_GO,
                     busy = busy,
                     fetching = fetching,
+                    protocol = protocol,
                     onAdd = { models = models + ModelInfo("", "", 128_000, 8_192, io.tinychat.model.Capabilities(thinking = false)) },
                     onChange = { index, updated -> models = models.toMutableList().also { it[index] = updated } },
                     onRemove = { index -> models = models.toMutableList().also { it.removeAt(index) } },
@@ -678,6 +681,7 @@ private fun ModelDirectory(
     canFetch: Boolean,
     busy: Boolean,
     fetching: Boolean,
+    protocol: ProviderProtocol,
     onAdd: () -> Unit,
     onChange: (Int, ModelInfo) -> Unit,
     onRemove: (Int) -> Unit,
@@ -700,35 +704,60 @@ private fun ModelDirectory(
     Spacer(Modifier.height(6.dp))
 
     models.forEachIndexed { index, model ->
-        Row(
+        Column(
             Modifier
                 .fillMaxWidth()
                 .padding(bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            SmallField(
-                value = model.id,
-                placeholder = "模型 ID",
-                enabled = editable && !busy,
-                modifier = Modifier.weight(1.2f),
-                onValueChange = { onChange(index, model.copy(id = it.trim())) },
-            )
-            Spacer(Modifier.width(8.dp))
-            SmallField(
-                value = model.displayName,
-                placeholder = "显示名称",
-                enabled = editable && !busy,
-                modifier = Modifier.weight(1f),
-                onValueChange = { onChange(index, model.copy(displayName = it)) },
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SmallField(
+                    value = model.id,
+                    placeholder = "模型 ID",
+                    enabled = editable && !busy,
+                    modifier = Modifier.weight(1.2f),
+                    onValueChange = { onChange(index, model.copy(id = it.trim())) },
+                )
+                Spacer(Modifier.width(8.dp))
+                SmallField(
+                    value = model.displayName,
+                    placeholder = "显示名称",
+                    enabled = editable && !busy,
+                    modifier = Modifier.weight(1f),
+                    onValueChange = { onChange(index, model.copy(displayName = it)) },
+                )
+                if (editable) {
+                    Text(
+                        text = "✕",
+                        fontSize = 13.sp,
+                        color = palette.labelTertiary,
+                        modifier = Modifier
+                            .clickable(enabled = !busy) { onRemove(index) }
+                            .padding(start = 8.dp),
+                    )
+                }
+            }
             if (editable) {
-                Text(
-                    text = "✕",
-                    fontSize = 13.sp,
-                    color = palette.labelTertiary,
-                    modifier = Modifier
-                        .clickable(enabled = !busy) { onRemove(index) }
-                        .padding(start = 8.dp),
+                ThinkingPicker(
+                    mode = model.thinking,
+                    options = when (protocol) {
+                        ProviderProtocol.ANTHROPIC_MESSAGES ->
+                            listOf(ThinkingMode.NONE, ThinkingMode.BUDGET)
+                        else -> listOf(ThinkingMode.NONE, ThinkingMode.EFFORT)
+                    },
+                    enabled = !busy,
+                    onSelect = { mode ->
+                        onChange(
+                            index,
+                            model.copy(
+                                thinking = mode,
+                                // 选了参数就显示思考强度；退回「不发送」时一起关掉
+                                capabilities = model.capabilities.copy(effort = mode != ThinkingMode.NONE),
+                            ),
+                        )
+                    },
                 )
             }
         }
@@ -757,6 +786,49 @@ private fun ModelDirectory(
                 .clickable(enabled = !busy, onClick = onAdd)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         )
+    }
+}
+
+@Composable
+private fun ThinkingPicker(
+    mode: ThinkingMode,
+    options: List<ThinkingMode>,
+    enabled: Boolean,
+    onSelect: (ThinkingMode) -> Unit,
+) {
+    val palette = TcTheme.palette
+    var open by remember { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 2.dp),
+    ) {
+        Text(
+            text = "思考",
+            style = TcTypography.labelMedium,
+            color = palette.labelTertiary,
+        )
+        Spacer(Modifier.width(8.dp))
+        Box {
+            Text(
+                text = mode.title,
+                style = TcTypography.labelMedium,
+                color = if (mode == ThinkingMode.NONE) palette.labelTertiary else palette.brand,
+                modifier = Modifier
+                    .clickable(enabled = enabled) { open = true }
+                    .padding(vertical = 4.dp, horizontal = 2.dp),
+            )
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                options.forEach { item ->
+                    DropdownMenuItem(
+                        text = { Text(item.title, color = palette.labelPrimary) },
+                        onClick = {
+                            open = false
+                            onSelect(item)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -3,6 +3,7 @@ package io.tinychat.net.protocol
 import io.tinychat.model.Capabilities
 import io.tinychat.model.PromptMode
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.model.ThinkingMode
 import io.tinychat.model.prompt.PromptSeeds
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -26,6 +27,8 @@ data class MessagesRequest(
     val system: String? = null,
     val thinking: ThinkingFlag? = null,
     @SerialName("output_config") val outputConfig: OutputConfig? = null,
+    /** Anthropic Messages 必填；DeepSeek 不传（其默认值够用） */
+    @SerialName("max_tokens") val maxTokens: Int? = null,
     val tools: List<ToolDecl>? = null,
     @SerialName("safety_check") val safetyCheck: SafetyCheck? = null,
     val title: TitleFlag? = null,
@@ -35,7 +38,11 @@ data class MessagesRequest(
 )
 
 @Serializable
-data class ThinkingFlag(val type: String) {
+data class ThinkingFlag(
+    val type: String,
+    /** Anthropic `thinking.budget_tokens`；DeepSeek 只发 `type`，默认 null 会被省略 */
+    @SerialName("budget_tokens") val budgetTokens: Int? = null,
+) {
     companion object {
         val ENABLED = ThinkingFlag("enabled")
         val DISABLED = ThinkingFlag("disabled")
@@ -112,6 +119,10 @@ data class ChatCommand(
     val systemMode: PromptMode = PromptMode.REPLACE,
     val thinkingEnabled: Boolean = true,
     val effort: ThinkingEffort? = null,
+    /** 第三方思考参数形态（M8-1）；DeepSeek 忽略，它只认 capabilities.effort */
+    val thinking: ThinkingMode = ThinkingMode.NONE,
+    /** 输出上限；Anthropic Messages 必填，DeepSeek 不传 */
+    val maxOutputTokens: Int = 8_192,
     val searchEnabled: Boolean = false,
     /** 仅会话首轮为 true；拿到标题后永久关掉（02 §5.3） */
     val includeTitle: Boolean = false,

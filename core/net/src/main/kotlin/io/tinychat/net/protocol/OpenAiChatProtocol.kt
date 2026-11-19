@@ -1,6 +1,8 @@
-package io.tinychat.net.protocol
+﻿package io.tinychat.net.protocol
 
 import io.tinychat.model.PromptMode
+import io.tinychat.model.ThinkingEffort
+import io.tinychat.model.ThinkingMode
 import io.tinychat.model.ProviderProtocol
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -78,9 +80,14 @@ object OpenAiChatProtocol {
                     buildJsonObject { put("include_usage", true) },
                 )
             }
-            // 思考强度：只有模型声明支持、且这一轮开着思考才发
-            if (command.capabilities.effort && command.thinkingEnabled) {
-                command.effort?.let { put("reasoning_effort", it.wire) }
+            // 思考强度：只有该模型声明了 reasoning_effort、且这一轮开着思考才发。
+            // 官方取值是 low/medium/high（部分新模型还有 none/minimal/xhigh），
+            // 我们的三档按 low、medium、high 映射，避免撞上不认识的枚举值。
+            if (command.capabilities.effort &&
+                command.thinkingEnabled &&
+                command.thinking == ThinkingMode.EFFORT
+            ) {
+                command.effort?.let { put("reasoning_effort", it.openAiWire()) }
             }
         }
 
@@ -127,5 +134,12 @@ object OpenAiChatProtocol {
             (obj["text"] as? JsonPrimitive)?.contentOrNull
         }.joinToString("")
         else -> ""
+    }
+
+    /** 我们的三档 → OpenAI 的合法枚举（low/medium/high）。 */
+    private fun ThinkingEffort.openAiWire(): String = when (this) {
+        ThinkingEffort.LOW -> "low"
+        ThinkingEffort.HIGH -> "medium"
+        ThinkingEffort.MAX -> "high"
     }
 }

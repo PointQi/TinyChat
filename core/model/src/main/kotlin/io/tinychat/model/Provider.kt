@@ -40,6 +40,24 @@ enum class ProviderCheck(val wire: String) {
 }
 
 /**
+ * 第三方模型的「思考」参数形态（M8-1 收尾）。
+ *
+ * 各家的字段不通用：OpenAI 系用 `reasoning_effort`，Anthropic 系用 `thinking.budget_tokens`，
+ * 还有一堆私有参数。因此**按模型声明**，默认不发送——宁可没有，也不要发个被静默忽略的参数。
+ */
+enum class ThinkingMode(val wire: String, val title: String) {
+    NONE("none", "不发送"),
+    EFFORT("effort", "reasoning_effort"),
+    BUDGET("budget", "thinking 预算"),
+    ;
+
+    companion object {
+        fun fromWire(value: String?): ThinkingMode =
+            entries.firstOrNull { it.wire == value } ?: NONE
+    }
+}
+
+/**
  * 单个模型的能力矩阵。**全部由服务商+模型决定，不来自 UI 状态**。
  * 关键事实（docs/01 §4.2）：扩展能力（搜索/读链接/文件/图片/标题/安全）**只有 deepseek-flash 支持**，
  * deepseek-v4-pro 只支持思考与强度。
@@ -69,6 +87,8 @@ data class ModelInfo(
     val contextWindow: Int,
     val maxOutputTokens: Int,
     val capabilities: Capabilities,
+    /** 思考参数形态（M8-1）：默认不发送，自定义模型在服务商页里选 */
+    val thinking: ThinkingMode = ThinkingMode.NONE,
 )
 
 data class Provider(
@@ -222,6 +242,9 @@ object ProviderMeta {
 
     /** 该服务商不支持 `stream_options`：一次降级后记住，后续不再发 */
     const val NO_STREAM_OPTIONS = "no_stream_options"
+
+    /** 该服务商拒绝思考参数（400）：一次降级后记住，后续不再发 */
+    const val NO_EFFORT = "no_effort"
 }
 
 /** 内置 UA：官方要求显式标识客户端，且**禁止**伪装成 OpenCode CLI。 */

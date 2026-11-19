@@ -1,4 +1,4 @@
-package io.tinychat.feature.chat
+﻿package io.tinychat.feature.chat
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -130,14 +130,14 @@ fun ContextRing(
 
 /** 每轮回答下面那一行（M7-3）：`4,096 命中  9,078 未命中  1,686 输出  ￥0.0259` */
 @Composable
-fun UsageStatsLine(usage: Usage, costMicros: Long) {
+fun UsageStatsLine(usage: Usage, costMicros: Long?) {
     val palette = TcTheme.palette
     val line = buildString {
         append("${Money.tokens(usage.cacheHitTokens.toLong())} 命中  ")
         append("${Money.tokens(usage.promptTokens.toLong())} 未命中  ")
         append("${Money.tokens(usage.completionTokens.toLong())} 输出")
         // 第三方服务商没有单价表（CostCalculator 返回 0）：只显示 token，不编一个 ￥0.0000
-        if (costMicros > 0) append("  ${Money.format(costMicros)}")
+        if (costMicros != null && costMicros > 0) append("  ${Money.format(costMicros)}")
     }
     Text(
         text = line,

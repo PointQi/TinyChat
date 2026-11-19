@@ -118,6 +118,7 @@ git clone --depth 1 https://github.com/deepseek-ai/chat-demo.git temp-doc/chat-d
 | 33 | **服务商页的动作口径（2026-11-19 用户拍板，M8-6）**：**保存是唯一主按钮**，点保存 = 立即写本机 + 后台 `GET /models` 校验；校验结果只是**状态**（绿点 / 灰未校验 / 红 + 一行原因），**不阻塞保存**（离线也能存）。删掉「测试连接」这个动词；要复检就在编辑页点状态行右侧的 `重新校验`。「清除」只在**确实存了密钥**时出现，文案 `清除已保存的密钥`，确认框写明「只删本机密钥，不影响服务商账户」。交互与文档分离见 05 |
 | 34 | **每家服务商一把 Key + 会话快照（2026-11-19）**：`credentials` DataStore 里键名 `cipher.<providerId>`，仍是同一把 Keystore AES-GCM 主密钥；M7-6 的 `api_key_cipher` 首次启动自动迁到 `cipher.deepseek`。新表 `providers`（id/kind/display_name/base_url/protocol/models_json/builtin/sort/check_*），启动播种 DeepSeek；内置服务商**不可删**（TTS/ASR/余额都靠它）。会话表仍只存 `provider_id` + `model`：**删服务商后会话可读但发送被拦**（顶部条「此会话的服务商已被移除」，胶囊显示 `已移除`）；不提供「换一家继续」 |
 | 35 | **协议抽象与第三方降级（2026-11-19，M8-1）**：`ChatProtocols` 按 `ProviderProtocol` 分发（`DEEPSEEK_MESSAGES` / `ANTHROPIC_MESSAGES` / `OPENAI_CHAT`），`ChatStreamRunner` 只吃 `StreamAssembler`。OpenAI 链路：Bearer、`stream_options.include_usage`（400 时降级一次）、`reasoning_content` 显示思考、`finish_reason` 映射状态、**标题本地取首条 24 字**、`latest_reminder` 拼进 system、`APPEND` **不拼** DeepSeek 官方句。第三方不显示 ￥（只 token）、不提供搜索/文件/TTS/语音；**图片（base64）按用户决定本轮不做**，「视觉」不出现 |
+| 37 | **第三方思考参数按模型声明（2026-11-19，M8-1 收尾）**：模型级 `thinking` 三态 `NONE`（默认）/`EFFORT`/`BUDGET`，服务商页每条模型可选；只有声明后才出现思考强度。三档映射：OpenAI `low/medium/high`，Anthropic `budget_tokens` 1024/4096/8192（`max_tokens` 始终大于预算）。服务商若在首帧前 400 且报文点名参数，自动去掉参数重发一次并记 `meta.no_effort=1`，之后不再发。**费用与余额按服务商类型收口**：价格表只对 DeepSeek 官方生效（同一个模型 id 在第三方不代表同样单价），通用第三方不显示 ￥、不去查 DeepSeek 余额 |
 | 36 | **OpenCode Go 独立 kind（2026-11-19）**：对话走 `zen/go/v1/chat/completions`（OpenAI 兼容），目录 `zen/go/v1/models`，额度 `zen/go/v1/usage`；`x-opencode-session = sha256(sessionId).hex`（≤64、同会话所有派生请求同值），UA = `TinyChat/1.0 (Android)`（不伪装 CLI）。额度只取 `rolling/weekly/monthly` 的 `percent`（已用）与 `resetsAt`，UI 显示**已用**（用户拍板：进度条走满才符合直觉）；`rate-limited` 视为 100%；接口失败就整块隐藏，不编数字 |
 
 ---
@@ -917,6 +918,9 @@ chat-demo 是 Web 实现（点一下开始、再点结束、结果回填输入�
 - **又把源码交给 PowerShell 改坏一次**（`ChatStreamRunner.kt` 的中文注释被写坏、还丢了一个换行）：结论不变——**改代码走补丁工具**，`Set-Content` 只用于纯 ASCII 的小替换。
 - **目录 tab 拉取模型会“静默成功但界面不更新”**（2026-11-19 用户实测 OpenCode Go）：第一版 `currentModels` 读 `pickedCatalog.models`（常量），拉取成功分支又只处理「自定义 / 已保存的 Go」，于是模型被丢掉、也不报错。修法：模型统一以可变的 `models` 状态为准（选目录服务商时灌入），目录服务商拉取即替换、自定义追加；服务端返回空列表时显式提示 `服务端没有返回模型`，不要装作成功。
 - **模拟器坐标会随内容高度漂移**：服务商表单在填完字段后会滚动/变矮，上一轮 dump 的坐标下一轮就点空。每次点击前重新 dump，别复用坐标。
+- **费用/余额会“串家”**：费用表按模型 id 命中，第三方用同名模型（如 `deepseek-flash`）会算出 DeepSeek 的价格、显示 ￥；余额还会拿本机的 DeepSeek Key 去查账户。现在两处都按**服务商类型**收口（只有 `DEEPSEEK_OFFICIAL` 才算 ￥、才查余额），动这两块时别看模型 id。
+- **「自定义」标签别用 `!builtin` 判断**：OpenCode Go 也是 `builtin=false`，会被误标成自定义服务商；标签只给 `kind == OPENAI_COMPATIBLE`。
+- **思考参数发出去被静默忽略是常态**：DeepSeek 的 OpenAI 兼容端点对 `reasoning_effort` 不报错也不一定生效；我们只对**明确 400 且点名参数**的做降级重试，别把“没报错”当成“生效了”。
 
 ---
 

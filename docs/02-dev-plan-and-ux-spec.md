@@ -1059,6 +1059,10 @@ Android 12+ 由系统强制绘制 **SplashScreen**（应用图标 + 窗口背景
 - `第三方模型提供商`：目录里选一家（DeepSeek / OpenCode Go）→ 名称与地址只读 → 填 API 密钥；
 - `自定义模型 API`：Provider ID（`^[a-z][a-z0-9-]{1,31}$`、唯一）、显示名称、API 地址（https）、
   API 协议（OpenAI Chat Completions / Anthropic Messages）、API 密钥、模型目录（获取可用模型 / 添加模型 / 删除）；
+- **模型行的「思考」**（M8-1 收尾）：每条模型可单独声明参数形态，
+  `不发送`（默认）/ `reasoning_effort`（OpenAI 协议）/ `thinking 预算`（Anthropic 协议）。
+  只有声明后才在聊天页出现思考强度；三档映射 OpenAI `low/medium/high`、Anthropic `budget_tokens` 1024/4096/8192。
+  服务商若对参数返回 400，自动去掉参数重发一次并记住（`meta.no_effort=1`），之后不再发；
 - 底部固定：`取消`（文字）+ `保存`（品牌色填充）。编辑已有服务商时不分 tab，ID 不可改。
 
 **动作与状态（本次重写的核心）**
@@ -1088,7 +1092,7 @@ Android 12+ 由系统强制绘制 **SplashScreen**（应用图标 + 窗口背景
 | 联网搜索 / 读链接 | ✅ | ❌ 置灰 | ❌ | ❌ |
 | 图片 / 文件 | ✅ Files API | ❌（v1 不做视觉） | ❌ | ❌ |
 | 服务端标题 | ✅ | 本地取首条 24 字 | 同左 | 同左 |
-| 思考强度 | ✅ | 有 `effort` 才发 | ❌ | ❌ |
+| 思考强度 | ✅ `output_config` | 模型声明 `reasoning_effort` 才发 | 模型声明 `thinking 预算` 才发 | ❌ |
 | TTS / 语音输入 | ✅ | ❌ 隐藏 | ❌ | ❌ |
 | 余额 | ✅ ￥ | ❌ | ❌ | 三窗口订阅额度 |
 | 每轮费用 | ✅ ￥ | 只显示 token | 只显示 token | 只显示 token |

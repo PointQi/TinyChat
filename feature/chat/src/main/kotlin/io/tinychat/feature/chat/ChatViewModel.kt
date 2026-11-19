@@ -1167,7 +1167,14 @@ class ChatViewModel(
     fun refreshBalance(force: Boolean = false) {
         val provider = state.providers.firstOrNull { it.id == state.providerId }
         if (provider?.kind == ProviderKind.OPENCODE_GO) {
+            // 订阅制没有 ￥ 余额：先把上一家的数字清掉，再拉三窗口额度
+            state = state.copy(balanceText = null)
             refreshQuota(provider, force)
+            return
+        }
+        if (provider != null && provider.kind != ProviderKind.DEEPSEEK_OFFICIAL) {
+            // 通用第三方没有余额接口：不要拿 DeepSeek 的 Key 去查一个不属于它的账户
+            state = state.copy(balanceText = null, quota = null)
             return
         }
         val key = apiKeyValue
@@ -1445,13 +1452,18 @@ class ChatViewModel(
             canContinue = canContinue,
             usage = rowUsage,
             costMicros = rowUsage?.let { usage ->
-                CostCalculator.micros(
-                    usage = usage,
-                    model = message.model ?: KnownProviders.flash.id,
-                    peak = PeakClock.isPeak(
-                        Instant.ofEpochMilli(message.insertedAt).atZone(PeakClock.ZONE),
-                    ),
-                )
+                // 费用表只覆盖 DeepSeek 官方；第三方同样的模型 id 不代表同样的价格
+                if (state.currentProvider?.kind != ProviderKind.DEEPSEEK_OFFICIAL) {
+                    null
+                } else {
+                    CostCalculator.micros(
+                        usage = usage,
+                        model = message.model ?: KnownProviders.flash.id,
+                        peak = PeakClock.isPeak(
+                            Instant.ofEpochMilli(message.insertedAt).atZone(PeakClock.ZONE),
+                        ),
+                    )
+                }
             },
         )
     }

@@ -1,4 +1,4 @@
-package io.tinychat.feature.chat
+﻿package io.tinychat.feature.chat
 
 import android.Manifest
 import android.content.Context
@@ -773,7 +773,7 @@ private fun MessageRow(
                     }
                 }
             }
-            if (showUsage && message.usage != null && message.costMicros != null) {
+            if (showUsage && message.usage != null) {
                 UsageStatsLine(message.usage, message.costMicros)
             }
         }

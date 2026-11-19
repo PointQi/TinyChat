@@ -27,7 +27,9 @@ import io.tinychat.model.RequestPayload
 import io.tinychat.model.ResponsePayload
 import io.tinychat.model.Role
 import io.tinychat.model.SessionSearchHit
+import io.tinychat.model.ProviderMeta
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.model.ThinkingMode
 import io.tinychat.model.Usage
 import io.tinychat.model.billing.CostCalculator
 import io.tinychat.model.billing.PeakClock
@@ -103,6 +105,10 @@ class ChatRepository(
         var fetch = 0
         var imageSearch = 0
         var cost = 0L
+        // 价格表只覆盖 DeepSeek 官方；第三方即使模型 id 撞名也不代表同样的单价
+        val priceable = db.sessionDao().byId(sessionId)?.let { session ->
+            providerStore.byId(session.providerId)?.kind == io.tinychat.model.ProviderKind.DEEPSEEK_OFFICIAL
+        } ?: true
         db.messageDao().usageRows(sessionId).forEach { row ->
             val usage = Usage(
                 promptTokens = row.promptTokens ?: 0,
@@ -121,10 +127,12 @@ class ChatRepository(
             search += usage.searchCalls
             fetch += usage.fetchCalls
             imageSearch += usage.imageSearchCalls
-            val peak = PeakClock.isPeak(
-                Instant.ofEpochMilli(row.insertedAt).atZone(PeakClock.ZONE),
-            )
-            cost += CostCalculator.micros(usage, row.model ?: KnownProviders.flash.id, peak)
+            if (priceable) {
+                val peak = PeakClock.isPeak(
+                    Instant.ofEpochMilli(row.insertedAt).atZone(PeakClock.ZONE),
+                )
+                cost += CostCalculator.micros(usage, row.model ?: KnownProviders.flash.id, peak)
+            }
         }
         UsageSummary(
             usage = Usage(
@@ -431,6 +439,8 @@ class ChatRepository(
             systemMode = session.systemPromptMode,
             thinkingEnabled = false,
             effort = session.effort,
+            thinking = modelInfo.thinking,
+            maxOutputTokens = modelInfo.maxOutputTokens,
             searchEnabled = false,
             includeTitle = false,
             messages = ContextRebuilder.build(history, reminder) +
@@ -635,13 +645,17 @@ class ChatRepository(
         val question = db.messageDao().byId(userMessageId)
         val history = chainTurns(sessionId, question?.parentId)
 
+        // 这家服务商之前拒绝过思考参数：记住后不再发（模型声明还留着，用户改协议再说）
+        val effortDisabled = provider.meta[ProviderMeta.NO_EFFORT] == "1"
         val command = ChatCommand(
-            capabilities = modelInfo.capabilities,
+            capabilities = if (effortDisabled) modelInfo.capabilities.copy(effort = false) else modelInfo.capabilities,
             model = session.model,
             systemPrompt = systemFor(session, modelInfo),
             systemMode = session.systemPromptMode,
             thinkingEnabled = session.thinkingEnabled,
             effort = session.effort,
+            thinking = if (effortDisabled) ThinkingMode.NONE else modelInfo.thinking,
+            maxOutputTokens = modelInfo.maxOutputTokens,
             searchEnabled = session.searchEnabled,
             // 服务端标题只有官方支持；第三方不可能有，开着也只是白填字段
             includeTitle = session.title == null && modelInfo.capabilities.serverSideTitle,
@@ -662,20 +676,60 @@ class ChatRepository(
             transport,
             ChatProtocols.assembler(request.protocol),
         )
+        val finalOutcome = retryWithoutThinking(provider, session, command, key, assistantId, outcome)
 
         // 标题：官方用服务端下发的；第三方本地取首句前 24 字（02 §5.3 的等价实现）
         if (session.title == null) {
-            val title = outcome.title ?: userText
+            val title = finalOutcome.title ?: userText
                 .lineSequence()
                 .map { it.trim() }
                 .firstOrNull { it.isNotEmpty() }
                 ?.let(::localTitle)
-            if (title != null && outcome.status == FINISHED) {
+            if (title != null && finalOutcome.status == FINISHED) {
                 db.sessionDao().rename(sessionId, title, clock())
             }
         }
         db.sessionDao().touch(sessionId, clock())
-        return outcome
+        return finalOutcome
+    }
+
+    /**
+     * 思考参数不被支持时的自愈（M8-1 收尾）。
+     *
+     * 第三方网关对 `reasoning_effort` / `thinking` 的态度分三种：支持、静默忽略、直接 400。
+     * 我们在「首帧之前 400 且报文点了参数名」时去掉该参数重发一次，并把这家记住
+     * （`meta.no_effort=1`），避免每次都撞一遍。
+     */
+    private suspend fun retryWithoutThinking(
+        provider: Provider,
+        session: SessionEntity,
+        command: ChatCommand,
+        key: String,
+        assistantId: Long,
+        outcome: RunOutcome,
+    ): RunOutcome {
+        val error = outcome.error ?: return outcome
+        if (outcome.status != MessageStatus.FAILED) return outcome
+        if (error.httpStatus != 400) return outcome
+        if (command.thinking == ThinkingMode.NONE) return outcome
+        if (provider.meta[ProviderMeta.NO_EFFORT] == "1") return outcome
+        val body = error.message.orEmpty()
+        val mentions = listOf("reasoning_effort", "thinking", "budget_tokens")
+            .any { body.contains(it, ignoreCase = true) }
+        if (!mentions) return outcome
+
+        providerStore.setMeta(provider.id, ProviderMeta.NO_EFFORT, "1")
+        val retryCommand = command.copy(
+            capabilities = command.capabilities.copy(effort = false),
+            thinking = ThinkingMode.NONE,
+        )
+        val retry = ChatProtocols.build(
+            provider = provider,
+            apiKey = key,
+            command = retryCommand,
+            extraHeaders = ChatProtocols.extraHeaders(provider, session.id),
+        )
+        return runner.run(assistantId, retry, transport, ChatProtocols.assembler(retry.protocol))
     }
 
     /** 本地标题：压平换行后截 24 字，超出加省略号（与官方服务端标题长度相当）。 */

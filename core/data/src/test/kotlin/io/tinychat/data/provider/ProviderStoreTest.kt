@@ -1,4 +1,4 @@
-package io.tinychat.data.provider
+﻿package io.tinychat.data.provider
 
 import androidx.test.core.app.ApplicationProvider
 import io.tinychat.data.db.DatabaseFactory
@@ -9,6 +9,7 @@ import io.tinychat.model.ModelInfo
 import io.tinychat.model.Provider
 import io.tinychat.model.ProviderCheck
 import io.tinychat.model.ProviderKind
+import io.tinychat.model.ThinkingMode
 import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.TINYCHAT_USER_AGENT
 import kotlinx.coroutines.runBlocking
@@ -69,7 +70,8 @@ class ProviderStoreTest {
                     displayName = "Acme One",
                     contextWindow = 64_000,
                     maxOutputTokens = 4_096,
-                    capabilities = Capabilities(thinking = true, reasoning = true),
+                    capabilities = Capabilities(thinking = true, reasoning = true, effort = true),
+                    thinking = ThinkingMode.EFFORT,
                 ),
             ),
             meta = mapOf("user_agent" to TINYCHAT_USER_AGENT),
@@ -80,6 +82,7 @@ class ProviderStoreTest {
         assertEquals(provider.copy(check = ProviderCheck.UNKNOWN), loaded)
         assertEquals("Acme One", loaded.models.single().displayName)
         assertTrue(loaded.models.single().capabilities.reasoning)
+        assertEquals(ThinkingMode.EFFORT, loaded.models.single().thinking)
         assertEquals(TINYCHAT_USER_AGENT, loaded.meta["user_agent"])
         assertNull(loaded.checkMessage)
     }

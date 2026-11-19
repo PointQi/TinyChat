@@ -35,6 +35,15 @@ class ProviderStore(private val dao: ProviderDao) {
         dao.setCheck(id, check.wire, message, at)
     }
 
+    /** 写一个服务商级标记（例如 `no_effort=1`），用于「试过一次失败就记住」的降级 */
+    suspend fun setMeta(id: String, key: String, value: String) {
+        val row = dao.byId(id) ?: return
+        val meta = runCatching {
+            json.decodeFromString(META_SERIALIZER, row.metaJson)
+        }.getOrDefault(emptyMap()) + (key to value)
+        dao.upsert(row.copy(metaJson = json.encodeToString(META_SERIALIZER, meta)))
+    }
+
     /**
      * 首次启动播种 DeepSeek：老用户升级上来时，`sessions.provider_id` 已经是 `deepseek`，
      * 这一行必须存在，否则历史会话会被当成「服务商已移除」。

@@ -1,4 +1,4 @@
-package io.tinychat.net.protocol
+﻿package io.tinychat.net.protocol
 
 import io.tinychat.model.Capabilities
 import io.tinychat.model.KnownProviders
@@ -7,11 +7,13 @@ import io.tinychat.model.ProviderKind
 import io.tinychat.model.ProviderMeta
 import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.model.ThinkingMode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -38,6 +40,7 @@ class OpenAiChatProtocolTest {
         ),
         thinkingEnabled: Boolean = true,
         effort: ThinkingEffort? = ThinkingEffort.HIGH,
+        thinking: ThinkingMode = ThinkingMode.EFFORT,
         withReminder: Boolean = true,
     ) = ChatCommand(
         capabilities = capabilities,
@@ -46,6 +49,7 @@ class OpenAiChatProtocolTest {
         systemMode = systemMode,
         thinkingEnabled = thinkingEnabled,
         effort = effort,
+        thinking = thinking,
         messages = buildList {
             if (withReminder) add(WireMessage.text(WireMessage.ROLE_REMINDER, "2026-11-17,星期一,浙江,App,中文"))
             add(WireMessage.text(WireMessage.ROLE_USER, "你好"))
@@ -74,11 +78,22 @@ class OpenAiChatProtocolTest {
         assertEquals("gpt-4o-mini", body["model"]!!.jsonPrimitive.content)
         assertEquals(true, body["stream"]!!.jsonPrimitive.content.toBoolean())
         assertEquals(true, (body["stream_options"] as JsonObject)["include_usage"]!!.jsonPrimitive.content.toBoolean())
-        assertEquals("high", body["reasoning_effort"]!!.jsonPrimitive.content)
+        assertEquals("medium", body["reasoning_effort"]!!.jsonPrimitive.content)
         assertNull(body["tools"])
         assertNull(body["safety_check"])
         assertNull(body["title"])
         assertEquals(ProviderProtocol.OPENAI_CHAT, prepared.protocol)
+    }
+
+    @Test
+    fun `声明不发送时不带 reasoning_effort`() {
+        val prepared = OpenAiChatProtocol.build(
+            baseUrl = "https://x/v1",
+            apiKey = "k",
+            command = command(thinking = ThinkingMode.NONE),
+        )
+        val body = Json.parseToJsonElement(prepared.bodyJson) as JsonObject
+        assertNull("模型没声明思考参数就不该发", body["reasoning_effort"])
     }
 
     @Test
@@ -216,5 +231,34 @@ class OpenAiChatProtocolTest {
         assertNull(body["thinking"])
         assertNull(body["title"])
         assertNull(body["safety_check"])
+        // Anthropic Messages 必填 max_tokens；默认 8192
+        assertEquals(8_192, body["max_tokens"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `Anthropic 思考预算映射成 budget_tokens`() {
+        val prepared = ChatProtocols.build(
+            provider = KnownProviders.genericOpenAiCompatible(
+                id = "acme",
+                displayName = "Acme",
+                baseUrl = "https://acme.example",
+                modelId = "claude-x",
+                protocol = ProviderProtocol.ANTHROPIC_MESSAGES,
+            ),
+            apiKey = "k",
+            command = command(
+                model = "claude-x",
+                effort = ThinkingEffort.HIGH,
+                thinking = ThinkingMode.BUDGET,
+            ),
+        )
+        val body = Json.parseToJsonElement(prepared.bodyJson) as JsonObject
+        val thinking = body["thinking"] as JsonObject
+        assertEquals("enabled", thinking["type"]!!.jsonPrimitive.content)
+        assertEquals(4_096, thinking["budget_tokens"]!!.jsonPrimitive.int)
+        assertTrue(
+            "budget 必须小于 max_tokens",
+            body["max_tokens"]!!.jsonPrimitive.int > 4_096,
+        )
     }
 }
