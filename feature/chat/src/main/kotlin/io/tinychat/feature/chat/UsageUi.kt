@@ -334,9 +334,9 @@ fun UsageDrawer(
 }
 
 /**
- * 一个额度窗口：`5 小时  剩 89%` + 细进度条 + 重置时间。
+ * 一个额度窗口：`5 小时  已用 11%` + 细进度条 + 重置时间。
  *
- * 进度条画的是**剩余**（与 ￥ 余额语义一致）；触顶变红，不整块灰显。
+ * 进度条按**已用**画（走满 = 额度用光）；触顶变红，不整块灰显。
  */
 @Composable
 private fun QuotaRow(window: QuotaWindow) {
@@ -355,7 +355,7 @@ private fun QuotaRow(window: QuotaWindow) {
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = if (window.exhausted) "已达限额" else "剩 ${window.remainingPercent}%",
+                text = "已用 ${window.usedPercent}%",
                 style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
                 color = color,
             )
@@ -369,7 +369,7 @@ private fun QuotaRow(window: QuotaWindow) {
         ) {
             Box(
                 Modifier
-                    .fillMaxWidth(window.remainingPercent / 100f)
+                    .fillMaxWidth(window.usedPercent / 100f)
                     .height(4.dp)
                     .background(color, RoundedCornerShape(2.dp)),
             )

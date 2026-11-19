@@ -1,4 +1,4 @@
-# M8-1 / M8-6 服务商区域重设计（已定稿并实施，2026-11-19）
+﻿# M8-1 / M8-6 服务商区域重设计（已定稿并实施，2026-11-19）
 
 > 状态：**已实施并验完**（2026-11-19）。用户拍板：① 保存即校验、失败也保留配置；② 第三方的「视觉」本轮不做（不留死开关）；③ OpenCode Go 本轮进。
 > 规格已并进 `02 §12.6`，决策编号 33–36 在 `03`。本文保留设计与理由，实施中的偏差见文末「实施记录」。
@@ -330,13 +330,13 @@ Content-Type: application/json
 ```
 账户
   订阅额度
-    5 小时   剩 89%   ▓▓▓▓▓▓▓░░░   3 小时后重置
-    本周     剩 86%   ▓▓▓▓▓▓▓░░░   2 天后重置
-    本月     剩 93%   ▓▓▓▓▓▓▓▓░░   11 天后重置
+    5 小时   已用 11%   ▓░░░░░░░░░   3 小时后重置
+    本周     已用 14%   ▓░░░░░░░░░   2 天后重置
+    本月     已用 7%    ▓░░░░░░░░░   11 天后重置
 ```
 
-- 三行固定顺序：5 小时 / 本周 / 本月；数值取 `100 - percent`（显示**剩余**，与 `￥` 余额语义一致）；
-- 进度条用剩余比例，颜色 `brand`；`status=rate-limited` 或已用 ≥100% → 该行 `danger` + `已达限额`；
+- 三行固定顺序：5 小时 / 本周 / 本月；数值取 `percent`（显示**已用**；`2026-11-19` 用户反馈：显示剩余不直觉，改成已用）；
+- 进度条按已用比例，颜色 `brand`；`status=rate-limited` 或已用 ≥100% → 该行 `danger`；
 - 重置时间：`<1 小时` 显示「N 分钟后重置」，`<2 天` 显示「N 小时后重置」，更远显示「N 天后重置」；
 - 失败：整个「订阅额度」块隐藏（不加"上次读数"之类的小字，符合决策 27 的口径）。
 - 深色/浅色都只换色板，不加边框。
@@ -377,7 +377,7 @@ DeepSeek 老 Key 不用重填。
 
 ### 批次 4 — OpenCode Go + 额度
 kind、session 头、模型拉取、`/usage` 三窗口、抽屉额度块。
-验收：填入 Go Key → 列表绿点；抽屉显示 5 小时/本周/本月的剩余与重置；发一条消息有 `reasoning_content` 时显示思考块；
+验收：填入 Go Key → 列表绿点；抽屉显示 5 小时/本周/本月的已用与重置；发一条消息有 `reasoning_content` 时显示思考块；
 把额度接口改错地址 → 块隐藏且不崩。
 
 ### 批次 5 — 收尾
@@ -417,7 +417,7 @@ kind、session 头、模型拉取、`/usage` 三窗口、抽屉额度块。
   <https://cdn.jsdelivr.net/npm/pi-opencodego@0.1.5/docs/OPENCODE-API.md>
 - 额度接口为官方 `/zen/go/v1/usage` 的 PR 记录（rolling/weekly/monthly、`percent` 语义）：
   <https://github.com/cheaper-inference/OmniRoute/pull/12124>
-- 额度口径（三窗口 = 月额度 20/50/100%、重置规则、剩余 = 100 − 已用）：
+- 额度口径（三窗口 = 月额度 20/50/100%、重置规则、`percent` 是**已用**）：
   <https://raw.githubusercontent.com/kongyuna/dsh-token-plan-usage/f408dd87da1fbe98d54c11fa7e6daf2556f92292/docs/quotas.md>
 
 ---
@@ -434,7 +434,7 @@ kind、session 头、模型拉取、`/usage` 三窗口、抽屉额度块。
 - **OpenCode Go**：对话走 `zen/go/v1/chat/completions`（与「推理走 inference 域」的调研结论不同，
   以真实可用的 OpenAI 兼容端点为准），目录 `zen/go/v1/models`，额度 `zen/go/v1/usage`；
   `x-opencode-session = sha256(sessionId)`、UA = `TinyChat/1.0 (Android)`。
-- **额度三窗口**：`rolling/weekly/monthly` → `5 小时/本周/本月`；显示剩余 = 100 − percent；
+- **额度三窗口**：`rolling/weekly/monthly` → `5 小时/本周/本月`；显示已用 = percent；
   `rate-limited` 视为 100%；解析失败整块隐藏。
 
 未验证项（等真 Key）：

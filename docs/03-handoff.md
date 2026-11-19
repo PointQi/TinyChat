@@ -1,4 +1,4 @@
-# 交接与续作指引（上下文压缩后先读本文）
+﻿# 交接与续作指引（上下文压缩后先读本文）
 
 > 用途：**上下文一旦被压缩/新开 session，先读这一篇**，再按需跳转 01 / 02。
 > 本文只写"不可丢失的事实 + 一手报文 + 下一步动作"，不重复论证。
@@ -118,7 +118,7 @@ git clone --depth 1 https://github.com/deepseek-ai/chat-demo.git temp-doc/chat-d
 | 33 | **服务商页的动作口径（2026-11-19 用户拍板，M8-6）**：**保存是唯一主按钮**，点保存 = 立即写本机 + 后台 `GET /models` 校验；校验结果只是**状态**（绿点 / 灰未校验 / 红 + 一行原因），**不阻塞保存**（离线也能存）。删掉「测试连接」这个动词；要复检就在编辑页点状态行右侧的 `重新校验`。「清除」只在**确实存了密钥**时出现，文案 `清除已保存的密钥`，确认框写明「只删本机密钥，不影响服务商账户」。交互与文档分离见 05 |
 | 34 | **每家服务商一把 Key + 会话快照（2026-11-19）**：`credentials` DataStore 里键名 `cipher.<providerId>`，仍是同一把 Keystore AES-GCM 主密钥；M7-6 的 `api_key_cipher` 首次启动自动迁到 `cipher.deepseek`。新表 `providers`（id/kind/display_name/base_url/protocol/models_json/builtin/sort/check_*），启动播种 DeepSeek；内置服务商**不可删**（TTS/ASR/余额都靠它）。会话表仍只存 `provider_id` + `model`：**删服务商后会话可读但发送被拦**（顶部条「此会话的服务商已被移除」，胶囊显示 `已移除`）；不提供「换一家继续」 |
 | 35 | **协议抽象与第三方降级（2026-11-19，M8-1）**：`ChatProtocols` 按 `ProviderProtocol` 分发（`DEEPSEEK_MESSAGES` / `ANTHROPIC_MESSAGES` / `OPENAI_CHAT`），`ChatStreamRunner` 只吃 `StreamAssembler`。OpenAI 链路：Bearer、`stream_options.include_usage`（400 时降级一次）、`reasoning_content` 显示思考、`finish_reason` 映射状态、**标题本地取首条 24 字**、`latest_reminder` 拼进 system、`APPEND` **不拼** DeepSeek 官方句。第三方不显示 ￥（只 token）、不提供搜索/文件/TTS/语音；**图片（base64）按用户决定本轮不做**，「视觉」不出现 |
-| 36 | **OpenCode Go 独立 kind（2026-11-19）**：对话走 `zen/go/v1/chat/completions`（OpenAI 兼容），目录 `zen/go/v1/models`，额度 `zen/go/v1/usage`；`x-opencode-session = sha256(sessionId).hex`（≤64、同会话所有派生请求同值），UA = `TinyChat/1.0 (Android)`（不伪装 CLI）。额度只取 `rolling/weekly/monthly` 的 `percent`（已用）与 `resetsAt`，UI 显示**剩余**；`rate-limited` 视为 100%；接口失败就整块隐藏，不编数字 |
+| 36 | **OpenCode Go 独立 kind（2026-11-19）**：对话走 `zen/go/v1/chat/completions`（OpenAI 兼容），目录 `zen/go/v1/models`，额度 `zen/go/v1/usage`；`x-opencode-session = sha256(sessionId).hex`（≤64、同会话所有派生请求同值），UA = `TinyChat/1.0 (Android)`（不伪装 CLI）。额度只取 `rolling/weekly/monthly` 的 `percent`（已用）与 `resetsAt`，UI 显示**已用**（用户拍板：进度条走满才符合直觉）；`rate-limited` 视为 100%；接口失败就整块隐藏，不编数字 |
 
 ---
 

@@ -1,4 +1,4 @@
-package io.tinychat.net.account
+﻿package io.tinychat.net.account
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -23,9 +23,9 @@ class QuotaApiTest {
         val snapshot = QuotaClient.parse(raw, now = 1L)
         assertEquals(listOf("rolling", "weekly", "monthly"), snapshot.windows.map { it.key })
         assertEquals(listOf("5 小时", "本周", "本月"), snapshot.windows.map { it.label })
-        assertEquals(97, snapshot.windows[0].remainingPercent)
-        assertEquals(86, snapshot.windows[1].remainingPercent)
-        assertEquals(93, snapshot.windows[2].remainingPercent)
+        assertEquals(3, snapshot.windows[0].usedPercent)
+        assertEquals(14, snapshot.windows[1].usedPercent)
+        assertEquals(7, snapshot.windows[2].usedPercent)
         assertTrue(snapshot.windows.none { it.exhausted })
     }
 
@@ -34,7 +34,7 @@ class QuotaApiTest {
         val raw = """{"usage":{"rolling":{"status":"rate-limited","percent":12,"resetsAt":"2026-11-07T12:42:26.000Z"}}}"""
         val window = QuotaClient.parse(raw).windows.single()
         assertEquals(100, window.usedPercent)
-        assertEquals(0, window.remainingPercent)
+        assertEquals(100, window.usedPercent)
         assertTrue(window.exhausted)
     }
 
