@@ -1703,21 +1703,31 @@ private val ImageQuickPrompts = listOf("这是什么", "分析一下", "怎么�
 @Composable
 private fun QuickPromptChip(text: String, onClick: () -> Unit) {
     val palette = TcTheme.palette
+    // 只描线、不填充（同「继续生成」那种轻量按钮）
     Box(
         modifier = Modifier
             .height(32.dp)
             .clip(RoundedCornerShape(100.dp))
-            .background(palette.bubble)
+            .border(1.dp, palette.borderL2, RoundedCornerShape(100.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = text,
-            style = TcTypography.bodySmall,
-            color = palette.labelPrimary,
-            maxLines = 1,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = text,
+                style = TcTypography.bodySmall,
+                color = palette.labelPrimary,
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "→",
+                style = TcTypography.bodySmall,
+                color = palette.labelTertiary,
+                maxLines = 1,
+            )
+        }
     }
 }
 
