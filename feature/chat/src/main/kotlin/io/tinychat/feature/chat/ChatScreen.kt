@@ -129,6 +129,14 @@ import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcPalette
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
+import io.tinychat.feature.chat.share.ShareCapture
+import io.tinychat.feature.chat.share.ShareCard
+import io.tinychat.feature.chat.share.SharePreviewDialog
+import io.tinychat.feature.chat.share.ShareProgressDialog
+import io.tinychat.feature.chat.share.ShareSheet
+import io.tinychat.feature.chat.share.copyText
+import io.tinychat.feature.chat.share.shareImages
+import io.tinychat.feature.chat.share.shareText
 import io.tinychat.markdown.CitationAnchor
 import io.tinychat.markdown.CitationBubbleShape
 import io.tinychat.markdown.TcMarkdown
@@ -612,6 +620,10 @@ private fun MessageRow(
     var menuOpen by remember { mutableStateOf(false) }
     var selectOpen by remember { mutableStateOf(false) }
     var sourcesOpen by remember { mutableStateOf(false) }
+    // 分享（M8-2）：抽屉 →（生成图片时）进度 → 预览 → 系统分享面板
+    var shareOpen by remember { mutableStateOf(false) }
+    var shareBusy by remember { mutableStateOf(false) }
+    var shareResult by remember { mutableStateOf<ShareCapture.Output?>(null) }
     // 复制做一下确认：图标变对勾 1.5s，不做 Toast（官方也没弹东西）
     var copied by remember(message.id) { mutableStateOf(false) }
     LaunchedEffect(copied) {
@@ -622,6 +634,7 @@ private fun MessageRow(
     }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     Box {
         Column(
@@ -710,13 +723,7 @@ private fun MessageRow(
                         ActionIcon(
                             icon = TcIcons.Share,
                             description = "分享",
-                            onClick = {
-                                val send = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, message.text)
-                                }
-                                context.startActivity(Intent.createChooser(send, "分享回答"))
-                            },
+                            onClick = { shareOpen = true },
                         )
                     }
                     Spacer(Modifier.weight(1f))
@@ -806,6 +813,54 @@ private fun MessageRow(
             sources = message.sources,
             sheetState = sheetState,
             onDismiss = { sourcesOpen = false },
+        )
+    }
+
+    if (shareOpen) {
+        ShareSheet(
+            sheetState = sheetState,
+            onDismiss = { shareOpen = false },
+            onGenerateImage = {
+                shareOpen = false
+                shareBusy = true
+                scope.launch {
+                    val result = runCatching {
+                        ShareCapture.render(context, context.cacheDir, message.text) { width ->
+                            ShareCard(text = message.text, width = width)
+                        }
+                    }
+                    shareBusy = false
+                    result.onSuccess { shareResult = it }
+                        .onFailure { throwable ->
+                            android.util.Log.w("ShareCapture", "生成图片失败", throwable)
+                            Toast.makeText(context, "生成图片失败，请重试", Toast.LENGTH_SHORT).show()
+                        }
+                }
+            },
+            onCopyText = {
+                shareOpen = false
+                copyText(context, message.text)
+                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+            },
+            onShareText = {
+                shareOpen = false
+                shareText(context, message.text)
+            },
+        )
+    }
+
+    if (shareBusy) {
+        ShareProgressDialog()
+    }
+
+    shareResult?.let { output ->
+        SharePreviewDialog(
+            output = output,
+            onShare = {
+                shareImages(context, output.files)
+                shareResult = null
+            },
+            onDismiss = { shareResult = null },
         )
     }
 }

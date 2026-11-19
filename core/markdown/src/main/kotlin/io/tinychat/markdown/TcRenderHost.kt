@@ -102,6 +102,9 @@ internal object TcRenderHost {
     private var pending: CompletableDeferred<BridgeResult>? = null
     private var nextId = 1
 
+    /** 正在渲染/排队的张数（分享长图用；跨线程读，所以是原子量） */
+    private val inFlight = java.util.concurrent.atomic.AtomicInteger(0)
+
     private data class BridgeResult(
         val ok: Boolean,
         /** 公式基线在**视口坐标**里的 y（CSS px），行内公式靠它对齐正文；0 = 没量到 */
@@ -175,21 +178,29 @@ internal object TcRenderHost {
      */
     suspend fun render(context: Context, request: Request, useCache: Boolean = true): Result {
         if (useCache) cache.get(request.cacheKey())?.let { return it }
-        return withContext(Dispatchers.Main) {
-            mutex.withLock {
-                // 双检：等锁期间别人可能已经渲染好了
-                if (useCache) cache.get(request.cacheKey())?.let { return@withLock it }
-                val view = ensureWebView(context)
-                val result = drawOne(view, request)
-                if (result.bitmap == null || !useCache) {
-                    result
-                } else {
-                    cache.put(request.cacheKey(), result)
-                    result
+        inFlight.incrementAndGet()
+        try {
+            return withContext(Dispatchers.Main) {
+                mutex.withLock {
+                    // 双检：等锁期间别人可能已经渲染好了
+                    if (useCache) cache.get(request.cacheKey())?.let { return@withLock it }
+                    val view = ensureWebView(context)
+                    val result = drawOne(view, request)
+                    if (result.bitmap == null || !useCache) {
+                        result
+                    } else {
+                        cache.put(request.cacheKey(), result)
+                        result
+                    }
                 }
             }
+        } finally {
+            inFlight.decrementAndGet()
         }
     }
+
+    /** 还有多少张公式/Mermaid 在排队或渲染中（分享长图靠它判断"真的画完了"） */
+    fun inFlightCount(): Int = inFlight.get()
 
     private fun Request.cacheKey(): String = listOf(
         kind.wire, display, fontPx, widthPx, colorHex, dark, naturalWidth, source,

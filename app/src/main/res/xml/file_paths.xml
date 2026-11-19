@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider 暴露给相机 App 的目录（M4-1）：只放拍照的临时文件 -->
+<!-- FileProvider 暴露的目录：
+     - camera/：拍照的临时文件（M4-1，相机 App 只能往 content:// 写）
+     - share/：分享长图（M8-2） -->
 <paths>
     <cache-path name="camera" path="camera/" />
+    <cache-path name="share" path="share/" />
 </paths>
