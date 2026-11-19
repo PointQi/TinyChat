@@ -18,6 +18,7 @@ import androidx.room.TypeConverters
         FragmentEntity::class,
         AttachmentEntity::class,
         PromptPresetEntity::class,
+        ProviderEntity::class,
     ],
     version = TinyChatDatabase.VERSION,
     exportSchema = true,
@@ -35,10 +36,12 @@ abstract class TinyChatDatabase : RoomDatabase() {
 
     abstract fun promptPresetDao(): PromptPresetDao
 
+    abstract fun providerDao(): ProviderDao
+
     companion object {
         const val NAME = "tinychat.db"
 
         /** 每次改表结构必须 +1 并在 [TinyChatMigrations] 里补迁移 */
-        const val VERSION = 3
+        const val VERSION = 4
     }
 }

@@ -50,6 +50,21 @@ class UserSettings(context: Context) {
     /** 字体大小：1.0–1.3，只作用于正文（M8-4） */
     val fontScale: Flow<Float> = store.data.map { it[FONT_SCALE] ?: 1f }
 
+    /** 当前服务商（M8-6）：新会话默认用它，由聊天页的模型选择器写入 */
+    val activeProviderId: Flow<String> = store.data.map { it[ACTIVE_PROVIDER] ?: DEFAULT_PROVIDER_ID }
+
+    /** 该服务商上次用的模型 id；没有就空串，由上层回落到目录第一个 */
+    fun lastModel(providerId: String): Flow<String> =
+        store.data.map { it[modelKey(providerId)] ?: "" }
+
+    suspend fun setActiveProviderId(id: String) {
+        store.edit { it[ACTIVE_PROVIDER] = id }
+    }
+
+    suspend fun setLastModel(providerId: String, model: String) {
+        store.edit { it[modelKey(providerId)] = model }
+    }
+
     suspend fun setAutoSpeak(enabled: Boolean) {
         store.edit { it[AUTO_SPEAK] = enabled }
     }
@@ -96,6 +111,11 @@ class UserSettings(context: Context) {
         private val PROMPT_LANGUAGE = stringPreferencesKey("prompt_language")
         private val THEME_MODE = stringPreferencesKey("theme_mode")
         private val FONT_SCALE = floatPreferencesKey("font_scale")
+        private val ACTIVE_PROVIDER = stringPreferencesKey("active_provider_id")
+
+        private const val DEFAULT_PROVIDER_ID = "deepseek"
+
+        private fun modelKey(providerId: String) = stringPreferencesKey("model.$providerId")
 
         /** 认不出的值一律退回默认音色（旧的/手改的文件不该把朗读弄挂）。 */
         internal fun voiceOf(raw: String?): TtsVoice =

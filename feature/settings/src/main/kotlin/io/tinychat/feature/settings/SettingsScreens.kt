@@ -55,8 +55,8 @@ fun SettingsScreen(
     onOpenProvider: () -> Unit,
     onOpenData: () -> Unit,
     onOpenAbout: () -> Unit,
-    /** 是否已配置 Key（M7-6）：决定那一行的副标题 */
-    hasKey: Boolean = false,
+    /** 服务商那一行的副标题（M8-6）：`未配置` / 当前服务商名 / `N 个服务商` */
+    providerSubtitle: String = "未配置",
     /** 当前系统提示词的名字（M7.5）：显示为「当前预设：默认」 */
     promptName: String = "默认",
     onOpenPrompt: () -> Unit = {},
@@ -99,7 +99,7 @@ fun SettingsScreen(
             TcSectionLabel("账户")
             TcListRow(
                 title = "服务商与 API Key",
-                subtitle = if (hasKey) "DeepSeek 官方" else "未配置",
+                subtitle = providerSubtitle,
                 onClick = onOpenProvider,
             )
             TcListRow(
@@ -340,201 +340,6 @@ private fun <T> PickerDialog(
             TextButton(onClick = onDismiss) { Text("关闭") }
         },
     )
-}
-
-/**
- * 服务商与 API Key（docs/02 §12.6，M7-6）。
- *
- * 只做 DeepSeek 官方一家（决策 23）：一个 Key、一个状态、三个动作。
- * 多服务商与 OpenAI 兼容留到 M8。
- */
-@Composable
-fun ProviderSettingsScreen(
-    hasKey: Boolean,
-    onBack: () -> Unit,
-    /** 返回 `null` = 校验通过，否则是给用户看的一行错误文案（`GET /models`，不计费） */
-    onCheck: suspend (String) -> String?,
-    /** 校验**已存**的 Key（输入框为空时「测试连接」用它） */
-    onTestStored: suspend () -> String? = { null },
-    onSave: suspend (String) -> Unit,
-    onClear: suspend () -> Unit,
-) {
-    val palette = TcTheme.palette
-    val scope = rememberCoroutineScope()
-    var field by remember { mutableStateOf("") }
-    var reveal by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var failed by remember { mutableStateOf(false) }
-    var confirmClear by remember { mutableStateOf(false) }
-
-    fun testConnection() {
-        if (busy) return
-        scope.launch {
-            busy = true
-            message = null
-            failed = false
-            val candidate = field.trim()
-            val error = if (candidate.isEmpty()) onTestStored() else onCheck(candidate)
-            if (error == null) {
-                message = "连接正常"
-            } else {
-                failed = true
-                message = error
-            }
-            busy = false
-        }
-    }
-
-    fun checkThenSave() {
-        val candidate = field.trim()
-        if (candidate.isEmpty() || busy) return
-        scope.launch {
-            busy = true
-            message = null
-            failed = false
-            val error = onCheck(candidate)
-            if (error == null) {
-                onSave(candidate)
-                field = ""
-                message = "已保存"
-            } else {
-                failed = true
-                message = error
-            }
-            busy = false
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(palette.bg),
-    ) {
-        TcTopBar(
-            title = "服务商与 API Key",
-            leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
-        )
-        Column(
-            modifier = Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-        ) {
-            Text(
-                text = "DeepSeek 官方",
-                style = TcTypography.bodyLarge,
-                color = palette.labelPrimary,
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, palette.borderL2, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 12.dp)
-                    .height(48.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                BasicTextField(
-                    value = field,
-                    onValueChange = {
-                        field = it
-                        message = null
-                        failed = false
-                    },
-                    singleLine = true,
-                    textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
-                    cursorBrush = SolidColor(palette.brand),
-                    visualTransformation =
-                        if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
-                    modifier = Modifier.weight(1f),
-                    decorationBox = { inner ->
-                        Box(contentAlignment = Alignment.CenterStart) {
-                            if (field.isEmpty()) {
-                                Text(
-                                    text = "粘贴新的 API Key",
-                                    style = TcTypography.bodyLarge,
-                                    color = palette.labelTertiary,
-                                )
-                            }
-                            inner()
-                        }
-                    },
-                )
-                Text(
-                    text = if (reveal) "隐藏" else "显示",
-                    style = TcTypography.bodyMedium,
-                    color = palette.labelSecondary,
-                    modifier = Modifier
-                        .clickable { reveal = !reveal }
-                        .padding(start = 12.dp),
-                )
-            }
-
-            Spacer(Modifier.height(10.dp))
-            val statusText = message ?: if (hasKey) "已配置" else "未配置"
-            val statusColor = when {
-                failed -> palette.danger
-                message != null -> palette.labelSecondary
-                hasKey -> palette.brand
-                else -> palette.labelTertiary
-            }
-            Text(text = statusText, style = TcTypography.bodyMedium, color = statusColor)
-
-            Spacer(Modifier.height(16.dp))
-            Row {
-                TextButton(
-                    onClick = ::checkThenSave,
-                    enabled = field.isNotBlank() && !busy,
-                ) {
-                    Text("保存并验证", color = if (field.isNotBlank() && !busy) palette.brand else palette.labelTertiary)
-                }
-                TextButton(
-                    onClick = ::testConnection,
-                    enabled = !busy,
-                    modifier = Modifier.padding(start = 4.dp),
-                ) {
-                    Text("测试连接", color = palette.labelSecondary)
-                }
-                TextButton(
-                    onClick = { confirmClear = true },
-                    enabled = hasKey && !busy,
-                    modifier = Modifier.padding(start = 4.dp),
-                ) {
-                    Text("清除", color = palette.danger)
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = "只保存在本机，不会上传。",
-                style = TcTypography.bodyMedium,
-                color = palette.labelTertiary,
-            )
-        }
-    }
-
-    if (confirmClear) {
-        AlertDialog(
-            onDismissRequest = { confirmClear = false },
-            title = { Text("清除 API Key？") },
-            text = { Text("清除后需要重新填写才能继续对话，历史记录不受影响。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmClear = false
-                    scope.launch {
-                        busy = true
-                        onClear()
-                        message = "已清除"
-                        failed = false
-                        busy = false
-                    }
-                }) { Text("清除", color = palette.danger) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClear = false }) { Text("取消") }
-            },
-        )
-    }
 }
 
 /**

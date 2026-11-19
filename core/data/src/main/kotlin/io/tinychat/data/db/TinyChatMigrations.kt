@@ -69,5 +69,35 @@ object TinyChatMigrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+    /**
+     * v3 → v4：新增 `providers` 表（M8-6）。
+     *
+     * 只建表不插数据：播种在 `ProviderStore.ensureSeeded()` 里做（Room 迁移里写死模型 JSON
+     * 以后改能力位就要再发一次迁移，没必要）。
+     */
+    val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `providers` (
+                    `id` TEXT NOT NULL,
+                    `kind` TEXT NOT NULL,
+                    `display_name` TEXT NOT NULL,
+                    `base_url` TEXT NOT NULL,
+                    `protocol` TEXT NOT NULL,
+                    `models_json` TEXT NOT NULL,
+                    `builtin` INTEGER NOT NULL,
+                    `sort` INTEGER NOT NULL,
+                    `check_status` TEXT NOT NULL,
+                    `check_message` TEXT,
+                    `checked_at` INTEGER,
+                    `meta_json` TEXT NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 }

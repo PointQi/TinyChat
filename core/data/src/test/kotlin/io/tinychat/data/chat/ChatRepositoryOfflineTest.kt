@@ -1,10 +1,11 @@
-package io.tinychat.data.chat
+﻿package io.tinychat.data.chat
 
 import androidx.test.core.app.ApplicationProvider
 import io.tinychat.data.attachment.AttachmentStore
 import io.tinychat.data.attachment.AttachmentUploader
 import io.tinychat.data.db.DatabaseFactory
 import io.tinychat.data.db.TinyChatDatabase
+import io.tinychat.data.provider.ProviderStore
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.ThinkingEffort
@@ -33,11 +34,14 @@ class ChatRepositoryOfflineTest {
 
     private lateinit var db: TinyChatDatabase
     private lateinit var attachmentStore: AttachmentStore
+    private lateinit var providerStore: ProviderStore
 
     @Before
     fun setUp() {
         db = DatabaseFactory.createInMemory(ApplicationProvider.getApplicationContext())
         attachmentStore = AttachmentStore(ApplicationProvider.getApplicationContext())
+        providerStore = ProviderStore.create(db)
+        runBlocking { providerStore.ensureSeeded() }
     }
 
     @After
@@ -62,10 +66,12 @@ class ChatRepositoryOfflineTest {
             isOnline = { false },
             attachmentStore = attachmentStore,
             uploader = AttachmentUploader(),
+            providerStore = providerStore,
+            apiKeyFor = { "k" },
         )
         val sessionId = repository.createSession(thinkingEnabled = false, effort = ThinkingEffort.LOW)
 
-        val outcome = repository.send(sessionId, "断网时发一句", "key")
+        val outcome = repository.send(sessionId, "断网时发一句")
 
         assertEquals(0, transport.calls)
         assertEquals(MessageStatus.FAILED, outcome.status)
@@ -93,10 +99,12 @@ class ChatRepositoryOfflineTest {
             isOnline = { true },
             attachmentStore = attachmentStore,
             uploader = AttachmentUploader(),
+            providerStore = providerStore,
+            apiKeyFor = { "k" },
         )
         val sessionId = repository.createSession(thinkingEnabled = false, effort = ThinkingEffort.LOW)
 
-        repository.send(sessionId, "在线的一句话", "key")
+        repository.send(sessionId, "在线的一句话")
 
         assertEquals(1, transport.calls)
     }

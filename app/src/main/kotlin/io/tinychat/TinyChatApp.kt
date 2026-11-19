@@ -1,4 +1,4 @@
-﻿package io.tinychat
+package io.tinychat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -35,16 +35,17 @@ import io.tinychat.feature.settings.AboutScreen
 import io.tinychat.feature.settings.DataManagementScreen
 import io.tinychat.feature.settings.PromptEditorScreen
 import io.tinychat.feature.settings.PromptPresetListScreen
-import io.tinychat.feature.settings.ProviderSettingsScreen
+import io.tinychat.feature.settings.ProviderEditorScreen
+import io.tinychat.feature.settings.ProviderListScreen
 import io.tinychat.feature.settings.SettingsScreen
 import io.tinychat.model.PromptMode
-import io.tinychat.net.account.KeyCheck
 import kotlinx.coroutines.launch
 
 object Routes {
     const val CHAT = "chat"
     const val SETTINGS = "settings"
     const val PROVIDER = "settings/provider"
+    const val PROVIDER_EDIT = "settings/provider/edit"
     const val DATA = "settings/data"
     const val ABOUT = "settings/about"
     const val PROMPT = "settings/prompt"
@@ -64,20 +65,33 @@ fun TinyChatApp() {
     val context = LocalContext.current
     val container = remember { AppContainer(context.applicationContext) }
     val apiKey by container.apiKey.collectAsState()
-    val hasKey = apiKey.isNotBlank()
+    // 服务商目录与凭据（M8-6）：设置页、服务商页、模型选择器都读它
+    val providers by container.providers.collectAsState()
+    val keyedProviders by container.keyedProviders.collectAsState()
+    val activeProviderId by container.activeProviderId.collectAsState()
     // 字体大小（M8-4）：只放大正文，不动顶栏/设置列表
     val fontScale by container.userSettings.fontScale.collectAsState(initial = 1f)
     val language by container.userSettings.promptLanguage.collectAsState(initial = "中文")
     val themeMode by container.userSettings.themeMode.collectAsState(initial = "system")
     val userLocation by container.userSettings.promptLocation.collectAsState(initial = "")
+    val providerSubtitle = when {
+        keyedProviders.isEmpty() -> "未配置"
+        else -> providers.firstOrNull { it.id == activeProviderId }?.displayName
+            ?: "${keyedProviders.size} 个服务商"
+    }
     val chatViewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.factory(
             repository = container.repository,
             apiKey = container.apiKey,
+            providers = container.providers,
+            keyedProviders = container.keyedProviders,
+            activeProviderId = container.activeProviderId,
+            lastModelFor = { id -> container.lastModelFor(id) },
             attachmentStore = container.attachmentStore,
             voice = container.voiceController,
             settings = container.userSettings,
             account = container.account,
+            quotaFor = { provider -> container.quotaFor(provider) },
         ),
     )
 
@@ -93,6 +107,9 @@ fun TinyChatApp() {
     var editingPromptId by remember { mutableStateOf<String?>(null) }
     var creatingPrompt by remember { mutableStateOf(false) }
     var promptReloadKey by remember { mutableStateOf(0) }
+    // 服务商编辑（M8-6）：null = 新增
+    var editingProviderId by remember { mutableStateOf<String?>(null) }
+    var addingProvider by remember { mutableStateOf(false) }
     LaunchedEffect(promptReloadKey) {
         promptPresets = container.promptStore.all()
         promptSelectedId = container.promptStore.current().id
@@ -147,7 +164,7 @@ fun TinyChatApp() {
                 composable(Routes.CHAT) {
                     ChatScreen(
                         state = chatViewModel.state,
-                        hasApiKey = hasKey,
+                        hasApiKey = chatViewModel.state.hasApiKey,
                         autoSpeak = chatViewModel.state.autoSpeak,
                         onInputChange = chatViewModel::onInputChange,
                         onSend = chatViewModel::send,
@@ -199,7 +216,7 @@ fun TinyChatApp() {
                         onOpenProvider = { navController.navigate(Routes.PROVIDER) },
                         onOpenData = { navController.navigate(Routes.DATA) },
                         onOpenAbout = { navController.navigate(Routes.ABOUT) },
-                        hasKey = hasKey,
+                        providerSubtitle = providerSubtitle,
                         promptName = promptName,
                         onOpenPrompt = { navController.navigate(Routes.PROMPT) },
                         ttsVoice = chatViewModel.state.ttsVoice,
@@ -219,20 +236,51 @@ fun TinyChatApp() {
                     )
                 }
                 composable(Routes.PROVIDER) {
-                    ProviderSettingsScreen(
-                        hasKey = hasKey,
+                    ProviderListScreen(
+                        providers = providers,
+                        keyedProviders = keyedProviders,
                         onBack = { navController.popBackStack() },
-                        onCheck = { candidate ->
-                            when (val result = container.account.checkKey(candidate)) {
-                                KeyCheck.Ok -> null
-                                KeyCheck.Invalid -> "Key 无效"
-                                is KeyCheck.Failed -> result.message
+                        onAdd = {
+                            addingProvider = true
+                            editingProviderId = null
+                            navController.navigate(Routes.PROVIDER_EDIT)
+                        },
+                        onEdit = { provider ->
+                            addingProvider = false
+                            editingProviderId = provider.id
+                            navController.navigate(Routes.PROVIDER_EDIT)
+                        },
+                        onDelete = { provider ->
+                            scope.launch {
+                                container.deleteProvider(provider.id)
+                                if (provider.id == activeProviderId) {
+                                    container.userSettings.setActiveProviderId("deepseek")
+                                }
                             }
                         },
-                        onTestStored = { container.checkStoredKey() },
-                        onSave = { container.saveApiKey(it) },
-                        onClear = { container.clearApiKey() },
                     )
+                }
+                composable(Routes.PROVIDER_EDIT) {
+                    val provider = if (addingProvider) {
+                        null
+                    } else {
+                        providers.firstOrNull { it.id == editingProviderId }
+                    }
+                    key(editingProviderId, addingProvider) {
+                        ProviderEditorScreen(
+                            provider = provider,
+                            existing = providers,
+                            hasKey = provider?.id?.let { it in keyedProviders } == true,
+                            onBack = { navController.popBackStack() },
+                            onSave = { edited, key ->
+                                container.saveProvider(edited, key)
+                                container.checkProvider(edited, key)
+                            },
+                            onCheck = { edited, key -> container.checkProvider(edited, key) },
+                            onClearKey = { id -> container.clearProviderKey(id) },
+                            onFetchModels = { edited, key -> container.fetchModels(edited, key) },
+                        )
+                    }
                 }
                 composable(Routes.DATA) {
                     DataManagementScreen(
@@ -338,6 +386,7 @@ fun TinyChatApp() {
                 contextUsed = chatViewModel.state.contextUsed,
                 contextWindow = chatViewModel.state.contextWindow,
                 balanceText = chatViewModel.state.balanceText,
+                quota = chatViewModel.state.quota,
                 onDismiss = { usageOpen = false },
             )
         }

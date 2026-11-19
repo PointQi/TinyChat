@@ -24,6 +24,10 @@ import io.tinychat.model.BranchNode
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.FilePayload
 import io.tinychat.model.KnownProviders
+import io.tinychat.model.ModelInfo
+import io.tinychat.model.Provider
+import io.tinychat.model.ProviderKind
+import io.tinychat.model.QuotaSnapshot
 import io.tinychat.net.account.AccountClient
 import io.tinychat.model.Usage
 import io.tinychat.model.billing.CostCalculator
@@ -221,6 +225,12 @@ data class ChatUiState(
     /** 错误分类：决定文案与「去设置」这类动作 */
     val errorKind: ErrorKind? = null,
     val title: String? = null,
+    /** 当前会话的服务商（M8-6）：会话创建时固定，切换模型不换服务商 */
+    val providerId: String = KnownProviders.deepSeek.id,
+    /** 已配置的服务商目录（服务商页增删后自动刷新） */
+    val providers: List<Provider> = emptyList(),
+    /** 哪些服务商已经存了 Key（用来判断「未配置」提示条） */
+    val keyedProviders: Set<String> = emptySet(),
     val modelId: String = KnownProviders.flash.id,
     /**
      * 默认 `Flash 低`（对齐官方 App 默认设定）。
@@ -255,15 +265,29 @@ data class ChatUiState(
     val usageSummary: UsageSummary = UsageSummary(),
     /** 余额文案（形如 `￥12.34`）；null = 未取到 */
     val balanceText: String? = null,
+    /** 订阅额度（OpenCode Go）；null = 不是订阅制或没取到 */
+    val quota: QuotaSnapshot? = null,
     val balanceLoading: Boolean = false,
     /** 每轮统计条开关（设置里可关，默认开） */
     val showUsage: Boolean = true,
     /** 用户元信息（`latest_reminder`）开关（M7-5，默认开） */
     val reminderEnabled: Boolean = true,
 ) {
+    /** 当前服务商；被删除后为 null */
+    val currentProvider: Provider?
+        get() = providers.firstOrNull { it.id == providerId }
+
+    /** 会话指向的服务商被删了：历史可读，输入要禁用 */
+    val providerMissing: Boolean
+        get() = providers.isNotEmpty() && currentProvider == null
+
+    /** 当前模型的目录信息；服务商被删时退化为不支持任何扩展 */
+    private val currentModel: ModelInfo?
+        get() = currentProvider?.model(modelId)
+
     /** 当前模型能不能收图片（v4-pro 不支持，M4-6） */
     val canAttachImage: Boolean
-        get() = KnownProviders.deepSeek.model(modelId)?.capabilities?.imageInput == true
+        get() = currentModel?.capabilities?.imageInput == true
 
     /** 圆环分子：当前分支最后一条带 usage 的回答（决策 26，不做预估） */
     val contextUsed: Int
@@ -271,16 +295,28 @@ data class ChatUiState(
 
     /** 圆环分母 */
     val contextWindow: Int
-        get() = KnownProviders.deepSeek.model(modelId)?.contextWindow ?: 1_000_000
+        get() = currentModel?.contextWindow ?: 1_000_000
 
     val contextPercent: Float
         get() = if (contextWindow <= 0) 0f else (contextUsed.toFloat() / contextWindow).coerceIn(0f, 1f)
 
     /** 能不能带文件 */
     val canAttachFile: Boolean
-        get() = KnownProviders.deepSeek.model(modelId)?.capabilities?.fileUpload == true
+        get() = currentModel?.capabilities?.fileUpload == true
 
     val canAttach: Boolean get() = canAttachImage || canAttachFile
+
+    /** 当前模型支不支持服务端联网（第三方一律不支持） */
+    val supportsSearch: Boolean
+        get() = currentModel?.capabilities?.webSearch == true
+
+    /** 语音（ASR/TTS）只有官方端点：第三方不显示麦克风与朗读 */
+    val supportsVoice: Boolean
+        get() = currentModel?.capabilities?.tts == true
+
+    /** 当前模型支不支持思考强度 */
+    val supportsEffort: Boolean
+        get() = currentModel?.capabilities?.effort == true
 }
 
 /**
@@ -295,6 +331,12 @@ enum class VoiceStatus { IDLE, RECORDING, TRANSCRIBING }
 class ChatViewModel(
     private val repository: ChatRepository,
     private val apiKey: StateFlow<String>,
+    /** 服务商目录与可用 Key（M8-6）：模型选择器与「未配置」判断都读它 */
+    private val providers: StateFlow<List<Provider>>,
+    private val keyedProviders: StateFlow<Set<String>>,
+    private val activeProviderId: StateFlow<String>,
+    /** 该服务商上次用的模型；新会话默认用它 */
+    private val lastModelFor: suspend (String) -> String,
     /** 附件落盘（M4）：选完文件后先读元信息 + 生成缩略图 */
     private val attachmentStore: AttachmentStore,
     /** 语音（M5）：录音、频谱、ASR、TTS 播放 */
@@ -303,6 +345,8 @@ class ChatViewModel(
     private val settings: UserSettings,
     /** 账户接口（M7-4）：余额查询 */
     private val account: AccountClient,
+    /** 订阅额度（M8-6）：OpenCode Go 走它，其他服务商返回 null */
+    private val quotaFor: suspend (Provider) -> QuotaSnapshot?,
 ) : ViewModel() {
 
     var state by mutableStateOf(ChatUiState())
@@ -350,8 +394,19 @@ class ChatViewModel(
             }
         }
         viewModelScope.launch {
-            apiKey.map { it.isNotBlank() }.distinctUntilChanged().collect { present ->
-                state = state.copy(hasApiKey = present)
+            providers.collect { list ->
+                state = state.copy(
+                    providers = list,
+                    hasApiKey = state.providerId in state.keyedProviders,
+                )
+            }
+        }
+        viewModelScope.launch {
+            keyedProviders.collect { keyed ->
+                state = state.copy(
+                    keyedProviders = keyed,
+                    hasApiKey = state.providerId in keyed,
+                )
             }
         }
         viewModelScope.launch {
@@ -416,11 +471,16 @@ class ChatViewModel(
         viewModelScope.launch {
             val row = repository.session(id) ?: return@launch
             state = state.copy(
+                providerId = row.providerId,
                 modelId = row.model,
                 effort = row.effort ?: ThinkingEffort.LOW,
                 thinkingEnabled = row.thinkingEnabled,
                 searchEnabled = row.searchEnabled,
                 title = row.title,
+                hasApiKey = row.providerId in state.keyedProviders,
+                // 换了服务商，账户区（￥ 余额 / 订阅额度）必须重取，不能沿用上一家的数字
+                balanceText = null,
+                quota = null,
             )
         }
     }
@@ -564,7 +624,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null, errorKind = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.retryTurn(id, message.id, apiKeyValue))
+                state = state.withOutcomeError(repository.retryTurn(id, message.id))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -594,6 +654,14 @@ class ChatViewModel(
         val drafts = state.attachments
         // 只有附件没有文字也能发（真实 App 就是这样）
         if ((text.isEmpty() && drafts.isEmpty()) || state.isStreaming) return
+        if (state.providerMissing) {
+            state = state.copy(error = "此会话的服务商已被移除，请新建会话", errorKind = null)
+            return
+        }
+        if (!state.hasApiKey) {
+            state = state.copy(error = "尚未配置当前服务商的 API Key", errorKind = ErrorKind.HTTP_401)
+            return
+        }
 
         val editingId = state.editingMessageId
         val sendingAttachments = drafts
@@ -611,6 +679,8 @@ class ChatViewModel(
         job = viewModelScope.launch {
             try {
                 val id = sessionId ?: repository.createSession(
+                    providerId = state.providerId,
+                    model = state.modelId,
                     thinkingEnabled = state.thinkingEnabled,
                     searchEnabled = state.searchEnabled,
                     effort = state.effort,
@@ -622,12 +692,11 @@ class ChatViewModel(
                 persistSettings(id)
                 val outcome = if (editingId != null) {
                     // 编辑重发：在新分支上跑，旧分支留库
-                    repository.editMessage(id, editingId, text, apiKeyValue)
+                    repository.editMessage(id, editingId, text)
                 } else {
                     repository.send(
                         sessionId = id,
                         text = text,
-                        apiKey = apiKeyValue,
                         attachments = sendingAttachments.map {
                             PickedFile(
                                 id = it.id,
@@ -688,7 +757,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.regenerate(id, message.id, apiKeyValue))
+                state = state.withOutcomeError(repository.regenerate(id, message.id))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -712,7 +781,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.continueGeneration(id, message.id, apiKeyValue))
+                state = state.withOutcomeError(repository.continueGeneration(id, message.id))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -757,20 +826,38 @@ class ChatViewModel(
         sessionId = null
         // 草稿附件的缩略图要跟着清掉，别在磁盘上留垃圾
         state.attachments.forEach { runCatching { attachmentStore.delete(it.id, null) } }
+        // 新对话回到「当前服务商 + 该家上次用的模型」：用户上次的选择要延续，
+        // 但不能把上一会话的模型带到一个没有它的服务商下
+        val providerId = activeProviderId.value
+        val provider = state.providers.firstOrNull { it.id == providerId }
         state = ChatUiState(
-            modelId = state.modelId,
+            providerId = providerId,
+            modelId = provider?.defaultModel?.id ?: state.modelId,
             effort = state.effort,
             thinkingEnabled = state.thinkingEnabled,
-            searchEnabled = state.searchEnabled,
+            searchEnabled = state.searchEnabled && provider?.defaultModel?.capabilities?.webSearch == true,
             // 这些都是全局状态，开新对话不能跟着重置（尤其是 hasApiKey：
             // 之前漏了它，开新对话后顶部会误报「尚未配置服务商」）
             autoSpeak = state.autoSpeak,
             ttsVoice = state.ttsVoice,
-            hasApiKey = state.hasApiKey,
+            hasApiKey = providerId in state.keyedProviders,
+            keyedProviders = state.keyedProviders,
+            providers = state.providers,
             showUsage = state.showUsage,
             reminderEnabled = state.reminderEnabled,
             balanceText = state.balanceText,
+            quota = state.quota,
         )
+        viewModelScope.launch {
+            val last = lastModelFor(providerId).takeIf { it.isNotBlank() }
+            val model = provider?.model(last ?: "") ?: return@launch
+            state = state.copy(
+                modelId = model.id,
+                effort = state.effort,
+                searchEnabled = state.searchEnabled && model.capabilities.webSearch,
+                hasApiKey = providerId in state.keyedProviders,
+            )
+        }
     }
 
     fun toggleThinking() {
@@ -779,16 +866,37 @@ class ChatViewModel(
     }
 
     fun toggleSearch() {
+        // 打开搜索前先看能力位：第三方服务商没有服务端联网，不要假装能开
+        if (!state.searchEnabled && !state.supportsSearch) {
+            state = state.copy(hint = "当前模型不支持服务端联网搜索")
+            return
+        }
         state = state.copy(searchEnabled = !state.searchEnabled)
         persistStandalone()
     }
 
-    fun selectModel(modelId: String, effort: ThinkingEffort) {
-        // v4-pro 不支持服务端搜索，切过去就顺手关掉
-        val capabilities = KnownProviders.deepSeek.model(modelId)?.capabilities
+    /**
+     * 底栏选模型（M8-6）：`providerId` 与模型一起进来，选择器按服务商分组。
+     *
+     * 已有消息的会话**不允许换服务商**（thinking 签名与缓存都跟服务商绑定），
+     * 但允许在同一家内换模型；新对话随便切。
+     */
+    fun selectModel(providerId: String, modelId: String, effort: ThinkingEffort) {
+        if (state.messages.isNotEmpty() && providerId != state.providerId) return
+        val capabilities = state.providers.firstOrNull { it.id == providerId }?.model(modelId)?.capabilities
         val search = state.searchEnabled && (capabilities?.webSearch == true)
-        state = state.copy(modelId = modelId, effort = effort, searchEnabled = search)
+        state = state.copy(
+            providerId = providerId,
+            modelId = modelId,
+            effort = effort,
+            searchEnabled = search,
+            hasApiKey = providerId in state.keyedProviders,
+        )
         persistStandalone()
+        viewModelScope.launch {
+            settings.setActiveProviderId(providerId)
+            settings.setLastModel(providerId, modelId)
+        }
     }
 
     /**
@@ -812,7 +920,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null, errorKind = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.regenerate(id, targetId, apiKeyValue))
+                state = state.withOutcomeError(repository.regenerate(id, targetId))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -837,11 +945,14 @@ class ChatViewModel(
     private suspend fun persistSettings(id: String) {
         repository.updateSettings(
             sessionId = id,
+            providerId = state.providerId,
             thinkingEnabled = state.thinkingEnabled,
             searchEnabled = state.searchEnabled,
             effort = state.effort,
             model = state.modelId,
         )
+        settings.setActiveProviderId(state.providerId)
+        settings.setLastModel(state.providerId, state.modelId)
     }
 
     // ---------------- 语音输入（M5） ----------------
@@ -1049,23 +1160,45 @@ class ChatViewModel(
         refreshBalance()
     }
 
-    /** 余额：60 秒内复用，失败静默（显示 --），不弹错 */
+    /**
+     * 账户信息（M7-4 / M8-6）：官方走 ￥ 余额，OpenCode Go 走三窗口订阅额度。
+     * 60 秒内复用，失败静默（显示 --），不弹错。
+     */
     fun refreshBalance(force: Boolean = false) {
+        val provider = state.providers.firstOrNull { it.id == state.providerId }
+        if (provider?.kind == ProviderKind.OPENCODE_GO) {
+            refreshQuota(provider, force)
+            return
+        }
         val key = apiKeyValue
         if (key.isBlank()) {
-            state = state.copy(balanceText = null)
+            state = state.copy(balanceText = null, quota = null)
             return
         }
         val now = System.currentTimeMillis()
         if (!force && now - balanceAt < BALANCE_TTL_MS) return
         balanceJob?.cancel()
         balanceJob = viewModelScope.launch {
-            state = state.copy(balanceLoading = true)
+            state = state.copy(balanceLoading = true, quota = null)
             val text = runCatching { account.balance(key) }.getOrNull()
                 ?.primary?.totalBalance
                 ?.let { "￥$it" }
             state = state.copy(balanceText = text, balanceLoading = false)
             if (text != null) balanceAt = now
+        }
+    }
+
+    /** 订阅额度：只对 OpenCode Go 生效；没配置等键就直接清空 */
+    private fun refreshQuota(provider: Provider, force: Boolean) {
+        val now = System.currentTimeMillis()
+        val cached = state.quota
+        if (!force && cached != null && now - cached.fetchedAt < BALANCE_TTL_MS) return
+        balanceJob?.cancel()
+        balanceJob = viewModelScope.launch {
+            state = state.copy(balanceLoading = true, balanceText = null)
+            val snapshot = runCatching { quotaFor(provider) }.getOrNull()
+            state = state.copy(quota = snapshot, balanceLoading = false)
+            if (snapshot != null) balanceAt = now
         }
     }
 
@@ -1411,12 +1544,31 @@ private fun StringBuilder.trimmedEnd(): Int {
         fun factory(
             repository: ChatRepository,
             apiKey: StateFlow<String>,
+            providers: StateFlow<List<Provider>>,
+            keyedProviders: StateFlow<Set<String>>,
+            activeProviderId: StateFlow<String>,
+            lastModelFor: suspend (String) -> String,
             attachmentStore: AttachmentStore,
             voice: VoiceController,
             settings: UserSettings,
             account: AccountClient,
+            quotaFor: suspend (Provider) -> QuotaSnapshot?,
         ) = viewModelFactory {
-            initializer { ChatViewModel(repository, apiKey, attachmentStore, voice, settings, account) }
+            initializer {
+                ChatViewModel(
+                    repository = repository,
+                    apiKey = apiKey,
+                    providers = providers,
+                    keyedProviders = keyedProviders,
+                    activeProviderId = activeProviderId,
+                    lastModelFor = lastModelFor,
+                    attachmentStore = attachmentStore,
+                    voice = voice,
+                    settings = settings,
+                    account = account,
+                    quotaFor = quotaFor,
+                )
+            }
         }
     }
 }

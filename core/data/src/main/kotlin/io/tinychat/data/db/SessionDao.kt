@@ -52,11 +52,13 @@ interface SessionDao {
 
     /** 底栏切换模型/强度/搜索时改会话快照（只影响之后的请求） */
     @Query(
-        "UPDATE sessions SET thinking_enabled = :thinking, search_enabled = :search, " +
-            "effort = :effort, model = :model, updated_at = :now WHERE id = :id",
+        "UPDATE sessions SET provider_id = :providerId, thinking_enabled = :thinking, " +
+            "search_enabled = :search, effort = :effort, model = :model, updated_at = :now " +
+            "WHERE id = :id",
     )
     suspend fun updateSettings(
         id: String,
+        providerId: String,
         thinking: Boolean,
         search: Boolean,
         effort: ThinkingEffort?,

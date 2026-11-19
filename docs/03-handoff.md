@@ -22,10 +22,10 @@
 | **M5 语音** | ✅ **真机全通**（2026-11-19） | 点麦克风 → 键盘图标 + 居中「按住说话」→ 按住录音（频谱 + 秒数）→ 松手识别并**直接发送**；上滑取消；顶栏自动朗读（DataStore 持久化）+ 操作栏单条朗读；设置里两个官方音色。端点实测见 §7「M5 语音」 |
 | **M6 数据管理** | ✅ **导入导出 + 清空全通，3340 会话往返 PASS**（2026-11-19） | 流式 ZIP 读（`ZipFile` 中央目录）、v3 解析/校验（未知条目整包失败、索引 message_count 交叉校验）、单事务整包替换 + 文件副作用回滚、导出（官方条目顺序，不新增条目/字段）、数据管理页接 SAF（导入与清空都要二次确认）、**清空所有对话**（先删文件再删行）。**真样本 3340 会话 / 23580 消息 / 39665 碎片 / 79 附件往返，字段级 diff = 0**；导出只有文本进度、没有进度条 |
 | **M7 用量与费用** | ✅ **全部落地，模拟器验完**（2026-11-19） | M7-1 计价（`core/model/billing`：价格表 + 峰谷 + 微元整数 + 单测）；M7-2 圆环（只读当前分支真实 usage，输入区回形针左侧）+ 右侧会话汇总抽屉（标签可点展开说明）；M7-3 每轮统计条（设置开关，默认开）；M7-4 余额（`GET /user/balance`，左抽屉 `￥8.43` 实测）；M7-6 凭据（Keystore AES-GCM + 服务商页：保存/测试/清除，假 Key 报「Key 无效」）；M7-5 reminder 开关（关掉后请求不带该消息）。**真机/模拟器验证**：抽屉数值与 `usage` 一致、关闭统计条后整行消失、开关持久化、储蓄的 Key 在「校验失败」后仍可用 || **M7.5 提示词** | ✅ **全部落地，模拟器验完**（2026-11-19） | M7-5-1 种子：`PromptSeeds` 5 条内置（默认=官方原句、无提示词 CLEAR、角色扮演/翻译润色/学习辅导骨架），启动时 `ensureSeeded()` 对齐；M7-5-2 两个页面（列表 + 编辑器：名称/组合方式/内容/字数与 tok 估算/6 个变量按钮/未知变量红字禁用保存/内置只读+复制后编辑/删除自定义/恢复默认二次确认）；M7-5-3 建会话时 `snapshotForNewSession()` 写快照，**发送时**求值 `{{date}} {{weekday}} {{time}} {{location}} {{language}} {{model}}`（未知变量原样保留）；M7-5-4 恢复默认写回官方原文并选中。**端到端实测**：新建「meow」预设（正文 `Always start your reply with MEOW.`）→ 新会话回复以 `MEOW!` 开头；切回默认后**老会话仍以 MEOW 开头**（快照隔离）。单测：`PromptVariablesTest`(7) + `PromptPresetStoreTest`(10) + `ChatRepositoryPromptTest`(3) |
-| **M8 打磨** | 🚧 **M8-2 / M8-4 / M8-7 已落地**（2026-11-19），M8-1 与 M8-6 留最后 | 已完成：**分享为图片**（操作栏「分享」→ 抽屉「生成图片/复制文本/分享文本」→ 进度 → 预览 → 系统分享；1080px 宽、>12000px 自动切段、页脚「内容由 AI 生成，请仔细甄别」+ TinyChat；公式先预热再拍，代码块横向会被裁——见决策 32）；**外观**（跟随系统/浅色/深色，立即生效并落库）；**字体大小**（小 0.9/标准 1.0/大 1.15/特大 1.3，只放大正文，1.3× 不破版，实测 129px→168px 行高）；**语言**（中文/English，只驱动 `{{language}}` 与 reminder，**界面文案仍中文**——英文化留 v1.1）；**个性化** = 所在地（喂 `{{location}}`）；**启动** `core-splashscreen`（只设背景+图标，无动画）。未做：**M8-1 OpenAI 兼容**、**M8-6 多服务商**（按用户要求放最后，服务商页接近重写） |
+| **M8 打磨** | ✅ **全部落地，模拟器验完**（2026-11-19） | **分享为图片**（操作栏「分享」→ 抽屉「生成图片/复制文本/分享文本」→ 进度 → 预览 → 系统分享；1080px 宽、>12000px 自动切段、页脚「内容由 AI 生成，请仔细甄别」+ TinyChat；公式先预热再拍，代码块横向会被裁——见决策 32）；**外观**（跟随系统/浅色/深色）；**字体大小**（只放大正文，1.3× 不破版）；**语言**（只驱动 `{{language}}` 与 reminder，界面仍中文）；**个性化** = 所在地；**启动** `core-splashscreen`；**M8-1 OpenAI 兼容**（`ChatProtocols` 抽象 + OpenAI Chat / Anthropic Messages 构建器 + `OpenAiStreamAssembler`，本地标题 24 字，费用只显示 token）；**M8-6 多服务商**（`providers` 表 + 每家一把 Keystore Key + 旧 Key 自动迁移 + 列表/添加/编辑页重写：保存即校验、清除只对有密钥的行、删除服务商后会话只读、OpenCode Go 独立 kind + `/usage` 三窗口额度） |
 | **M9 发布** | ⬜ 未开始 | 签名仍是 debug；根目录无 README/LICENSE/NOTICE；无 `UncaughtExceptionHandler`；1 万条消息滚动未测 |
 | 阻塞项 | 无 | Key 暂走 `.local/dev-key.txt`（debug 注入）→ **M7-6 换成 Keystore + 设置页**（决策 23） |
-| 下一步 | — | **M8 剩下的两项**：M8-1 OpenAI 兼容协议（新协议构建器 + 新流解码器）→ M8-6 多服务商（`/models` 校验、每个服务商一条 Keystore、服务商页重写）。然后 M9 发布（性能专测 / 崩溃兜底 / README / 签名 / 冒烟）。M7.5 与 M8 的坑见 §7.5 |
+| 下一步 | — | **M9 发布**：性能专测（1 万条滚动 ≥55fps）、`UncaughtExceptionHandler`、README/LICENSE/NOTICE、release 签名、冒烟清单。M8 的坑见 §7.6；OpenCode Go 的真 Key 验收（模型拉取、额度三窗口）等有 Key 时补 |
 
 
 ---
@@ -115,6 +115,10 @@ git clone --depth 1 https://github.com/deepseek-ai/chat-demo.git temp-doc/chat-d
 | 30 | **提示词预设的落地口径（2026-11-19）**：5 条内置只读（改要先复制，`恢复默认` 写回官方原句）；全局只有一个「当前预设」，**选中即落库**，点一行 = 选中并打开编辑器；新会话建会话时取快照，变量**发送时**求值，未知变量保留原文且在编辑器里报错禁用保存；`{{model}}` 取模型**显示名**（不是内部 id） |
 | 31 | **M8-4 的三处口径（2026-11-19）**：**字体大小只放大正文**（markdown 语义字号），顶栏/按钮/设置列表保持原尺寸 —— 这是「1.3× 不破版」的实现方式，别改成全局 Typography 缩放；**「语言」= 回答语言**，只驱动 `{{language}}` 与 `latest_reminder`，界面文案英文化留 v1.1（用户同意"意思意思"）；**「个性化」= 所在地**（喂 `{{location}}`），不是推荐偏好 |
 | 32 | **分享长图的实现与已知限制（2026-11-19）**：1080px 宽、单张 >12000px 切段、PNG 落 `cacheDir/share/` 走 FileProvider；离屏渲染 = 往 Activity decor 临时塞一个**宽度焊死**的宿主 View（不是 Dialog/悬浮窗），并等「高度稳定 + 公式渲染队列清零」再画；**极长的代码行会被横向裁掉**（代码块是横向滚动容器，图里没有滚动），与屏幕上的表现一致，v1.1 再考虑换行渲染 |
+| 33 | **服务商页的动作口径（2026-11-19 用户拍板，M8-6）**：**保存是唯一主按钮**，点保存 = 立即写本机 + 后台 `GET /models` 校验；校验结果只是**状态**（绿点 / 灰未校验 / 红 + 一行原因），**不阻塞保存**（离线也能存）。删掉「测试连接」这个动词；要复检就在编辑页点状态行右侧的 `重新校验`。「清除」只在**确实存了密钥**时出现，文案 `清除已保存的密钥`，确认框写明「只删本机密钥，不影响服务商账户」。交互与文档分离见 05 |
+| 34 | **每家服务商一把 Key + 会话快照（2026-11-19）**：`credentials` DataStore 里键名 `cipher.<providerId>`，仍是同一把 Keystore AES-GCM 主密钥；M7-6 的 `api_key_cipher` 首次启动自动迁到 `cipher.deepseek`。新表 `providers`（id/kind/display_name/base_url/protocol/models_json/builtin/sort/check_*），启动播种 DeepSeek；内置服务商**不可删**（TTS/ASR/余额都靠它）。会话表仍只存 `provider_id` + `model`：**删服务商后会话可读但发送被拦**（顶部条「此会话的服务商已被移除」，胶囊显示 `已移除`）；不提供「换一家继续」 |
+| 35 | **协议抽象与第三方降级（2026-11-19，M8-1）**：`ChatProtocols` 按 `ProviderProtocol` 分发（`DEEPSEEK_MESSAGES` / `ANTHROPIC_MESSAGES` / `OPENAI_CHAT`），`ChatStreamRunner` 只吃 `StreamAssembler`。OpenAI 链路：Bearer、`stream_options.include_usage`（400 时降级一次）、`reasoning_content` 显示思考、`finish_reason` 映射状态、**标题本地取首条 24 字**、`latest_reminder` 拼进 system、`APPEND` **不拼** DeepSeek 官方句。第三方不显示 ￥（只 token）、不提供搜索/文件/TTS/语音；**图片（base64）按用户决定本轮不做**，「视觉」不出现 |
+| 36 | **OpenCode Go 独立 kind（2026-11-19）**：对话走 `zen/go/v1/chat/completions`（OpenAI 兼容），目录 `zen/go/v1/models`，额度 `zen/go/v1/usage`；`x-opencode-session = sha256(sessionId).hex`（≤64、同会话所有派生请求同值），UA = `TinyChat/1.0 (Android)`（不伪装 CLI）。额度只取 `rolling/weekly/monthly` 的 `percent`（已用）与 `resetsAt`，UI 显示**剩余**；`rate-limited` 视为 100%；接口失败就整块隐藏，不编数字 |
 
 ---
 
@@ -895,6 +899,23 @@ chat-demo 是 Web 实现（点一下开始、再点结束、结果回填输入�
 - **等高度等不出公式**：占位块高度固定，公式出图前后高度可能不变。要同时看 `TcRenderHost` 的渲染队列（`MathRenderState.inFlight()`）并先做 `MathPrewarm`。
 - **必须切段立刻落盘**：1080×12000 的 ARGB_8888 是 51MB，攒三张就 OOM；预览只留首张的 1/2 缩略图。
 - **`adb exec-out > file` 在 PowerShell 里会写坏 PNG**（走文本管道），要用 `cmd /c "adb ... > file"`。
+
+### M8-1 / M8-6 服务商重写的坑（2026-11-19 验完）
+
+- **`providerStore` 必须先播种再发请求**：仓库按 `session.provider_id` 查表，表里没有就先抛 `ProviderMissingException`。单测里忘了 `ensureSeeded()` 会以「服务商已移除」失败；`onSession` 打开老会话也依赖这一行。
+- **`hasApiKey` 改成「当前服务商在 `keyedProviders` 里」**：只看 DeepSeek 那把会误报。`keyedProviders` 由容器在目录/凭据变化时重算（`refreshKeyedProviders()`），写 Key / 删服务商后要显式调一次。
+- **`newChat()` 会重建 `ChatUiState`**：新字段（`providerId`/`providers`/`keyedProviders`/`quota`）漏带就会被清空；本次又踩了一次。凡新增跨页状态，先去 `newChat()` 补一行。
+- **模型选择器按服务商分组后，已有消息的会话禁止换服务商**：`selectModel(providerId, modelId, effort)` 里有 `messages.isNotEmpty() && providerId != state.providerId` 的拦截；thinking 签名与缓存都跟服务商绑定，别放开。
+- **`ModelInfo.displayName` 可能为空**（自定义模型只填了 ID）：保存时把空显示名归一成 ID，UI 再兜一层 `ifBlank { id }`，否则选择器里是一行空白。
+- **DeepSeek 的显示名是 `DeepSeek V4.1 Flash`**：pill 直接显示会挤，`shortName()` 要去掉 `DeepSeek V4.1 ` / `DeepSeek ` 前缀，第三方再去掉 `org/` 与冒号前缀。
+- **目录 tab 选中后必须继续渲染密钥与模型**：第一版把整个表单包在 `if (!catalogMode)` 里，结果选完 OpenCode Go 只能看见「已选择」，没地方填 Key。
+- **`/models` 的 401 要翻成人话**：直接抛 `HTTP 401` 用户看不懂；`AccountClient.modelIds` 里把 401/403 映射成 `Key 无效`、404 映射成「该地址没有模型列表，请手动添加」。
+- **校验失败别把点染红**：网络不通 / 5xx 写 `UNKNOWN`（灰点），只有 Key 被拒 / 402 才写 `FAILED`（红点）；否则用户一进地铁就看到一片红。
+- **`SecretStore` 改成按 id** 后，所有旧调用点都要改；`read()` 无参版本删掉，迁移只发生在 `migrateLegacy()`（读旧键、写 `cipher.deepseek`、删旧键，已有新键不覆盖）。
+- **`ChatRepository` 不再收 `apiKey` 参数**：发送/编辑/重生成/继续/重试全部内部按会话服务商取 Key；ViewModel 里只剩语音/余额还用 `container.apiKey`（DeepSeek 那把）。测试要传 `providerStore` + `apiKeyFor`。
+- **DB 升到 v4**：`providers` 表迁移只建表不塞数据，播种在 `ProviderStore.ensureSeeded()`；迁移里写死模型 JSON 的话，以后改能力位还得再发一次迁移。
+- **又把源码交给 PowerShell 改坏一次**（`ChatStreamRunner.kt` 的中文注释被写坏、还丢了一个换行）：结论不变——**改代码走补丁工具**，`Set-Content` 只用于纯 ASCII 的小替换。
+- **模拟器坐标会随内容高度漂移**：服务商表单在填完字段后会滚动/变矮，上一轮 dump 的坐标下一轮就点空。每次点击前重新 dump，别复用坐标。
 
 ---
 

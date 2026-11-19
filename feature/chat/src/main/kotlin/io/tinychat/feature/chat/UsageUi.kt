@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
+import io.tinychat.model.QuotaSnapshot
+import io.tinychat.model.QuotaWindow
 import io.tinychat.model.Usage
 import io.tinychat.model.billing.Money
 import io.tinychat.model.billing.UsageSummary
@@ -133,8 +135,9 @@ fun UsageStatsLine(usage: Usage, costMicros: Long) {
     val line = buildString {
         append("${Money.tokens(usage.cacheHitTokens.toLong())} 命中  ")
         append("${Money.tokens(usage.promptTokens.toLong())} 未命中  ")
-        append("${Money.tokens(usage.completionTokens.toLong())} 输出  ")
-        append(Money.format(costMicros))
+        append("${Money.tokens(usage.completionTokens.toLong())} 输出")
+        // 第三方服务商没有单价表（CostCalculator 返回 0）：只显示 token，不编一个 ￥0.0000
+        if (costMicros > 0) append("  ${Money.format(costMicros)}")
     }
     Text(
         text = line,
@@ -157,6 +160,8 @@ fun UsageDrawer(
     contextUsed: Int,
     contextWindow: Int,
     balanceText: String?,
+    /** 订阅额度（M8-6）：OpenCode Go 的三窗口；null = 不是订阅制或没取到 */
+    quota: QuotaSnapshot? = null,
     onDismiss: () -> Unit,
 ) {
     val palette = TcTheme.palette
@@ -285,32 +290,111 @@ fun UsageDrawer(
                     MetricBlock("缓存读取", summary.usage.cacheHitTokens, hasData)
                     MetricBlock("输出", summary.usage.completionTokens, hasData)
 
-                    Spacer(Modifier.height(20.dp))
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(palette.borderL2),
-                    )
-                    Spacer(Modifier.height(20.dp))
+                    val hasAccount = quota != null || balanceText != null
+                    if (hasAccount) {
+                        Spacer(Modifier.height(20.dp))
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(palette.borderL2),
+                        )
+                        Spacer(Modifier.height(20.dp))
 
-                    ExplainableLabel("账户", UsageGlossary.BALANCE, expanded) { expanded = it }
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = "余额",
-                        style = TextStyle(fontSize = 13.sp),
-                        color = palette.labelSecondary,
-                    )
-                    Text(
-                        text = balanceText ?: "--",
-                        style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
-                        color = palette.labelPrimary,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                    if (expanded == UsageGlossary.BALANCE) GlossaryText(UsageGlossary.BALANCE)
+                        ExplainableLabel("账户", UsageGlossary.BALANCE, expanded) { expanded = it }
+                        Spacer(Modifier.height(12.dp))
+                        if (quota != null) {
+                            Text(
+                                text = "订阅额度",
+                                style = TextStyle(fontSize = 13.sp),
+                                color = palette.labelSecondary,
+                            )
+                            quota.windows.forEach { window ->
+                                QuotaRow(window)
+                            }
+                        } else {
+                            Text(
+                                text = "余额",
+                                style = TextStyle(fontSize = 13.sp),
+                                color = palette.labelSecondary,
+                            )
+                            Text(
+                                text = balanceText ?: "--",
+                                style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                                color = palette.labelPrimary,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                        if (expanded == UsageGlossary.BALANCE) GlossaryText(UsageGlossary.BALANCE)
+                    }
                 }
             }
         }
+    }
+}
+
+/**
+ * 一个额度窗口：`5 小时  剩 89%` + 细进度条 + 重置时间。
+ *
+ * 进度条画的是**剩余**（与 ￥ 余额语义一致）；触顶变红，不整块灰显。
+ */
+@Composable
+private fun QuotaRow(window: QuotaWindow) {
+    val palette = TcTheme.palette
+    val color = when {
+        window.exhausted || window.usedPercent >= 90 -> palette.danger
+        window.usedPercent >= 70 -> palette.warning
+        else -> palette.brand
+    }
+    Column(Modifier.padding(top = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = window.label,
+                style = TextStyle(fontSize = 13.sp),
+                color = palette.labelSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = if (window.exhausted) "已达限额" else "剩 ${window.remainingPercent}%",
+                style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+                color = color,
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .background(palette.borderL2, RoundedCornerShape(2.dp)),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(window.remainingPercent / 100f)
+                    .height(4.dp)
+                    .background(color, RoundedCornerShape(2.dp)),
+            )
+        }
+        resetLabel(window.resetAt)?.let { text ->
+            Text(
+                text = text,
+                style = TextStyle(fontSize = 11.sp),
+                color = palette.labelTertiary,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+/** 重置时间：只给相对说法（`3 小时后重置`），不暴露 ISO 串。 */
+private fun resetLabel(resetAt: String?): String? {
+    if (resetAt.isNullOrBlank()) return null
+    val instant = runCatching { java.time.Instant.parse(resetAt) }.getOrNull() ?: return null
+    val minutes = java.time.Duration.between(java.time.Instant.now(), instant).toMinutes()
+    return when {
+        minutes <= 0 -> "即将重置"
+        minutes < 60 -> "$minutes 分钟后重置"
+        minutes < 48 * 60 -> "${minutes / 60} 小时后重置"
+        else -> "${minutes / (24 * 60)} 天后重置"
     }
 }
 

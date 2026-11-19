@@ -144,6 +144,7 @@ import io.tinychat.model.AttachmentState
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.KnownProviders
+import io.tinychat.model.Provider
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcInlineHint
@@ -170,7 +171,7 @@ fun ChatScreen(
     onStop: () -> Unit,
     onToggleThinking: () -> Unit,
     onToggleSearch: () -> Unit,
-    onSelectModel: (String, ThinkingEffort) -> Unit,
+    onSelectModel: (String, String, ThinkingEffort) -> Unit,
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
     onToggleAutoSpeak: () -> Unit,
@@ -284,13 +285,15 @@ fun ChatScreen(
             leading = { TcIconButton(TcIcons.Menu, "会话列表", onOpenDrawer) },
             title = state.title,
             trailing = {
-                // 顶栏播音键 = **自动朗读开关**，开着时染品牌色（否则两个状态长得一样）
-                TcIconButton(
-                    icon = TcIcons.Speak,
-                    contentDescription = if (autoSpeak) "关闭自动朗读" else "开启自动朗读",
-                    onClick = onToggleAutoSpeak,
-                    tint = if (autoSpeak) palette.brand else palette.labelSecondary,
-                )
+                // 顶栏播音键 = **自动朗读开关**；语音只有官方端点，第三方不显示
+                if (state.supportsVoice) {
+                    TcIconButton(
+                        icon = TcIcons.Speak,
+                        contentDescription = if (autoSpeak) "关闭自动朗读" else "开启自动朗读",
+                        onClick = onToggleAutoSpeak,
+                        tint = if (autoSpeak) palette.brand else palette.labelSecondary,
+                    )
+                }
                 TcIconButton(TcIcons.PlusCircle, "新建对话", onNewChat)
             },
         )
@@ -326,7 +329,12 @@ fun ChatScreen(
             )
         }
 
-        if (!hasApiKey) {
+        if (state.providerMissing) {
+            TcInlineHint(
+                text = "此会话的服务商已被移除，无法继续对话",
+                onClick = onOpenProviderSettings,
+            )
+        } else if (!hasApiKey) {
             TcInlineHint(
                 text = "尚未配置服务商，点击设置 API Key",
                 onClick = onOpenProviderSettings,
@@ -490,6 +498,7 @@ private fun MessageList(
                     onRetry = { onRetry(message) },
                     onRetryAttachment = { onRetryAttachment(message) },
                     isSpeaking = state.speakingMessageId == message.id,
+                    canReadAloud = state.supportsVoice,
                     onReadAloud = { onReadAloud(message) },
                 )
             }
@@ -542,6 +551,8 @@ private fun MessageRow(
     onRetryAttachment: () -> Unit,
     /** 这条正在朗读（图标换成跳动的横条） */
     isSpeaking: Boolean,
+    /** 当前服务商支持 TTS 才显示朗读（语音只有官方端点） */
+    canReadAloud: Boolean = true,
     onReadAloud: () -> Unit,
 ) {
     val palette = TcTheme.palette
@@ -700,25 +711,27 @@ private fun MessageRow(
                             },
                         )
                         // 朗读（M5-4）：点了开始读本条，朗读中图标变成跳动的横条，再点停止
-                        if (isSpeaking) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable(onClick = onReadAloud),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                ReadingBars(
-                                    modifier = Modifier.size(width = 14.dp, height = 12.dp),
-                                    tint = palette.brand,
+                        if (canReadAloud) {
+                            if (isSpeaking) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable(onClick = onReadAloud),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    ReadingBars(
+                                        modifier = Modifier.size(width = 14.dp, height = 12.dp),
+                                        tint = palette.brand,
+                                    )
+                                }
+                            } else {
+                                ActionIcon(
+                                    icon = TcIcons.Speak,
+                                    description = "朗读",
+                                    onClick = onReadAloud,
                                 )
                             }
-                        } else {
-                            ActionIcon(
-                                icon = TcIcons.Speak,
-                                description = "朗读",
-                                onClick = onReadAloud,
-                            )
                         }
                         ActionIcon(
                             icon = TcIcons.Share,
@@ -1509,7 +1522,7 @@ private fun InputCard(
     onStop: () -> Unit,
     onToggleThinking: () -> Unit,
     onToggleSearch: () -> Unit,
-    onSelectModel: (String, ThinkingEffort) -> Unit,
+    onSelectModel: (String, String, ThinkingEffort) -> Unit,
     onCancelEdit: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onPickImages: () -> Unit,
@@ -1689,8 +1702,12 @@ private fun InputCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ModelEffortPill(
+                providers = state.providers,
+                keyedProviders = state.keyedProviders,
+                providerId = state.providerId,
                 modelId = state.modelId,
                 effort = state.effort,
+                allowProviderSwitch = state.messages.isEmpty(),
                 onSelect = onSelectModel,
             )
             Spacer(Modifier.width(8.dp))
@@ -1719,7 +1736,9 @@ private fun InputCard(
                 }
                 state.input.isNotBlank() || state.attachments.isNotEmpty() ->
                     CircleIcon(TcIcons.Send, "发送", palette.brand, filled = true, onClick = onSend)
-                else -> CircleIcon(TcIcons.Mic, "语音输入", palette.labelSecondary, onClick = onMicClick)
+                else -> if (state.supportsVoice) {
+                    CircleIcon(TcIcons.Mic, "语音输入", palette.labelSecondary, onClick = onMicClick)
+                }
             }
         }
     }
@@ -1757,17 +1776,26 @@ private fun InputCard(
     }
 }
 
-/** 模型与强度 pill：显示如 `Flash 高`（决策 20：不加中点），点开半屏选择器 */
+/** 模型与强度 pill：显示模型名 + 强度（决策 20：不加中点），点开半屏选择器（M8-6 按服务商分组） */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelEffortPill(
+    providers: List<Provider>,
+    keyedProviders: Set<String>,
+    providerId: String,
     modelId: String,
     effort: ThinkingEffort,
-    onSelect: (String, ThinkingEffort) -> Unit,
+    allowProviderSwitch: Boolean,
+    onSelect: (String, String, ThinkingEffort) -> Unit,
 ) {
     val palette = TcTheme.palette
     var sheetOpen by remember { mutableStateOf(false) }
-    val modelLabel = if (modelId == KnownProviders.v4Pro.id) "V4 Pro" else "Flash"
+    val current = providers.firstOrNull { it.id == providerId }
+    val currentModel = current?.model(modelId)
+    val label = when {
+        current == null -> "已移除"
+        else -> currentModel?.let { it.displayName.ifBlank { it.id } }?.shortName() ?: current.displayName
+    }
 
     Row(
         modifier = Modifier
@@ -1779,10 +1807,12 @@ private fun ModelEffortPill(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "$modelLabel ${effort.displayName}",
+            text = if (currentModel?.capabilities?.effort == true) "$label ${effort.displayName}" else label,
             style = TcTypography.bodySmall,
             color = palette.brand,
             fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 
@@ -1792,53 +1822,91 @@ private fun ModelEffortPill(
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = palette.bg,
         ) {
-            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 Text(
                     text = "模型与强度",
                     style = TcTypography.titleMedium,
                     color = palette.labelPrimary,
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
-                listOf(KnownProviders.flash, KnownProviders.v4Pro).forEach { model ->
-                    val name = if (model.id == KnownProviders.v4Pro.id) "V4 Pro" else "Flash"
-                    val usable = model.capabilities.webSearch
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                providers.filter { it.models.isNotEmpty() }.forEach { provider ->
+                    val sameProvider = provider.id == providerId
+                    val keyed = provider.id in keyedProviders
+                    Text(
+                        text = provider.displayName + if (!keyed) "  未配置密钥" else "",
+                        style = TcTypography.labelMedium,
+                        color = if (keyed) palette.labelSecondary else palette.labelTertiary,
+                        modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
+                    )
+                    provider.models.forEach { model ->
+                        val enabled = keyed && (sameProvider || allowProviderSwitch)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = enabled) {
+                                    sheetOpen = false
+                                    val targetEffort = if (model.capabilities.effort) effort else ThinkingEffort.LOW
+                                    onSelect(provider.id, model.id, targetEffort)
+                                }
+                                .padding(horizontal = 8.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Text(
-                                text = name,
+                                text = model.displayName.ifBlank { model.id }.shortName(),
                                 style = TcTypography.bodyLarge,
-                                color = if (usable) palette.labelPrimary else palette.labelSecondary,
+                                color = if (enabled) palette.labelPrimary else palette.labelTertiary,
+                                modifier = Modifier.weight(1f),
                             )
-                            if (!usable) {
-                                Text(
-                                    text = "不支持联网与文件",
-                                    style = TcTypography.bodySmall,
-                                    color = palette.labelTertiary,
-                                )
-                            }
+                            Text(
+                                text = when {
+                                    sameProvider && model.id == modelId -> "当前"
+                                    !keyed -> "未配置"
+                                    !sameProvider -> "新会话可用"
+                                    else -> ""
+                                },
+                                style = TcTypography.bodySmall,
+                                color = if (sameProvider && model.id == modelId) palette.brand else palette.labelTertiary,
+                            )
                         }
+                    }
+                }
+
+                if (currentModel?.capabilities?.effort == true) {
+                    Spacer(Modifier.height(14.dp))
+                    Text("思考强度", style = TcTypography.labelMedium, color = palette.labelSecondary)
+                    Spacer(Modifier.height(8.dp))
+                    Row {
                         ThinkingEffort.entries.forEach { option ->
                             EffortChip(
                                 text = option.displayName,
-                                selected = model.id == modelId && option == effort,
+                                selected = option == effort,
                                 onClick = {
                                     sheetOpen = false
-                                    onSelect(model.id, option)
+                                    onSelect(providerId, modelId, option)
                                 },
                             )
                             Spacer(Modifier.width(6.dp))
                         }
                     }
-                    Spacer(Modifier.height(10.dp))
                 }
                 Spacer(Modifier.height(16.dp))
             }
         }
     }
+}
+
+/** 模型显示名可能很长（`zai-org/GLM-5.3-Flash`），pill 只留短名 */
+private fun String.shortName(): String = when {
+    startsWith("DeepSeek V4.1 ") -> removePrefix("DeepSeek V4.1 ")
+    startsWith("DeepSeek ") -> removePrefix("DeepSeek ")
+    else -> substringAfterLast('/').substringAfterLast(':').ifBlank { this }
 }
 
 @Composable

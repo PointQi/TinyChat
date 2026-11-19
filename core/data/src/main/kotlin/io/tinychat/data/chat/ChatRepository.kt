@@ -10,6 +10,7 @@ import io.tinychat.data.db.SessionEntity
 import io.tinychat.data.db.TinyChatDatabase
 import io.tinychat.data.db.toDomain
 import io.tinychat.data.db.toEntity
+import io.tinychat.data.provider.ProviderStore
 import io.tinychat.model.AttachmentState
 import io.tinychat.model.Fragment
 import io.tinychat.model.BranchNode
@@ -17,7 +18,9 @@ import io.tinychat.model.ErrorKind
 import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.MessageStatus
+import io.tinychat.model.MessageStatus.FINISHED
 import io.tinychat.model.ModelInfo
+import io.tinychat.model.Provider
 import io.tinychat.model.pickVersion
 import io.tinychat.model.PromptMode
 import io.tinychat.model.RequestPayload
@@ -39,7 +42,7 @@ import io.tinychat.net.context.ContextTurn
 import io.tinychat.net.context.HistoryAttachment
 import io.tinychat.net.context.ReminderBuilder
 import io.tinychat.net.protocol.ChatCommand
-import io.tinychat.net.protocol.DeepSeekMessagesProtocol
+import io.tinychat.net.protocol.ChatProtocols
 import io.tinychat.net.protocol.WireMessage
 import io.tinychat.net.transport.ChatException
 import io.tinychat.net.transport.ChatTransport
@@ -72,6 +75,10 @@ class ChatRepository(
     private val promptSnapshot: suspend () -> PromptSnapshot = { PromptSnapshot(null, PromptMode.REPLACE) },
     /** 用户元信息，供 `{{location}}` / `{{language}}` 求值 */
     private val promptMeta: () -> PromptMeta = { PromptMeta() },
+    /** 服务商配置（M8-6）：按会话快照的 providerId 取地址/协议/能力/模型 */
+    private val providerStore: ProviderStore,
+    /** 取某家服务商当前的 Key；未配置返回 null（上层在发送前就拦住了） */
+    private val apiKeyFor: suspend (String) -> String?,
 ) {
 
     private val runner = ChatStreamRunner(db.messageDao(), db.fragmentDao(), clock)
@@ -235,6 +242,8 @@ class ChatRepository(
      * 显式传入 `systemPrompt` 时以传入为准（导入/测试用）。
      */
     suspend fun createSession(
+        providerId: String = KnownProviders.deepSeek.id,
+        model: String = KnownProviders.flash.id,
         thinkingEnabled: Boolean = true,
         searchEnabled: Boolean = false,
         effort: ThinkingEffort? = ThinkingEffort.HIGH,
@@ -254,8 +263,8 @@ class ChatRepository(
                 id = id,
                 createdAt = now,
                 updatedAt = now,
-                providerId = KnownProviders.deepSeek.id,
-                model = KnownProviders.flash.id,
+                providerId = providerId,
+                model = model,
                 thinkingEnabled = thinkingEnabled,
                 searchEnabled = searchEnabled,
                 effort = effort,
@@ -278,6 +287,7 @@ class ChatRepository(
     /** 底栏切模型/强度/搜索：只改会话快照，不影响已有消息 */
     suspend fun updateSettings(
         sessionId: String,
+        providerId: String,
         thinkingEnabled: Boolean,
         searchEnabled: Boolean,
         effort: ThinkingEffort?,
@@ -285,6 +295,7 @@ class ChatRepository(
     ) {
         db.sessionDao().updateSettings(
             id = sessionId,
+            providerId = providerId,
             thinking = thinkingEnabled,
             search = searchEnabled,
             effort = effort,
@@ -299,13 +310,12 @@ class ChatRepository(
     suspend fun send(
         sessionId: String,
         text: String,
-        apiKey: String,
         attachments: List<PickedFile> = emptyList(),
     ): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val parentId = session.currentMessageId
             ?: db.messageDao().withFragments(sessionId).lastOrNull()?.message?.id
-        return sendInternal(session, parentId, text, apiKey, attachments)
+        return sendInternal(session, parentId, text, attachments)
     }
 
     /**
@@ -316,11 +326,10 @@ class ChatRepository(
         sessionId: String,
         messageId: Long,
         text: String,
-        apiKey: String,
     ): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val original = db.messageDao().byId(messageId) ?: error("消息不存在：$messageId")
-        return sendInternal(session, original.parentId, text, apiKey)
+        return sendInternal(session, original.parentId, text)
     }
 
     /**
@@ -331,7 +340,6 @@ class ChatRepository(
     suspend fun regenerate(
         sessionId: String,
         assistantMessageId: Long,
-        apiKey: String,
     ): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val original = db.messageDao().byId(assistantMessageId) ?: error("消息不存在：$assistantMessageId")
@@ -352,7 +360,6 @@ class ChatRepository(
             userText = userText,
             // 沿用当时那条提问的元信息快照，避免上下文里凭空多出一条新的 reminder
             reminder = question.reminderSnapshot ?: currentReminder(),
-            apiKey = apiKey,
         )
     }
 
@@ -386,7 +393,6 @@ class ChatRepository(
     suspend fun continueGeneration(
         sessionId: String,
         assistantMessageId: Long,
-        apiKey: String,
     ): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val target = db.messageDao().byId(assistantMessageId) ?: error("消息不存在：$assistantMessageId")
@@ -409,7 +415,12 @@ class ChatRepository(
             .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
             .joinToString("")
 
-        val modelInfo = KnownProviders.deepSeek.model(session.model) ?: KnownProviders.flash
+        val provider = requireProvider(session)
+        require(ChatProtocols.supportsContinuation(provider.protocol)) {
+            "当前服务商不支持继续生成"
+        }
+        val modelInfo = requireModel(provider, session)
+        val key = requireKey(provider)
         val history = chainTurns(sessionId, question.parentId)
         val reminder = question.reminderSnapshot ?: currentReminder()
 
@@ -427,15 +438,21 @@ class ChatRepository(
                 WireMessage.text(WireMessage.ROLE_ASSISTANT, partial),
         )
 
-        val request = DeepSeekMessagesProtocol.build(
-            baseUrl = KnownProviders.deepSeek.baseUrl,
-            apiKey = apiKey,
+        val request = ChatProtocols.build(
+            provider = provider,
+            apiKey = key,
             command = command,
+            extraHeaders = ChatProtocols.extraHeaders(provider, sessionId),
         )
 
         db.messageDao().setStatus(assistantMessageId, MessageStatus.WIP)
         val outcome = try {
-            runner.run(assistantMessageId, request, transport)
+            runner.run(
+                assistantMessageId,
+                request,
+                transport,
+                ChatProtocols.assembler(request.protocol),
+            )
         } catch (e: Throwable) {
             // 失败要把状态退回「未完成」，否则界面一直显示生成中，还挡住下一次继续
             runCatching { db.messageDao().setStatus(assistantMessageId, MessageStatus.INCOMPLETE) }
@@ -449,7 +466,6 @@ class ChatRepository(
         session: SessionEntity,
         parentId: Long?,
         text: String,
-        apiKey: String,
         attachments: List<PickedFile> = emptyList(),
     ): RunOutcome {
         val sessionId = session.id
@@ -479,7 +495,7 @@ class ChatRepository(
             // 先把指针挪到这条提问上：上传失败时它才是叶子，重试才能接在同一条上
             db.sessionDao().setCurrentMessage(sessionId, userId, clock())
             persistAttachments(userId, attachments)
-            uploadPending(userId, apiKey)
+            uploadPending(userId)
         }
 
         return streamAssistant(
@@ -487,7 +503,6 @@ class ChatRepository(
             userMessageId = userId,
             userText = text,
             reminder = reminder,
-            apiKey = apiKey,
             assistantInsertedAt = now + 1,
         )
     }
@@ -518,7 +533,13 @@ class ChatRepository(
      *
      * 状态先落库再上传，界面直接读库画「上传中 / 失败」；失败立刻抛，调用方负责提示与重试。
      */
-    suspend fun uploadPending(userMessageId: Long, apiKey: String) {
+    suspend fun uploadPending(userMessageId: Long) {
+        val message = db.messageDao().byId(userMessageId) ?: return
+        val session = db.sessionDao().byId(message.sessionId) ?: return
+        // 附件只有官方 Files API 支持；其他服务商在 UI 侧就没有添加入口，这里防御性跳过
+        val provider = providerStore.byId(session.providerId) ?: return
+        if (provider.kind != io.tinychat.model.ProviderKind.DEEPSEEK_OFFICIAL) return
+        val key = apiKeyFor(provider.id) ?: return
         db.attachmentDao().byMessage(userMessageId).forEach { row ->
             if (!row.remoteId.isNullOrBlank()) return@forEach
             val path = row.localPath
@@ -528,7 +549,7 @@ class ChatRepository(
             }
             db.attachmentDao().setState(row.id, AttachmentState.UPLOADING)
             try {
-                val remoteId = uploader.upload(apiKey, path, row.fileName, row.mime, row.isImage)
+                val remoteId = uploader.upload(key, path, row.fileName, row.mime, row.isImage)
                 db.attachmentDao().setRemote(row.id, remoteId, AttachmentState.UPLOADED)
             } catch (e: Throwable) {
                 db.attachmentDao().setState(row.id, AttachmentState.FAILED)
@@ -540,7 +561,7 @@ class ChatRepository(
     /**
      * M4-3 失败重试：附件重传 + 重新请求，**复用同一条提问**，不新建用户消息。
      */
-    suspend fun retryTurn(sessionId: String, userMessageId: Long, apiKey: String): RunOutcome {
+    suspend fun retryTurn(sessionId: String, userMessageId: Long): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val question = db.messageDao().byId(userMessageId) ?: error("消息不存在：$userMessageId")
 
@@ -548,14 +569,13 @@ class ChatRepository(
             .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
             .joinToString("")
 
-        uploadPending(userMessageId, apiKey)
+        uploadPending(userMessageId)
         return streamAssistant(
             session = session,
             userMessageId = userMessageId,
             userText = userText,
             reminder = question.reminderSnapshot
                 ?: currentReminder(),
-            apiKey = apiKey,
         )
     }
 
@@ -573,11 +593,12 @@ class ChatRepository(
         userMessageId: Long,
         userText: String,
         reminder: String?,
-        apiKey: String,
         assistantInsertedAt: Long = clock(),
     ): RunOutcome {
         val sessionId = session.id
-        val modelInfo = KnownProviders.deepSeek.model(session.model) ?: KnownProviders.flash
+        val provider = requireProvider(session)
+        val modelInfo = requireModel(provider, session)
+        val key = requireKey(provider)
 
         val assistantId = db.messageDao().insert(
             MessageEntity(
@@ -622,26 +643,59 @@ class ChatRepository(
             thinkingEnabled = session.thinkingEnabled,
             effort = session.effort,
             searchEnabled = session.searchEnabled,
-            includeTitle = session.title == null,
+            // 服务端标题只有官方支持；第三方不可能有，开着也只是白填字段
+            includeTitle = session.title == null && modelInfo.capabilities.serverSideTitle,
             messages = ContextRebuilder.build(history, reminder) +
                 ContextRebuilder.userMessage(userText, attachmentsOf(userMessageId)),
         )
 
-        val request = DeepSeekMessagesProtocol.build(
-            baseUrl = KnownProviders.deepSeek.baseUrl,
-            apiKey = apiKey,
+        val request = ChatProtocols.build(
+            provider = provider,
+            apiKey = key,
             command = command,
+            extraHeaders = ChatProtocols.extraHeaders(provider, sessionId),
         )
 
-        val outcome = runner.run(assistantId, request, transport)
+        val outcome = runner.run(
+            assistantId,
+            request,
+            transport,
+            ChatProtocols.assembler(request.protocol),
+        )
 
-        // 服务端标题只在会话还没有标题时采用（02 §5.3）
-        if (outcome.title != null && session.title == null) {
-            db.sessionDao().rename(sessionId, outcome.title, clock())
+        // 标题：官方用服务端下发的；第三方本地取首句前 24 字（02 §5.3 的等价实现）
+        if (session.title == null) {
+            val title = outcome.title ?: userText
+                .lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotEmpty() }
+                ?.let(::localTitle)
+            if (title != null && outcome.status == FINISHED) {
+                db.sessionDao().rename(sessionId, title, clock())
+            }
         }
         db.sessionDao().touch(sessionId, clock())
         return outcome
     }
+
+    /** 本地标题：压平换行后截 24 字，超出加省略号（与官方服务端标题长度相当）。 */
+    private fun localTitle(text: String): String {
+        val flat = text.replace(Regex("\\s+"), " ").trim()
+        return if (flat.length <= TITLE_MAX) flat else flat.take(TITLE_MAX).trimEnd() + "…"
+    }
+
+    private suspend fun requireProvider(session: SessionEntity): Provider =
+        providerStore.byId(session.providerId)
+            ?: throw ProviderMissingException(session.providerId)
+
+    private fun requireModel(provider: Provider, session: SessionEntity): ModelInfo =
+        provider.model(session.model)
+            ?: provider.defaultModel
+            ?: error("服务商「${provider.displayName}」还没有可用模型")
+
+    private suspend fun requireKey(provider: Provider): String =
+        apiKeyFor(provider.id)?.takeIf { it.isNotBlank() }
+            ?: throw MissingKeyException(provider.displayName)
 
     /**
      * 会话快照 → 本轮真正要发的 system。
@@ -683,4 +737,17 @@ class ChatRepository(
             )
         }
     }
+
+    private companion object {
+        /** 本地标题长度：官方服务端标题一般 10–20 字，24 字够用（M8-1） */
+        const val TITLE_MAX = 24
+    }
 }
+
+/** 会话指向的服务商已被删除：历史可读，但不能继续对话（M8-6）。 */
+class ProviderMissingException(val providerId: String) :
+    IllegalStateException("此会话的服务商已被移除")
+
+/** 该服务商还没填 Key（UI 在发送前就该拦住，这里是最后一道防线）。 */
+class MissingKeyException(val providerName: String) :
+    IllegalStateException("尚未配置 $providerName 的 API Key")

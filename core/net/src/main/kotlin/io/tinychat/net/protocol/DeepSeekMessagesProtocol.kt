@@ -98,6 +98,8 @@ data class PreparedRequest(
     val url: String,
     val headers: Map<String, String>,
     val bodyJson: String,
+    /** 决定用哪个流解码器（`ChatStreamRunner` 据此选 assembler） */
+    val protocol: io.tinychat.model.ProviderProtocol = io.tinychat.model.ProviderProtocol.DEEPSEEK_MESSAGES,
 )
 
 /**

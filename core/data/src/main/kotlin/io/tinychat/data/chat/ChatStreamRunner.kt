@@ -1,4 +1,4 @@
-﻿package io.tinychat.data.chat
+package io.tinychat.data.chat
 
 import io.tinychat.data.db.FragmentDao
 import io.tinychat.data.db.MessageDao
@@ -10,6 +10,7 @@ import io.tinychat.model.MessageStatus
 import io.tinychat.model.Usage
 import io.tinychat.net.MessageAssembler
 import io.tinychat.net.StopReason
+import io.tinychat.net.StreamAssembler
 import io.tinychat.net.transport.ChatException
 import io.tinychat.net.transport.ChatTransport
 import io.tinychat.net.protocol.PreparedRequest
@@ -49,8 +50,9 @@ class ChatStreamRunner(
         assistantMessageId: Long,
         request: PreparedRequest,
         transport: ChatTransport,
+        /** 协议决定的解码器（M8-1）：Messages 与 OpenAI 各一套，上层不感知差别 */
+        assembler: StreamAssembler = MessageAssembler(clock),
     ): RunOutcome {
-        val assembler = MessageAssembler(clock)
         // 继续生成（M1-9）会复用一条已有消息：新碎片的 ord 必须接在已有碎片后面，
         // 否则撞上 fragments(message_id, ord) 的唯一索引。
         val ordBase = fragmentDao.nextOrd(assistantMessageId)
@@ -115,7 +117,7 @@ class ChatStreamRunner(
     private suspend fun streamWithRetry(
         request: PreparedRequest,
         transport: ChatTransport,
-        assembler: MessageAssembler,
+        assembler: StreamAssembler,
         flush: suspend () -> Unit,
     ) {
         var attempt = 0
@@ -146,7 +148,7 @@ class ChatStreamRunner(
             else -> 1_000L shl (attempt - 1)
         }
 
-    private suspend fun finalize(messageId: Long, assembler: MessageAssembler): RunOutcome {
+    private suspend fun finalize(messageId: Long, assembler: StreamAssembler): RunOutcome {
         val stopReason = assembler.stopReason
         val status = when {
             assembler.error != null -> MessageStatus.FAILED

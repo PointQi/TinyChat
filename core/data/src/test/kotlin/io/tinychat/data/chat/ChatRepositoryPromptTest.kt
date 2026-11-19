@@ -1,4 +1,4 @@
-package io.tinychat.data.chat
+﻿package io.tinychat.data.chat
 
 import androidx.test.core.app.ApplicationProvider
 import io.tinychat.data.attachment.AttachmentStore
@@ -6,6 +6,7 @@ import io.tinychat.data.attachment.AttachmentUploader
 import io.tinychat.data.db.DatabaseFactory
 import io.tinychat.data.db.TinyChatDatabase
 import io.tinychat.data.prompt.PromptSnapshot
+import io.tinychat.data.provider.ProviderStore
 import io.tinychat.model.PromptMode
 import io.tinychat.model.prompt.PromptMeta
 import io.tinychat.model.prompt.PromptSeeds
@@ -39,6 +40,7 @@ class ChatRepositoryPromptTest {
     private lateinit var db: TinyChatDatabase
     private lateinit var transport: CapturingTransport
     private lateinit var attachmentStore: AttachmentStore
+    private lateinit var providerStore: ProviderStore
 
     private class CapturingTransport : ChatTransport {
         var request: PreparedRequest? = null
@@ -54,6 +56,8 @@ class ChatRepositoryPromptTest {
         db = DatabaseFactory.createInMemory(context)
         attachmentStore = AttachmentStore(context)
         transport = CapturingTransport()
+        providerStore = ProviderStore.create(db)
+        runBlocking { providerStore.ensureSeeded() }
     }
 
     @After
@@ -71,6 +75,8 @@ class ChatRepositoryPromptTest {
         uploader = AttachmentUploader(),
         promptSnapshot = { snapshot },
         promptMeta = { meta },
+        providerStore = providerStore,
+        apiKeyFor = { "k" },
     )
 
     @Test
@@ -79,7 +85,7 @@ class ChatRepositoryPromptTest {
         val id = repo.createSession()
         assertEquals(PromptSeeds.OFFICIAL_SYSTEM, db.sessionDao().byId(id)!!.systemPromptSnapshot)
 
-        repo.send(id, "你好", "key")
+        repo.send(id, "你好")
         val body = transport.request!!.bodyJson
         assertTrue(body, body.contains("\"system\":\"${PromptSeeds.OFFICIAL_SYSTEM}\""))
     }
@@ -90,7 +96,7 @@ class ChatRepositoryPromptTest {
             snapshot = PromptSnapshot("今天是 {{date}}，我在 {{location}}。", PromptMode.REPLACE),
         )
         val id = repo.createSession()
-        repo.send(id, "你好", "key")
+        repo.send(id, "你好")
 
         val body = transport.request!!.bodyJson
         assertFalse("变量没有被求值：$body", body.contains("{{"))
@@ -104,7 +110,7 @@ class ChatRepositoryPromptTest {
         val repo = repository(snapshot = PromptSnapshot(content = null, mode = PromptMode.CLEAR))
         val id = repo.createSession()
         assertNotNull(db.sessionDao().byId(id))
-        repo.send(id, "你好", "key")
+        repo.send(id, "你好")
 
         assertFalse(transport.request!!.bodyJson.contains("\"system\""))
     }

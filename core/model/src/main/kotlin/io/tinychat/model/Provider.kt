@@ -1,9 +1,42 @@
 package io.tinychat.model
 
-/** 服务商类型。OpenCode Go 推迟到 v1.1，届时作为第三种 kind 加入。 */
+/** 服务商类型。OpenCode Go 是独立 kind：它有自己的会话头与额度接口，不能当通用兼容用。 */
 enum class ProviderKind {
     DEEPSEEK_OFFICIAL,
+    OPENCODE_GO,
     OPENAI_COMPATIBLE,
+}
+
+/**
+ * 线上协议。**能力位决定发什么，协议决定往哪发**（02 §4.3 的原则）。
+ *
+ * - `DEEPSEEK_MESSAGES`：官方 `/anthropic/v1/messages`，带搜索/文件/标题等扩展字段；
+ * - `ANTHROPIC_MESSAGES`：通用 Anthropic 兼容 `/v1/messages`，没有扩展字段；
+ * - `OPENAI_CHAT`：`/v1/chat/completions`，降级链路（标题本地生成）。
+ */
+enum class ProviderProtocol(val wire: String) {
+    DEEPSEEK_MESSAGES("deepseek_messages"),
+    ANTHROPIC_MESSAGES("anthropic_messages"),
+    OPENAI_CHAT("openai_chat"),
+    ;
+
+    companion object {
+        fun fromWire(value: String?): ProviderProtocol =
+            entries.firstOrNull { it.wire == value } ?: DEEPSEEK_MESSAGES
+    }
+}
+
+/** 服务商最近一次校验的结果（列表页状态点用，落库）。 */
+enum class ProviderCheck(val wire: String) {
+    OK("ok"),
+    FAILED("failed"),
+    UNKNOWN("unknown"),
+    ;
+
+    companion object {
+        fun fromWire(value: String?): ProviderCheck =
+            entries.firstOrNull { it.wire == value } ?: UNKNOWN
+    }
 }
 
 /**
@@ -11,6 +44,7 @@ enum class ProviderKind {
  * 关键事实（docs/01 §4.2）：扩展能力（搜索/读链接/文件/图片/标题/安全）**只有 deepseek-flash 支持**，
  * deepseek-v4-pro 只支持思考与强度。
  */
+@kotlinx.serialization.Serializable
 data class Capabilities(
     val webSearch: Boolean = false,
     val readUrl: Boolean = false,
@@ -21,11 +55,14 @@ data class Capabilities(
     val thinking: Boolean = true,
     val effort: Boolean = false,
     val tts: Boolean = false,
+    /** 会下发 `reasoning_content`（OpenAI 风格思考）。只影响显示，不影响请求。 */
+    val reasoning: Boolean = false,
 ) {
     /** 是否属于「扩展能力」模型：决定输入区是否露出搜索/附件入口。 */
     val supportsExtensions: Boolean get() = webSearch || readUrl || fileUpload || imageInput
 }
 
+@kotlinx.serialization.Serializable
 data class ModelInfo(
     val id: String,
     val displayName: String,
@@ -42,9 +79,21 @@ data class Provider(
     val models: List<ModelInfo>,
     val supportsBalance: Boolean = false,
     val supportsTts: Boolean = false,
+    val protocol: ProviderProtocol = ProviderProtocol.DEEPSEEK_MESSAGES,
+    /** 内置（目录）服务商：DeepSeek 不可删，其余可删 */
+    val builtin: Boolean = false,
+    val check: ProviderCheck = ProviderCheck.UNKNOWN,
+    /** 校验失败的一句话原因，列表页不显示，编辑页用 */
+    val checkMessage: String? = null,
+    /** 服务商专属配置：OpenCode 的 Zen 地址、UA 等；不参与导出 */
+    val meta: Map<String, String> = emptyMap(),
 ) {
     val defaultModel: ModelInfo? get() = models.firstOrNull()
     fun model(id: String): ModelInfo? = models.firstOrNull { it.id == id }
+
+    /** 当前服务商能做什么：取某个模型的能力位，模型不在目录里则按“都不支持”处理。 */
+    fun capabilities(modelId: String): Capabilities =
+        model(modelId)?.capabilities ?: Capabilities(thinking = false, reasoning = false)
 }
 
 /** 思考强度（Messages 协议走 output_config.effort，OpenAI 兼容走 reasoning_effort）。 */
@@ -110,14 +159,34 @@ object KnownProviders {
         models = listOf(flash, v4Pro),
         supportsBalance = true,
         supportsTts = true,
+        protocol = ProviderProtocol.DEEPSEEK_MESSAGES,
+        builtin = true,
+    )
+
+    /** OpenCode Go：独立 kind，模型由 `/models` 动态拉取，额度由 `/usage` 读三窗口。 */
+    val openCodeGo: Provider = Provider(
+        id = "opencode-go",
+        kind = ProviderKind.OPENCODE_GO,
+        displayName = "OpenCode Go",
+        baseUrl = "https://opencode.ai/inference/go",
+        models = emptyList(),
+        protocol = ProviderProtocol.OPENAI_CHAT,
+        meta = mapOf(ProviderMeta.ZEN_BASE to "https://opencode.ai/zen/go"),
     )
 
     /** 通用 OpenAI 兼容服务商：一律走降级链路，扩展能力全部关闭。 */
-    fun genericOpenAiCompatible(baseUrl: String, modelId: String): Provider = Provider(
-        id = "openai-compatible",
+    fun genericOpenAiCompatible(
+        id: String,
+        displayName: String,
+        baseUrl: String,
+        modelId: String,
+        protocol: ProviderProtocol = ProviderProtocol.OPENAI_CHAT,
+    ): Provider = Provider(
+        id = id,
         kind = ProviderKind.OPENAI_COMPATIBLE,
-        displayName = "OpenAI 兼容",
+        displayName = displayName,
         baseUrl = baseUrl,
+        protocol = protocol,
         models = listOf(
             ModelInfo(
                 id = modelId,
@@ -138,4 +207,22 @@ object KnownProviders {
             ),
         ),
     )
+
+    /** 目录服务商：添加页「第三方模型提供商」下拉里的选项。 */
+    val catalog: List<Provider> get() = listOf(deepSeek, openCodeGo)
 }
+
+/** `Provider.meta` 的已知键。 */
+object ProviderMeta {
+    /** OpenCode Go 的 Zen 地址：`/v1/models`、`/v1/usage` 都在这个域下 */
+    const val ZEN_BASE = "zen_base"
+
+    /** 请求头里的 User-Agent（OpenCode 要求用自己的产品名，不伪装） */
+    const val USER_AGENT = "user_agent"
+
+    /** 该服务商不支持 `stream_options`：一次降级后记住，后续不再发 */
+    const val NO_STREAM_OPTIONS = "no_stream_options"
+}
+
+/** 内置 UA：官方要求显式标识客户端，且**禁止**伪装成 OpenCode CLI。 */
+const val TINYCHAT_USER_AGENT = "TinyChat/1.0 (Android)"

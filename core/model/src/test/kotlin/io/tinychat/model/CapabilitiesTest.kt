@@ -58,7 +58,12 @@ class CapabilitiesTest {
 
     @Test
     fun `通用 OpenAI 兼容一律降级`() {
-        val p = KnownProviders.genericOpenAiCompatible("https://example.com/v1", "some-model")
+        val p = KnownProviders.genericOpenAiCompatible(
+            id = "acme",
+            displayName = "Acme",
+            baseUrl = "https://example.com/v1",
+            modelId = "some-model",
+        )
         val c = p.models.single().capabilities
         assertFalse(c.supportsExtensions)
         assertFalse(c.safetyCheck)
@@ -67,5 +72,16 @@ class CapabilitiesTest {
         assertEquals(ProviderKind.OPENAI_COMPATIBLE, p.kind)
         assertNull(p.model("deepseek-flash"))
         assertEquals("some-model", p.defaultModel?.id)
+        assertEquals(ProviderProtocol.OPENAI_CHAT, p.protocol)
+    }
+
+    @Test
+    fun `OpenCode Go 是独立 kind 且走 Zen 域`() {
+        val go = KnownProviders.openCodeGo
+        assertEquals(ProviderKind.OPENCODE_GO, go.kind)
+        assertFalse(go.supportsBalance)
+        assertFalse(go.supportsTts)
+        assertEquals("https://opencode.ai/zen/go", go.meta[ProviderMeta.ZEN_BASE])
+        assertTrue(KnownProviders.catalog.any { it.id == go.id })
     }
 }

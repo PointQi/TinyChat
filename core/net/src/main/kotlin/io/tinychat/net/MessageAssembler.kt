@@ -1,4 +1,4 @@
-﻿package io.tinychat.net
+package io.tinychat.net
 
 import io.tinychat.model.Fragment
 import io.tinychat.model.FragmentPayload
@@ -51,7 +51,7 @@ data class StreamError(val type: String?, val message: String?)
  */
 class MessageAssembler(
     private val clock: () -> Long = { System.currentTimeMillis() },
-) {
+) : StreamAssembler {
 
     private class Slot(
         val ord: Int,
@@ -63,17 +63,17 @@ class MessageAssembler(
         private set
     var model: String? = null
         private set
-    var stopReason: StopReason? = null
+    override var stopReason: StopReason? = null
         private set
     var stopDetailsType: String? = null
         private set
-    var title: String? = null
+    override var title: String? = null
         private set
-    var usage: Usage? = null
+    override var usage: Usage? = null
         private set
-    var error: StreamError? = null
+    override var error: StreamError? = null
         private set
-    var sawMessageStop: Boolean = false
+    override var sawMessageStop: Boolean = false
         private set
 
     /** 未识别的事件名/块类型，仅用于诊断 */
@@ -95,7 +95,7 @@ class MessageAssembler(
     private val signatures = mutableMapOf<Int, StringBuilder>()
 
     /** 本轮最后一个思考签名（落到 messages.thinking_signature，仅本地） */
-    var thinkingSignature: String? = null
+    override var thinkingSignature: String? = null
         private set
     private var toolCalls = 0
     private var fetchCalls = 0
@@ -104,7 +104,7 @@ class MessageAssembler(
         events.forEach { onFrame(it.name, it.data) }
     }
 
-    fun onFrame(name: String?, data: String) {
+    override fun onFrame(name: String?, data: String) {
         val root = runCatching { json.parseToJsonElement(data) as? JsonObject }.getOrNull() ?: run {
             unknownEvents += "非 JSON 帧(event=$name)"
             return
@@ -129,7 +129,7 @@ class MessageAssembler(
     }
 
     /** 归并结果：按 ord 升序，跳过空洞 */
-    fun fragments(): List<Fragment> {
+    override fun fragments(): List<Fragment> {
         val out = ArrayList<Fragment>(slots.size)
         for (slot in slots) {
             val payload = slot?.payload ?: continue
@@ -139,7 +139,7 @@ class MessageAssembler(
     }
 
     /** 本轮是否用过服务端联网工具（继续生成的第一条前置条件） */
-    fun usedServerTools(): Boolean = toolCalls > 0
+    override fun usedServerTools(): Boolean = toolCalls > 0
 
     fun toolCallCount(): Int = toolCalls
 
@@ -413,7 +413,7 @@ class MessageAssembler(
     private fun stageOf(ord: Int): Int = thinkingBlocks.coerceAtLeast(1)
 
     /** 流结束：把仍未配对的调用落成碎片（用户中途停止时就是这种形态） */
-    fun finishUnpairedTools() {
+    override fun finishUnpairedTools() {
         // 先补上「调用块始终没到」的孤儿结果
         orphanResults.forEach { (toolId, pair) ->
             val slot = newSlot(null)

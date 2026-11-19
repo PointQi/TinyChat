@@ -15,20 +15,28 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * 凭据存取（M7-6）。
+ * 凭据存取（M7-6 / M8-6：**每家服务商一把**）。
  *
  * 抽成接口是为了两件事：单测不碰 Keystore（Robolectric 没有实现），
  * 以及将来换存储方式时只动实现。
  */
 interface SecretStore {
 
-    /** 已保存的 Key；`null` = 未配置（解密失败也按未配置处理）。 */
-    suspend fun read(): String?
+    /** 该服务商已保存的 Key；`null` = 未配置（解密失败也按未配置处理）。 */
+    suspend fun read(providerId: String): String?
 
     /** 写入（空白值等价于 [clear]）。 */
-    suspend fun write(value: String)
+    suspend fun write(providerId: String, value: String)
 
-    suspend fun clear()
+    suspend fun clear(providerId: String)
+
+    suspend fun has(providerId: String): Boolean = !read(providerId).isNullOrBlank()
+
+    /**
+     * M7-6 只有一个 `api_key_cipher`，升级后要搬到 `cipher.<providerId>`。
+     * 迁移成功即删旧键；没有旧键时是空操作。
+     */
+    suspend fun migrateLegacy(providerId: String = "deepseek")
 }
 
 /** 凭据单独一个 DataStore 文件：设置项频繁读写，不该和密文挤在同一份 prefs 里。 */
@@ -47,24 +55,36 @@ class KeystoreSecretStore(context: Context) : SecretStore {
 
     private val store = context.applicationContext.credentialsDataStore
 
-    override suspend fun read(): String? {
-        val raw = store.data.first()[API_KEY_CIPHER] ?: return null
+    override suspend fun read(providerId: String): String? {
+        val raw = store.data.first()[keyOf(providerId)] ?: return null
         return runCatching { decrypt(raw) }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
-    override suspend fun write(value: String) {
+    override suspend fun write(providerId: String, value: String) {
         val trimmed = value.trim()
         if (trimmed.isEmpty()) {
-            clear()
+            clear(providerId)
             return
         }
         val cipher = encrypt(trimmed)
-        store.edit { it[API_KEY_CIPHER] = cipher }
+        store.edit { it[keyOf(providerId)] = cipher }
     }
 
-    override suspend fun clear() {
-        store.edit { it.remove(API_KEY_CIPHER) }
+    override suspend fun clear(providerId: String) {
+        store.edit { it.remove(keyOf(providerId)) }
     }
+
+    override suspend fun migrateLegacy(providerId: String) {
+        val legacy = store.data.first()[LEGACY_KEY] ?: return
+        store.edit { prefs ->
+            val target = keyOf(providerId)
+            // 已有新键就不覆盖（用户可能已经在旧版本之外写过一次）
+            if (prefs[target] == null) prefs[target] = legacy
+            prefs.remove(LEGACY_KEY)
+        }
+    }
+
+    private fun keyOf(providerId: String) = stringPreferencesKey("cipher.$providerId")
 
     private fun encrypt(plain: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -110,6 +130,7 @@ class KeystoreSecretStore(context: Context) : SecretStore {
         const val IV_BYTES = 12
         const val TAG_BITS = 128
 
-        val API_KEY_CIPHER = stringPreferencesKey("api_key_cipher")
+        /** M7-6 的单 Key 键名，只读一次用于迁移 */
+        val LEGACY_KEY = stringPreferencesKey("api_key_cipher")
     }
 }

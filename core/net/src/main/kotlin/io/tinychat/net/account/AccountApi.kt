@@ -65,8 +65,18 @@ class AccountClient(
 ) {
 
     /** 校验 Key：200 算通过，401 算无效，其余给一句人话。 */
-    suspend fun checkKey(apiKey: String): KeyCheck = withContext(Dispatchers.IO) {
-        val request = AccountRequests.get(baseUrl, AccountRequests.MODELS_PATH, apiKey)
+    suspend fun checkKey(apiKey: String): KeyCheck = checkKey(AccountRequests.get(baseUrl, AccountRequests.MODELS_PATH, apiKey))
+
+    /**
+     * 校验某个服务商的 Key（M8-6）：地址由调用方按协议算好（见 `ProviderModels`）。
+     * 只发 GET，不计费。
+     */
+    suspend fun checkKey(url: String, apiKey: String): KeyCheck = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $apiKey")
+            .get()
+            .build()
         try {
             client.newCall(request).execute().use { response ->
                 when {
@@ -80,6 +90,50 @@ class AccountClient(
             }
         } catch (e: IOException) {
             KeyCheck.Failed("网络不通，请检查网络后重试")
+        }
+    }
+
+    private suspend fun checkKey(request: Request): KeyCheck = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(request).execute().use { response ->
+                when {
+                    response.isSuccessful -> KeyCheck.Ok
+                    response.code == 401 || response.code == 403 -> KeyCheck.Invalid
+                    response.code == 402 -> KeyCheck.Failed("账户余额不足")
+                    response.code == 429 -> KeyCheck.Failed("请求过于频繁，请稍后再试")
+                    response.code >= 500 -> KeyCheck.Failed("服务端异常，请稍后再试")
+                    else -> KeyCheck.Failed("校验失败（HTTP ${response.code}）")
+                }
+            }
+        } catch (e: IOException) {
+            KeyCheck.Failed("网络不通，请检查网络后重试")
+        }
+    }
+
+    /**
+     * 拉模型目录（`GET …/models`）。返回模型 id 列表；401 抛 [AccountException] 带 401，
+     * 让 UI 能区分「Key 无效」与「该地址没这个接口」。
+     */
+    suspend fun modelIds(url: String, apiKey: String): List<String> = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $apiKey")
+            .get()
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val message = when (response.code) {
+                        401, 403 -> "Key 无效"
+                        404 -> "该地址没有模型列表，请手动添加"
+                        else -> "获取模型失败（HTTP ${response.code}）"
+                    }
+                    throw AccountException(message, response.code)
+                }
+                parseModelIds(response.body?.string().orEmpty())
+            }
+        } catch (e: IOException) {
+            throw AccountException("网络不通", null)
         }
     }
 
@@ -125,5 +179,16 @@ class AccountClient(
 
         private fun JsonObject.string(key: String): String? =
             this[key]?.jsonPrimitive?.contentOrNull
+
+        /** 兼容 `{data:[{id}]}` 与 `{models:[{id}]}` 两种形状；只取 id，其余字段不需要。 */
+        fun parseModelIds(raw: String): List<String> {
+            val root = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
+                ?: throw AccountException("模型列表格式无法解析")
+            val array = root["data"]?.jsonArray ?: root["models"]?.jsonArray
+                ?: throw AccountException("该地址没有返回模型列表")
+            return array.mapNotNull { (it as? JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull }
+                .filter { it.isNotBlank() }
+                .distinct()
+        }
     }
 }
