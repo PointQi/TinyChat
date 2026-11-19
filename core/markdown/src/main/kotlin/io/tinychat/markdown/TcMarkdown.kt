@@ -1,4 +1,4 @@
-package io.tinychat.markdown
+﻿package io.tinychat.markdown
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import io.tinychat.designsystem.LocalTcFontScale
 import com.mikepenz.markdown.compose.LocalBulletListHandler
 import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.compose.MarkdownElement
@@ -115,7 +116,7 @@ fun TcMarkdown(
             Markdown(
                 streamingMarkdownState = state,
                 colors = tcMarkdownColors(),
-                typography = tcMarkdownTypography(),
+                typography = tcMarkdownTypography(LocalTcFontScale.current),
                 padding = tcMarkdownPadding(),
                 dimens = tcMarkdownDimens(),
                 modifier = modifier.fillMaxWidth(),

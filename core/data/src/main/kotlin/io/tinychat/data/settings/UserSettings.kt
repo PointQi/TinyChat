@@ -3,6 +3,7 @@ package io.tinychat.data.settings
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import io.tinychat.model.TtsVoice
@@ -43,6 +44,12 @@ class UserSettings(context: Context) {
     /** 用户常用语言，喂给 `{{language}}` 与 `latest_reminder` */
     val promptLanguage: Flow<String> = store.data.map { it[PROMPT_LANGUAGE] ?: "中文" }
 
+    /** 外观：`system` / `light` / `dark`（M8-4） */
+    val themeMode: Flow<String> = store.data.map { it[THEME_MODE] ?: "system" }
+
+    /** 字体大小：1.0–1.3，只作用于正文（M8-4） */
+    val fontScale: Flow<Float> = store.data.map { it[FONT_SCALE] ?: 1f }
+
     suspend fun setAutoSpeak(enabled: Boolean) {
         store.edit { it[AUTO_SPEAK] = enabled }
     }
@@ -71,6 +78,14 @@ class UserSettings(context: Context) {
         store.edit { it[PROMPT_LANGUAGE] = language }
     }
 
+    suspend fun setThemeMode(mode: String) {
+        store.edit { it[THEME_MODE] = mode }
+    }
+
+    suspend fun setFontScale(scale: Float) {
+        store.edit { it[FONT_SCALE] = scale.coerceIn(0.9f, 1.3f) }
+    }
+
     companion object {
         private val AUTO_SPEAK = booleanPreferencesKey("auto_speak")
         private val TTS_VOICE = stringPreferencesKey("tts_voice")
@@ -79,6 +94,8 @@ class UserSettings(context: Context) {
         private val PROMPT_PRESET = stringPreferencesKey("prompt_preset_id")
         private val PROMPT_LOCATION = stringPreferencesKey("prompt_location")
         private val PROMPT_LANGUAGE = stringPreferencesKey("prompt_language")
+        private val THEME_MODE = stringPreferencesKey("theme_mode")
+        private val FONT_SCALE = floatPreferencesKey("font_scale")
 
         /** 认不出的值一律退回默认音色（旧的/手改的文件不该把朗读弄挂）。 */
         internal fun voiceOf(raw: String?): TtsVoice =

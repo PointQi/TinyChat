@@ -1,4 +1,4 @@
-package io.tinychat
+﻿package io.tinychat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -8,6 +8,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -24,6 +25,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import io.tinychat.data.db.PromptPresetEntity
+import io.tinychat.designsystem.LocalTcFontScale
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.feature.chat.ChatScreen
 import io.tinychat.feature.chat.UsageDrawer
@@ -63,6 +65,11 @@ fun TinyChatApp() {
     val container = remember { AppContainer(context.applicationContext) }
     val apiKey by container.apiKey.collectAsState()
     val hasKey = apiKey.isNotBlank()
+    // 字体大小（M8-4）：只放大正文，不动顶栏/设置列表
+    val fontScale by container.userSettings.fontScale.collectAsState(initial = 1f)
+    val language by container.userSettings.promptLanguage.collectAsState(initial = "中文")
+    val themeMode by container.userSettings.themeMode.collectAsState(initial = "system")
+    val userLocation by container.userSettings.promptLocation.collectAsState(initial = "")
     val chatViewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.factory(
             repository = container.repository,
@@ -135,7 +142,8 @@ fun TinyChatApp() {
                 .background(palette.bg)
                 .safeDrawingPadding(),
         ) {
-            NavHost(navController = navController, startDestination = Routes.CHAT) {
+            CompositionLocalProvider(LocalTcFontScale provides fontScale) {
+                NavHost(navController = navController, startDestination = Routes.CHAT) {
                 composable(Routes.CHAT) {
                     ChatScreen(
                         state = chatViewModel.state,
@@ -200,6 +208,14 @@ fun TinyChatApp() {
                         onToggleShowUsage = chatViewModel::setShowUsage,
                         reminderEnabled = chatViewModel.state.reminderEnabled,
                         onToggleReminder = chatViewModel::setReminderEnabled,
+                        language = language,
+                        onSelectLanguage = { scope.launch { container.userSettings.setPromptLanguage(it) } },
+                        themeMode = themeMode,
+                        onSelectThemeMode = { scope.launch { container.userSettings.setThemeMode(it) } },
+                        fontScale = fontScale,
+                        onSelectFontScale = { scope.launch { container.userSettings.setFontScale(it) } },
+                        location = userLocation,
+                        onSelectLocation = { scope.launch { container.userSettings.setPromptLocation(it) } },
                     )
                 }
                 composable(Routes.PROVIDER) {
@@ -312,6 +328,7 @@ fun TinyChatApp() {
                 }
                 composable(Routes.ABOUT) {
                     AboutScreen(onBack = { navController.popBackStack() })
+                }
                 }
             }
 

@@ -1,4 +1,4 @@
-package io.tinychat.feature.settings
+﻿package io.tinychat.feature.settings
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -69,9 +69,23 @@ fun SettingsScreen(
     /** 用户元信息开关（M7-5，默认开） */
     reminderEnabled: Boolean = true,
     onToggleReminder: (Boolean) -> Unit = {},
+    /** 语言 / 外观 / 字号 / 个性化（M8-4） */
+    language: String = "中文",
+    onSelectLanguage: (String) -> Unit = {},
+    themeMode: String = "system",
+    onSelectThemeMode: (String) -> Unit = {},
+    fontScale: Float = 1f,
+    onSelectFontScale: (Float) -> Unit = {},
+    location: String = "",
+    onSelectLocation: (String) -> Unit = {},
 ) {
     val palette = TcTheme.palette
     var voicePicker by remember { mutableStateOf(false) }
+    var languagePicker by remember { mutableStateOf(false) }
+    var themePicker by remember { mutableStateOf(false) }
+    var fontPicker by remember { mutableStateOf(false) }
+    var locationEdit by remember { mutableStateOf(false) }
+    var locationDraft by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -95,9 +109,17 @@ fun SettingsScreen(
             )
 
             TcSectionLabel("应用")
-            TcListRow(title = "语言", subtitle = "简体中文", onClick = {})
-            TcListRow(title = "外观", subtitle = "跟随系统", onClick = {})
-            TcListRow(title = "字体大小", subtitle = "标准", onClick = {})
+            TcListRow(title = "语言", subtitle = language, onClick = { languagePicker = true })
+            TcListRow(title = "外观", subtitle = themeMode.themeLabel, onClick = { themePicker = true })
+            TcListRow(title = "字体大小", subtitle = fontScale.fontLabel, onClick = { fontPicker = true })
+            TcListRow(
+                title = "个性化",
+                subtitle = location.ifBlank { "未设置所在地" },
+                onClick = {
+                    locationDraft = location
+                    locationEdit = true
+                },
+            )
             TcListRow(
                 title = "系统提示词",
                 subtitle = "当前预设：$promptName",
@@ -145,6 +167,96 @@ fun SettingsScreen(
             },
         )
     }
+
+    if (languagePicker) {
+        PickerDialog(
+            title = "语言",
+            options = LANGUAGE_OPTIONS,
+            selected = language,
+            onDismiss = { languagePicker = false },
+            onPick = {
+                languagePicker = false
+                onSelectLanguage(it)
+            },
+        )
+    }
+
+    if (themePicker) {
+        PickerDialog(
+            title = "外观",
+            options = THEME_OPTIONS,
+            selected = themeMode,
+            onDismiss = { themePicker = false },
+            onPick = {
+                themePicker = false
+                onSelectThemeMode(it)
+            },
+        )
+    }
+
+    if (fontPicker) {
+        PickerDialog(
+            title = "字体大小",
+            options = FONT_OPTIONS,
+            selected = fontScale,
+            onDismiss = { fontPicker = false },
+            onPick = {
+                fontPicker = false
+                onSelectFontScale(it)
+            },
+        )
+    }
+
+    if (locationEdit) {
+        AlertDialog(
+            onDismissRequest = { locationEdit = false },
+            title = { Text("所在地") },
+            text = {
+                Column {
+                    Text(
+                        "{{location}} 与用户元信息会用到它，可以留空。",
+                        style = TcTypography.labelMedium,
+                        color = palette.labelTertiary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(palette.selector, RoundedCornerShape(10.dp))
+                            .border(1.dp, palette.borderL2, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        BasicTextField(
+                            value = locationDraft,
+                            onValueChange = { locationDraft = it.take(20) },
+                            textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
+                            cursorBrush = SolidColor(palette.brand),
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { inner ->
+                                if (locationDraft.isEmpty()) {
+                                    Text(
+                                        "例如：浙江",
+                                        style = TcTypography.bodyLarge,
+                                        color = palette.labelTertiary,
+                                    )
+                                }
+                                inner()
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    locationEdit = false
+                    onSelectLocation(locationDraft)
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { locationEdit = false }) { Text("取消") }
+            },
+        )
+    }
 }
 
 /** 设置里的一行开关：右侧 Switch，点了立刻生效。 */
@@ -183,6 +295,52 @@ private val TtsVoice.displayLabel: String
         TtsVoice.STELLA -> "海星（女）"
         TtsVoice.TIDE -> "暗潮（男）"
     }
+
+// 语言 / 外观 / 字号（M8-4）。取值直接就是落库的字符串/浮点，不做第二套枚举，
+// 免得设置页、DataStore、聊天请求三处各有一份映射。
+private val LANGUAGE_OPTIONS = listOf("中文" to "中文", "English" to "English")
+private val THEME_OPTIONS = listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色")
+private val FONT_OPTIONS = listOf(0.9f to "小", 1f to "标准", 1.15f to "大", 1.3f to "特大")
+
+private val String.themeLabel: String
+    get() = THEME_OPTIONS.firstOrNull { it.first == this }?.second ?: "跟随系统"
+
+private val Float.fontLabel: String
+    get() = FONT_OPTIONS.firstOrNull { kotlin.math.abs(it.first - this) < 0.01f }?.second ?: "标准"
+
+/** 单选弹窗：外观/字号/语言共用一套，避免三份几乎一样的 AlertDialog。 */
+@Composable
+private fun <T> PickerDialog(
+    title: String,
+    options: List<Pair<T, String>>,
+    selected: T,
+    onDismiss: () -> Unit,
+    onPick: (T) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                options.forEach { (value, label) ->
+                    val picked = if (value is Float && selected is Float) {
+                        kotlin.math.abs(value - selected) < 0.01f
+                    } else {
+                        value == selected
+                    }
+                    TcListRow(
+                        title = label,
+                        subtitle = if (picked) "当前" else null,
+                        onClick = { onPick(value) },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
 
 /**
  * 服务商与 API Key（docs/02 §12.6，M7-6）。

@@ -11,6 +11,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 
 val LocalTcPalette = staticCompositionLocalOf { LightPalette }
 
+/**
+ * 设置里的「字体大小」（M8-4）：1.0–1.3，只作用于**正文类**语义字号。
+ * 放在色板旁边而不是塞进 Typography：它只该放大读的东西，
+ * 不该把顶栏、按钮、设置列表一起撑开（那才是破版的根源）。
+ */
+val LocalTcFontScale = staticCompositionLocalOf { 1f }
+
 /** 主题模式。M0 先只跟随系统，M8-4 接到设置里。 */
 enum class TcThemeMode { SYSTEM, LIGHT, DARK }
 
