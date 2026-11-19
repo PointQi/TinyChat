@@ -29,6 +29,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -1302,6 +1304,9 @@ private fun InputCard(
         AttachmentPreviewDialog(
             thumbPath = draft.thumbPath,
             title = draft.fileName,
+            aspectRatio = draft.width?.takeIf { it > 0 }?.let { w ->
+                draft.height?.takeIf { it > 0 }?.let { h -> w.toFloat() / h }
+            },
             onDismiss = { previewImage = null },
         )
     }
@@ -1520,6 +1525,9 @@ private fun UserAttachments(attachments: List<ChatAttachment>) {
         AttachmentPreviewDialog(
             thumbPath = item.imagePath,
             title = item.fileName,
+            aspectRatio = item.width?.takeIf { it > 0 }?.let { w ->
+                item.height?.takeIf { it > 0 }?.let { h -> w.toFloat() / h }
+            },
             onDismiss = { previewIndex = null },
         )
     }
@@ -1747,19 +1755,36 @@ private fun SheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
 }
 
 /**
- * 放大看一张图（草稿与消息共用）。
+ * 放大看一张图（草稿与消息共用）。黑框就是最终承载图片的容器。
  *
- * ⚠️ 「还在解码」和「真的没有」必须分开：解码是异步的，第一帧必然是空。
- * 早先把空当成"图没了"，于是点开图片会先闪一下「图片已不在本机」再出图。
+ * ⚠️ 两个坑：
+ * 1. 「还在解码」和「真的没有」必须分开：解码是异步的，第一帧必然是空，
+ *    早先把空当成"图没了"，于是先闪一句「图片已不在本机」再出图；
+ * 2. 容器**第一帧就要有最终尺寸**（按附件宽高算好的 `aspectRatio`）：
+ *    否则加载态是被内容撑出来的"又宽又矮的黑条"，出图后盒子突然变高、
+ *    弹窗重新居中，看起来就是"图先偏上、再往上跳一下"。
  */
 @Composable
-private fun AttachmentPreviewDialog(thumbPath: String?, title: String, onDismiss: () -> Unit) {
+private fun AttachmentPreviewDialog(
+    thumbPath: String?,
+    title: String,
+    aspectRatio: Float?,
+    onDismiss: () -> Unit,
+) {
     if (thumbPath == null) return
     val load = rememberBitmapLoad(thumbPath, 1080)
     Dialog(onDismissRequest = onDismiss) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(
+                    if (aspectRatio != null && aspectRatio > 0f) {
+                        Modifier.aspectRatio(aspectRatio)
+                    } else {
+                        // 老数据可能没带宽高：至少别把盒子压成一条
+                        Modifier.heightIn(min = 160.dp)
+                    },
+                )
                 .clip(RoundedCornerShape(16.dp))
                 .background(Color.Black)
                 .clickable(onClick = onDismiss),
@@ -1770,13 +1795,11 @@ private fun AttachmentPreviewDialog(thumbPath: String?, title: String, onDismiss
                     bitmap = load.bitmap,
                     contentDescription = title,
                     contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxSize(),
                 )
-                // 还在解码：给个转圈，别说话
+                // 还在解码：同一个盒子里转圈，尺寸不变
                 load.loading -> CircularProgressIndicator(
-                    modifier = Modifier
-                        .padding(48.dp)
-                        .size(28.dp),
+                    modifier = Modifier.size(28.dp),
                     color = Color.White,
                     strokeWidth = 2.dp,
                 )
