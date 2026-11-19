@@ -915,6 +915,7 @@ chat-demo 是 Web 实现（点一下开始、再点结束、结果回填输入�
 - **`ChatRepository` 不再收 `apiKey` 参数**：发送/编辑/重生成/继续/重试全部内部按会话服务商取 Key；ViewModel 里只剩语音/余额还用 `container.apiKey`（DeepSeek 那把）。测试要传 `providerStore` + `apiKeyFor`。
 - **DB 升到 v4**：`providers` 表迁移只建表不塞数据，播种在 `ProviderStore.ensureSeeded()`；迁移里写死模型 JSON 的话，以后改能力位还得再发一次迁移。
 - **又把源码交给 PowerShell 改坏一次**（`ChatStreamRunner.kt` 的中文注释被写坏、还丢了一个换行）：结论不变——**改代码走补丁工具**，`Set-Content` 只用于纯 ASCII 的小替换。
+- **目录 tab 拉取模型会“静默成功但界面不更新”**（2026-11-19 用户实测 OpenCode Go）：第一版 `currentModels` 读 `pickedCatalog.models`（常量），拉取成功分支又只处理「自定义 / 已保存的 Go」，于是模型被丢掉、也不报错。修法：模型统一以可变的 `models` 状态为准（选目录服务商时灌入），目录服务商拉取即替换、自定义追加；服务端返回空列表时显式提示 `服务端没有返回模型`，不要装作成功。
 - **模拟器坐标会随内容高度漂移**：服务商表单在填完字段后会滚动/变矮，上一轮 dump 的坐标下一轮就点空。每次点击前重新 dump，别复用坐标。
 
 ---

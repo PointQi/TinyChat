@@ -247,6 +247,7 @@ fun ProviderEditorScreen(
     var key by remember { mutableStateOf("") }
     var reveal by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var fetching by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember {
         mutableStateOf(
@@ -263,7 +264,9 @@ fun ProviderEditorScreen(
     val editableCustom = adding && tab == EditorTab.CUSTOM || (provider != null && provider.kind == ProviderKind.OPENAI_COMPATIBLE)
     val catalogMode = adding && tab == EditorTab.CATALOG
     val effective = pickedCatalog ?: provider
-    val currentModels = if (catalogMode) (pickedCatalog?.models ?: emptyList()) else models
+    // 模型始终以这一份可变状态为准（选目录服务商时已把它的模型灌进来）；
+    // 第一版目录模式读的是 pickedCatalog.models，导致「拉取成功但界面不更新」
+    val currentModels = models
     val canSave = when {
         busy -> false
         catalogMode -> pickedCatalog != null && (key.isNotBlank() || pickedCatalog?.id in existing.map { it.id })
@@ -500,6 +503,7 @@ fun ProviderEditorScreen(
                     editable = editableCustom || (!builtin && provider != null),
                     canFetch = editableCustom || (pickedCatalog ?: provider)?.kind == ProviderKind.OPENCODE_GO,
                     busy = busy,
+                    fetching = fetching,
                     onAdd = { models = models + ModelInfo("", "", 128_000, 8_192, io.tinychat.model.Capabilities(thinking = false)) },
                     onChange = { index, updated -> models = models.toMutableList().also { it[index] = updated } },
                     onRemove = { index -> models = models.toMutableList().also { it.removeAt(index) } },
@@ -507,30 +511,37 @@ fun ProviderEditorScreen(
                         val candidate = draftProvider()
                         scope.launch {
                             busy = true
+                            fetching = true
                             error = null
                             runCatching { onFetchModels(candidate, key.trim().takeIf { it.isNotEmpty() }) }
                                 .onSuccess { ids ->
-                                    val existingIds = currentModels.map { it.id }.toSet()
-                                    val fetched = ids.map { modelId ->
-                                        currentModels.firstOrNull { it.id == modelId } ?: ModelInfo(
-                                            id = modelId,
-                                            displayName = modelId,
-                                            contextWindow = 128_000,
-                                            maxOutputTokens = 8_192,
-                                            capabilities = io.tinychat.model.Capabilities(
-                                                thinking = false,
-                                                reasoning = false,
-                                            ),
-                                        )
-                                    }
-                                    if (editableCustom) {
-                                        models = models + fetched.filter { it.id !in existingIds }
-                                    } else if (provider?.kind == ProviderKind.OPENCODE_GO) {
-                                        // 目录服务商的模型只能来自服务端，拉取即替换
-                                        models = fetched
+                                    if (ids.isEmpty()) {
+                                        error = "服务端没有返回模型"
+                                    } else {
+                                        val fetched = ids.map { modelId ->
+                                            currentModels.firstOrNull { it.id == modelId } ?: ModelInfo(
+                                                id = modelId,
+                                                displayName = modelId,
+                                                contextWindow = 128_000,
+                                                maxOutputTokens = 8_192,
+                                                capabilities = io.tinychat.model.Capabilities(
+                                                    thinking = false,
+                                                    reasoning = false,
+                                                ),
+                                            )
+                                        }
+                                        if (editableCustom) {
+                                            // 自定义服务商：拉到的追加到现有目录，不删用户手填的
+                                            val existingIds = currentModels.map { it.id }.toSet()
+                                            models = models + fetched.filter { it.id !in existingIds }
+                                        } else {
+                                            // 目录服务商（DeepSeek / OpenCode Go）：模型只能来自服务端，拉取即替换
+                                            models = fetched
+                                        }
                                     }
                                 }
                                 .onFailure { error = it.message ?: "获取可用模型失败" }
+                            fetching = false
                             busy = false
                         }
                     },
@@ -666,6 +677,7 @@ private fun ModelDirectory(
     editable: Boolean,
     canFetch: Boolean,
     busy: Boolean,
+    fetching: Boolean,
     onAdd: () -> Unit,
     onChange: (Int, ModelInfo) -> Unit,
     onRemove: (Int) -> Unit,
@@ -676,7 +688,7 @@ private fun ModelDirectory(
         Text("模型目录", style = TcTypography.labelMedium, color = palette.labelSecondary, modifier = Modifier.weight(1f))
         if (canFetch) {
             Text(
-                text = "获取可用模型",
+                text = if (fetching) "获取中…" else "获取可用模型",
                 style = TcTypography.labelMedium,
                 color = if (busy) palette.labelTertiary else palette.brand,
                 modifier = Modifier
@@ -724,7 +736,11 @@ private fun ModelDirectory(
 
     if (models.isEmpty()) {
         Text(
-            text = "还没有模型。可以点上面「获取可用模型」，或手动添加。",
+            text = if (editable) {
+                "还没有模型。点上面「获取可用模型」，或手动添加。"
+            } else {
+                "还没有模型。点上面「获取可用模型」拉取。"
+            },
             style = TcTypography.labelMedium,
             color = palette.labelTertiary,
             modifier = Modifier.padding(bottom = 8.dp),
