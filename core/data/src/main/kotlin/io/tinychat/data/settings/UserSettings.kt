@@ -30,6 +30,12 @@ class UserSettings(context: Context) {
 
     val ttsVoice: Flow<TtsVoice> = store.data.map { voiceOf(it[TTS_VOICE]) }
 
+    /** 每轮回答下方的用量行（M7-3）；**默认开** */
+    val showUsage: Flow<Boolean> = store.data.map { it[SHOW_USAGE] ?: true }
+
+    /** 用户元信息（`latest_reminder`）开关（M7-5）；默认开，与官方一致 */
+    val reminderEnabled: Flow<Boolean> = store.data.map { it[REMINDER] ?: true }
+
     suspend fun setAutoSpeak(enabled: Boolean) {
         store.edit { it[AUTO_SPEAK] = enabled }
     }
@@ -38,9 +44,19 @@ class UserSettings(context: Context) {
         store.edit { it[TTS_VOICE] = voice.wire }
     }
 
+    suspend fun setShowUsage(enabled: Boolean) {
+        store.edit { it[SHOW_USAGE] = enabled }
+    }
+
+    suspend fun setReminderEnabled(enabled: Boolean) {
+        store.edit { it[REMINDER] = enabled }
+    }
+
     companion object {
         private val AUTO_SPEAK = booleanPreferencesKey("auto_speak")
         private val TTS_VOICE = stringPreferencesKey("tts_voice")
+        private val SHOW_USAGE = booleanPreferencesKey("show_usage")
+        private val REMINDER = booleanPreferencesKey("reminder_enabled")
 
         /** 认不出的值一律退回默认音色（旧的/手改的文件不该把朗读弄挂）。 */
         internal fun voiceOf(raw: String?): TtsVoice =

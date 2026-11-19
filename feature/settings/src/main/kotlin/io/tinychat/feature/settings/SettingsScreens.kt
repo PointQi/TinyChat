@@ -4,7 +4,11 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -12,7 +16,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -20,7 +28,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import io.tinychat.data.archive.ChatArchive
 import io.tinychat.designsystem.TcIcons
@@ -42,10 +55,18 @@ fun SettingsScreen(
     onOpenProvider: () -> Unit,
     onOpenData: () -> Unit,
     onOpenAbout: () -> Unit,
+    /** 是否已配置 Key（M7-6）：决定那一行的副标题 */
+    hasKey: Boolean = false,
     currentPromptPreset: PromptPreset = PromptPreset.DEFAULT,
     /** 当前朗读音色（M5-4，只有官方两个） */
     ttsVoice: TtsVoice = TtsVoice.STELLA,
     onSelectTtsVoice: (TtsVoice) -> Unit = {},
+    /** 每轮统计条开关（M7-3，默认开） */
+    showUsage: Boolean = true,
+    onToggleShowUsage: (Boolean) -> Unit = {},
+    /** 用户元信息开关（M7-5，默认开） */
+    reminderEnabled: Boolean = true,
+    onToggleReminder: (Boolean) -> Unit = {},
 ) {
     val palette = TcTheme.palette
     var voicePicker by remember { mutableStateOf(false) }
@@ -62,7 +83,7 @@ fun SettingsScreen(
             TcSectionLabel("账户")
             TcListRow(
                 title = "服务商与 API Key",
-                subtitle = "默认 DeepSeek 官方",
+                subtitle = if (hasKey) "DeepSeek 官方" else "未配置",
                 onClick = onOpenProvider,
             )
             TcListRow(
@@ -80,6 +101,9 @@ fun SettingsScreen(
                 subtitle = "当前预设：${currentPromptPreset.displayName}",
                 onClick = {},
             )
+
+            SettingsSwitch(title = "显示每轮用量", checked = showUsage, onCheckedChange = onToggleShowUsage)
+            SettingsSwitch(title = "用户元信息", checked = reminderEnabled, onCheckedChange = onToggleReminder)
 
             TcSectionLabel("语音")
             // 只有官方两个音色（决策 3），不做系统 TTS 兜底
@@ -121,6 +145,36 @@ fun SettingsScreen(
     }
 }
 
+/** 设置里的一行开关：右侧 Switch，点了立刻生效。 */
+@Composable
+private fun SettingsSwitch(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val palette = TcTheme.palette
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = TcTypography.bodyLarge,
+            color = palette.labelPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = palette.brand,
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = palette.labelTertiary.copy(alpha = 0.4f),
+            ),
+        )
+    }
+}
+
 /** 官方两个音色的中文名（`stella` 海星女声 / `tide` 暗潮男声）。 */
 private val TtsVoice.displayLabel: String
     get() = when (this) {
@@ -128,23 +182,167 @@ private val TtsVoice.displayLabel: String
         TtsVoice.TIDE -> "暗潮（男）"
     }
 
-/** 服务商与 API Key（docs/02 §12.6）。M0 只有壳。 */
+/**
+ * 服务商与 API Key（docs/02 §12.6，M7-6）。
+ *
+ * 只做 DeepSeek 官方一家（决策 23）：一个 Key、一个状态、三个动作。
+ * 多服务商与 OpenAI 兼容留到 M8。
+ */
 @Composable
-fun ProviderSettingsScreen(onBack: () -> Unit) {
-    PlaceholderPage(
-        title = "服务商与 API Key",
-        onBack = onBack,
-        lines = listOf(
-            "DeepSeek 官方（默认）",
-            "base URL：https://api.deepseek.com",
-            "模型：deepseek-flash / deepseek-v4-pro",
-            "",
-            "通用 OpenAI 兼容（降级链路）",
-            "搜索、读链接、文件、图片全部置灰",
-            "",
-            "M8-6 实现：Key 校验走 GET /models，不计费",
-        ),
-    )
+fun ProviderSettingsScreen(
+    hasKey: Boolean,
+    onBack: () -> Unit,
+    /** 返回 `null` = 校验通过，否则是给用户看的一行错误文案（`GET /models`，不计费） */
+    onCheck: suspend (String) -> String?,
+    onSave: suspend (String) -> Unit,
+    onClear: suspend () -> Unit,
+) {
+    val palette = TcTheme.palette
+    val scope = rememberCoroutineScope()
+    var field by remember { mutableStateOf("") }
+    var reveal by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
+
+    fun checkThenSave() {
+        val candidate = field.trim()
+        if (candidate.isEmpty() || busy) return
+        scope.launch {
+            busy = true
+            message = null
+            failed = false
+            val error = onCheck(candidate)
+            if (error == null) {
+                onSave(candidate)
+                field = ""
+                message = "已保存"
+            } else {
+                failed = true
+                message = error
+            }
+            busy = false
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.bg),
+    ) {
+        TcTopBar(
+            title = "服务商与 API Key",
+            leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
+        )
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Text(
+                text = "DeepSeek 官方",
+                style = TcTypography.bodyLarge,
+                color = palette.labelPrimary,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, palette.borderL2, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp)
+                    .height(48.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BasicTextField(
+                    value = field,
+                    onValueChange = {
+                        field = it
+                        message = null
+                        failed = false
+                    },
+                    singleLine = true,
+                    textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
+                    cursorBrush = SolidColor(palette.brand),
+                    visualTransformation =
+                        if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = if (reveal) "隐藏" else "显示",
+                    style = TcTypography.bodyMedium,
+                    color = palette.labelSecondary,
+                    modifier = Modifier
+                        .clickable { reveal = !reveal }
+                        .padding(start = 12.dp),
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+            val statusText = message ?: if (hasKey) "已配置" else "未配置"
+            val statusColor = when {
+                failed -> palette.danger
+                message != null -> palette.labelSecondary
+                hasKey -> palette.brand
+                else -> palette.labelTertiary
+            }
+            Text(text = statusText, style = TcTypography.bodyMedium, color = statusColor)
+
+            Spacer(Modifier.height(16.dp))
+            Row {
+                TextButton(
+                    onClick = ::checkThenSave,
+                    enabled = field.isNotBlank() && !busy,
+                ) {
+                    Text("保存并验证", color = if (field.isNotBlank() && !busy) palette.brand else palette.labelTertiary)
+                }
+                TextButton(
+                    onClick = ::checkThenSave,
+                    enabled = field.isNotBlank() && !busy,
+                    modifier = Modifier.padding(start = 4.dp),
+                ) {
+                    Text("测试连接", color = palette.labelSecondary)
+                }
+                TextButton(
+                    onClick = { confirmClear = true },
+                    enabled = hasKey && !busy,
+                    modifier = Modifier.padding(start = 4.dp),
+                ) {
+                    Text("清除", color = palette.danger)
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "只保存在本机，不会上传。",
+                style = TcTypography.bodyMedium,
+                color = palette.labelTertiary,
+            )
+        }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("清除 API Key？") },
+            text = { Text("清除后需要重新填写才能继续对话，历史记录不受影响。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    scope.launch {
+                        busy = true
+                        onClear()
+                        message = "已清除"
+                        failed = false
+                        busy = false
+                    }
+                }) { Text("清除", color = palette.danger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) { Text("取消") }
+            },
+        )
+    }
 }
 
 /**

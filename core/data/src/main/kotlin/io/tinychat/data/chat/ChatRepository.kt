@@ -24,6 +24,11 @@ import io.tinychat.model.ResponsePayload
 import io.tinychat.model.Role
 import io.tinychat.model.SessionSearchHit
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.model.Usage
+import io.tinychat.model.billing.CostCalculator
+import io.tinychat.model.billing.PeakClock
+import io.tinychat.model.billing.UsageSummary
+import java.time.Instant
 import io.tinychat.model.buildSearchHit
 import io.tinychat.net.context.ContextRebuilder
 import io.tinychat.net.context.ContextTurn
@@ -34,7 +39,9 @@ import io.tinychat.net.protocol.DeepSeekMessagesProtocol
 import io.tinychat.net.protocol.WireMessage
 import io.tinychat.net.transport.ChatException
 import io.tinychat.net.transport.ChatTransport
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.util.UUID
 
@@ -48,6 +55,8 @@ class ChatRepository(
     private val db: TinyChatDatabase,
     private val transport: ChatTransport,
     private val clock: () -> Long = { System.currentTimeMillis() },
+    /** 用户元信息开关（M7-5）：关掉后请求里不再带 `latest_reminder` */
+    private val reminderEnabled: () -> Boolean = { true },
     /** 发请求前的连通性预检：离线就不必等 15s 连接超时，直接落失败让界面挂重试钮 */
     private val isOnline: () -> Boolean = { true },
     /** 附件落盘（M4）；只有带附件时才会用到 */
@@ -62,6 +71,63 @@ class ChatRepository(
         db.messageDao().observeWithFragments(sessionId)
 
     fun observeSessions(): Flow<List<SessionEntity>> = db.sessionDao().observeAll()
+
+    /**
+     * 会话用量合计（M7-2）：token 与费用都按**逐条消息**算。
+     *
+     * 费用必须在落库时按当时是不是高峰定价，否则历史账单会随"现在几点"漂移。
+     * 不只看当前分支：被编辑/重生成丢弃的旧版本也是真花掉的钱。
+     */
+    suspend fun usageSummary(sessionId: String): UsageSummary = withContext(Dispatchers.IO) {
+        var prompt = 0
+        var cacheHit = 0
+        var completion = 0
+        var thinking = 0
+        var search = 0
+        var fetch = 0
+        var imageSearch = 0
+        var cost = 0L
+        db.messageDao().usageRows(sessionId).forEach { row ->
+            val usage = Usage(
+                promptTokens = row.promptTokens ?: 0,
+                cacheHitTokens = row.cacheHitTokens ?: 0,
+                completionTokens = row.completionTokens ?: 0,
+                thinkingTokens = row.thinkingTokens ?: 0,
+                searchCalls = row.searchCalls ?: 0,
+                fetchCalls = row.fetchCalls ?: 0,
+                imageSearchCalls = row.imageSearchCalls ?: 0,
+            )
+            if (usage.isEmpty) return@forEach
+            prompt += usage.promptTokens
+            cacheHit += usage.cacheHitTokens
+            completion += usage.completionTokens
+            thinking += usage.thinkingTokens
+            search += usage.searchCalls
+            fetch += usage.fetchCalls
+            imageSearch += usage.imageSearchCalls
+            val peak = PeakClock.isPeak(
+                Instant.ofEpochMilli(row.insertedAt).atZone(PeakClock.ZONE),
+            )
+            cost += CostCalculator.micros(usage, row.model ?: KnownProviders.flash.id, peak)
+        }
+        UsageSummary(
+            usage = Usage(
+                promptTokens = prompt,
+                cacheHitTokens = cacheHit,
+                completionTokens = completion,
+                thinkingTokens = thinking,
+                searchCalls = search,
+                fetchCalls = fetch,
+                imageSearchCalls = imageSearch,
+            ),
+            costMicros = cost,
+        )
+    }
+
+
+    /** 关掉开关时整条 reminder 消息都不发（M7-5） */
+    private fun currentReminder(): String? =
+        if (reminderEnabled()) ReminderBuilder.build(date = LocalDate.now(), location = null) else null
 
     suspend fun session(sessionId: String): SessionEntity? = db.sessionDao().byId(sessionId)
 
@@ -254,7 +320,7 @@ class ChatRepository(
             userMessageId = userMessageId,
             userText = userText,
             // 沿用当时那条提问的元信息快照，避免上下文里凭空多出一条新的 reminder
-            reminder = question.reminderSnapshot ?: ReminderBuilder.build(date = LocalDate.now(), location = null),
+            reminder = question.reminderSnapshot ?: currentReminder(),
             apiKey = apiKey,
         )
     }
@@ -314,7 +380,7 @@ class ChatRepository(
 
         val modelInfo = KnownProviders.deepSeek.model(session.model) ?: KnownProviders.flash
         val history = chainTurns(sessionId, question.parentId)
-        val reminder = question.reminderSnapshot ?: ReminderBuilder.build(date = LocalDate.now(), location = null)
+        val reminder = question.reminderSnapshot ?: currentReminder()
 
         val command = ChatCommand(
             capabilities = modelInfo.capabilities,
@@ -359,7 +425,7 @@ class ChatRepository(
         val now = clock()
 
         // 本轮的用户元信息（02 §5.4）；地点暂未接设置项，留空但保留逗号
-        val reminder = ReminderBuilder.build(date = LocalDate.now(), location = null)
+        val reminder = currentReminder()
 
         val userId = db.messageDao().insert(
             MessageEntity(
@@ -457,7 +523,7 @@ class ChatRepository(
             userMessageId = userMessageId,
             userText = userText,
             reminder = question.reminderSnapshot
-                ?: ReminderBuilder.build(date = LocalDate.now(), location = null),
+                ?: currentReminder(),
             apiKey = apiKey,
         )
     }

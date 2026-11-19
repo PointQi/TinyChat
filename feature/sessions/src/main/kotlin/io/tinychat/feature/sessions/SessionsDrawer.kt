@@ -1,4 +1,4 @@
-﻿package io.tinychat.feature.sessions
+package io.tinychat.feature.sessions
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -83,6 +83,9 @@ fun SessionsDrawerContent(
     onDeleteSession: (String) -> Unit,
     onOpenSearch: () -> Unit,
     onCloseSearch: () -> Unit,
+    /** 余额文案（M7-4）：`￥12.34` 或 null（显示 --） */
+    balanceText: String? = null,
+    onRefreshBalance: () -> Unit = {},
     onSearchQueryChange: (String) -> Unit,
     onPickSearchResult: (String) -> Unit,
     onEnterSelection: () -> Unit,
@@ -162,7 +165,11 @@ fun SessionsDrawerContent(
             )
         } else {
             Spacer(Modifier.height(4.dp))
-            TcListRow(title = "余额", onClick = null)
+            TcListRow(
+                title = "余额",
+                subtitle = balanceText ?: "--",
+                onClick = onRefreshBalance,
+            )
             TcListRow(
                 title = "设置",
                 leading = TcIcons.Settings,

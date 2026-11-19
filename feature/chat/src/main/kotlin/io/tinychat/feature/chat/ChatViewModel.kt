@@ -24,6 +24,12 @@ import io.tinychat.model.BranchNode
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.FilePayload
 import io.tinychat.model.KnownProviders
+import io.tinychat.net.account.AccountClient
+import io.tinychat.model.Usage
+import io.tinychat.model.billing.CostCalculator
+import io.tinychat.model.billing.PeakClock
+import io.tinychat.model.billing.UsageSummary
+import java.time.Instant
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.RequestPayload
 import io.tinychat.model.ResponsePayload
@@ -45,7 +51,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.contentOrNull
@@ -190,6 +198,10 @@ data class ChatMessage(
     val retryTargetId: Long? = null,
     /** 失败提示（灰字，右贴边），如「请检查网络后重试」 */
     val retryHint: String? = null,
+    /** 这一轮的用量（M7）；用户消息为 null */
+    val usage: Usage? = null,
+    /** 这一轮的费用（微元），按落库时的时段算；没有 usage 为 null */
+    val costMicros: Long? = null,
 ) {
     val hasThinking: Boolean get() = timeline.isNotEmpty()
 
@@ -203,6 +215,8 @@ data class ChatUiState(
     /** 输入框里待发送的附件（M4-1/2） */
     val attachments: List<DraftAttachment> = emptyList(),
     val isStreaming: Boolean = false,
+    /** 是否已配置 Key（M7-6：Key 改成运行时可变，UI 要跟着重算） */
+    val hasApiKey: Boolean = false,
     val error: String? = null,
     /** 错误分类：决定文案与「去设置」这类动作 */
     val errorKind: ErrorKind? = null,
@@ -234,10 +248,33 @@ data class ChatUiState(
     val ttsVoice: TtsVoice = TtsVoice.STELLA,
     /** 一次性提示（未识别到语音内容等）；UI 弹完调 clearHint */
     val hint: String? = null,
+
+    // ---- 用量与费用（M7）----
+
+    /** 会话用量合计（token + 费用），见 [UsageSummary] */
+    val usageSummary: UsageSummary = UsageSummary(),
+    /** 余额文案（形如 `￥12.34`）；null = 未取到 */
+    val balanceText: String? = null,
+    val balanceLoading: Boolean = false,
+    /** 每轮统计条开关（设置里可关，默认开） */
+    val showUsage: Boolean = true,
+    /** 用户元信息（`latest_reminder`）开关（M7-5，默认开） */
+    val reminderEnabled: Boolean = true,
 ) {
     /** 当前模型能不能收图片（v4-pro 不支持，M4-6） */
     val canAttachImage: Boolean
         get() = KnownProviders.deepSeek.model(modelId)?.capabilities?.imageInput == true
+
+    /** 圆环分子：当前分支最后一条带 usage 的回答（决策 26，不做预估） */
+    val contextUsed: Int
+        get() = messages.lastOrNull { it.usage != null }?.usage?.contextUsed ?: 0
+
+    /** 圆环分母 */
+    val contextWindow: Int
+        get() = KnownProviders.deepSeek.model(modelId)?.contextWindow ?: 1_000_000
+
+    val contextPercent: Float
+        get() = if (contextWindow <= 0) 0f else (contextUsed.toFloat() / contextWindow).coerceIn(0f, 1f)
 
     /** 能不能带文件 */
     val canAttachFile: Boolean
@@ -257,13 +294,15 @@ enum class VoiceStatus { IDLE, RECORDING, TRANSCRIBING }
  */
 class ChatViewModel(
     private val repository: ChatRepository,
-    private val apiKey: String,
+    private val apiKey: StateFlow<String>,
     /** 附件落盘（M4）：选完文件后先读元信息 + 生成缩略图 */
     private val attachmentStore: AttachmentStore,
     /** 语音（M5）：录音、频谱、ASR、TTS 播放 */
     private val voice: VoiceController,
     /** 自动朗读 / 朗读音色的持久化 */
     private val settings: UserSettings,
+    /** 账户接口（M7-4）：余额查询 */
+    private val account: AccountClient,
 ) : ViewModel() {
 
     var state by mutableStateOf(ChatUiState())
@@ -283,11 +322,16 @@ class ChatViewModel(
     private var transcribeJob: Job? = null
     private var voiceTicker: Job? = null
     private var voiceStartedAt = 0L
+    private var usageJob: Job? = null
+    private var balanceJob: Job? = null
+    private var balanceAt = 0L
 
     /** 本轮生成结束后要不要自动朗读（开关是全局的，但只在"自己发起的这一轮"才读）。 */
     private var autoSpeakPending = false
 
-    val hasApiKey: Boolean get() = apiKey.isNotBlank()
+    /** 当前 Key（Key 页可随时换，所以每次调用都取最新值）。 */
+    private val apiKeyValue: String get() = apiKey.value
+
 
     /** 频谱数据（Canvas 直接在帧循环里读，不参与重组）。 */
     val spectrum get() = voice.spectrum
@@ -306,6 +350,11 @@ class ChatViewModel(
             }
         }
         viewModelScope.launch {
+            apiKey.map { it.isNotBlank() }.distinctUntilChanged().collect { present ->
+                state = state.copy(hasApiKey = present)
+            }
+        }
+        viewModelScope.launch {
             settings.autoSpeak.distinctUntilChanged().collect { enabled ->
                 state = state.copy(autoSpeak = enabled)
             }
@@ -313,6 +362,16 @@ class ChatViewModel(
         viewModelScope.launch {
             settings.ttsVoice.distinctUntilChanged().collect { voice ->
                 state = state.copy(ttsVoice = voice)
+            }
+        }
+        viewModelScope.launch {
+            settings.showUsage.distinctUntilChanged().collect { show ->
+                state = state.copy(showUsage = show)
+            }
+        }
+        viewModelScope.launch {
+            settings.reminderEnabled.distinctUntilChanged().collect { enabled ->
+                state = state.copy(reminderEnabled = enabled)
             }
         }
         viewModelScope.launch {
@@ -505,7 +564,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null, errorKind = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.retryTurn(id, message.id, apiKey))
+                state = state.withOutcomeError(repository.retryTurn(id, message.id, apiKeyValue))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -563,12 +622,12 @@ class ChatViewModel(
                 persistSettings(id)
                 val outcome = if (editingId != null) {
                     // 编辑重发：在新分支上跑，旧分支留库
-                    repository.editMessage(id, editingId, text, apiKey)
+                    repository.editMessage(id, editingId, text, apiKeyValue)
                 } else {
                     repository.send(
                         sessionId = id,
                         text = text,
-                        apiKey = apiKey,
+                        apiKey = apiKeyValue,
                         attachments = sendingAttachments.map {
                             PickedFile(
                                 id = it.id,
@@ -629,7 +688,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.regenerate(id, message.id, apiKey))
+                state = state.withOutcomeError(repository.regenerate(id, message.id, apiKeyValue))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -653,7 +712,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.continueGeneration(id, message.id, apiKey))
+                state = state.withOutcomeError(repository.continueGeneration(id, message.id, apiKeyValue))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -748,7 +807,7 @@ class ChatViewModel(
         state = state.copy(isStreaming = true, error = null, errorKind = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.regenerate(id, targetId, apiKey))
+                state = state.withOutcomeError(repository.regenerate(id, targetId, apiKeyValue))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
@@ -839,7 +898,7 @@ class ChatViewModel(
         state = state.copy(voiceStatus = VoiceStatus.TRANSCRIBING, voiceSeconds = 0)
         transcribeJob = viewModelScope.launch {
             try {
-                val text = voice.transcribe(apiKey, audio)
+                val text = voice.transcribe(apiKeyValue, audio)
                 if (text.isBlank()) {
                     state = state.copy(hint = "未识别到语音内容")
                 } else {
@@ -918,7 +977,7 @@ class ChatViewModel(
         val voiceId = state.ttsVoice
         speakingJob = viewModelScope.launch {
             try {
-                voice.play(apiKey, text, voiceId)
+                voice.play(apiKeyValue, text, voiceId)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: PlaybackStopped) {
@@ -957,6 +1016,52 @@ class ChatViewModel(
         if (last.isUser || last.status != MessageStatus.FINISHED || last.text.isBlank()) return
         autoSpeakPending = false
         speak(last.id, last.text)
+    }
+
+    /** 会话合计：流式期间跳过，落库稳定后再查（UI 只在抽屉里用） */
+    private fun refreshUsage(id: String, force: Boolean = false) {
+        if (!force && state.isStreaming) return
+        usageJob?.cancel()
+        usageJob = viewModelScope.launch {
+            val summary = runCatching { repository.usageSummary(id) }.getOrNull() ?: return@launch
+            state = state.copy(usageSummary = summary)
+        }
+    }
+
+    /** 抽屉打开时强制刷新一次（用户可能刚从别处回来） */
+    /** 每轮统计条开关（M7-3） */
+    fun setShowUsage(enabled: Boolean) {
+        viewModelScope.launch { settings.setShowUsage(enabled) }
+    }
+
+    /** 用户元信息开关（M7-5） */
+    fun setReminderEnabled(enabled: Boolean) {
+        viewModelScope.launch { settings.setReminderEnabled(enabled) }
+    }
+
+    fun refreshUsageNow() {
+        sessionId?.let { refreshUsage(it, force = true) }
+        refreshBalance()
+    }
+
+    /** 余额：60 秒内复用，失败静默（显示 --），不弹错 */
+    fun refreshBalance(force: Boolean = false) {
+        val key = apiKeyValue
+        if (key.isBlank()) {
+            state = state.copy(balanceText = null)
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (!force && now - balanceAt < BALANCE_TTL_MS) return
+        balanceJob?.cancel()
+        balanceJob = viewModelScope.launch {
+            state = state.copy(balanceLoading = true)
+            val text = runCatching { account.balance(key) }.getOrNull()
+                ?.primary?.totalBalance
+                ?.let { "￥$it" }
+            state = state.copy(balanceText = text, balanceLoading = false)
+            if (text != null) balanceAt = now
+        }
     }
 
     private fun observe(id: String) {
@@ -998,6 +1103,8 @@ class ChatViewModel(
                         },
                         title = session?.title,
                     )
+                    // 会话合计（M7-2）：流式期间不查，落库稳定后再算
+                    refreshUsage(id)
                     // 自动朗读：等这一轮真的落成 FINISHED 再读，别读半截
                     maybeAutoSpeak(state.messages)
                 }
@@ -1174,6 +1281,17 @@ class ChatViewModel(
             fragments.none { it.type == "TEMPLATE_RESPONSE" } &&
             text.isNotBlank()
 
+        val rowUsage = Usage(
+            promptTokens = message.promptTokens ?: 0,
+            cacheHitTokens = message.cacheHitTokens ?: 0,
+            completionTokens = message.completionTokens ?: 0,
+            thinkingTokens = message.thinkingTokens ?: 0,
+            safetyTokens = message.safetyTokens ?: 0,
+            searchCalls = message.searchCalls ?: 0,
+            fetchCalls = message.fetchCalls ?: 0,
+            imageSearchCalls = message.imageSearchCalls ?: 0,
+        ).takeUnless { it.isEmpty }
+
         return ChatMessage(
             id = message.id,
             isUser = false,
@@ -1185,6 +1303,16 @@ class ChatViewModel(
             isThinking = message.status == MessageStatus.WIP,
             status = message.status,
             canContinue = canContinue,
+            usage = rowUsage,
+            costMicros = rowUsage?.let { usage ->
+                CostCalculator.micros(
+                    usage = usage,
+                    model = message.model ?: KnownProviders.flash.id,
+                    peak = PeakClock.isPeak(
+                        Instant.ofEpochMilli(message.insertedAt).atZone(PeakClock.ZONE),
+                    ),
+                )
+            },
         )
     }
 
@@ -1272,14 +1400,18 @@ private fun StringBuilder.trimmedEnd(): Int {
         /** 短于这个时长直接当"没说话"（省一次请求，也符合直觉：点一下就松手不算）。 */
         private const val MIN_VOICE_MS = 600L
 
+        /** 余额 60 秒内复用 */
+        private const val BALANCE_TTL_MS = 60_000L
+
         fun factory(
             repository: ChatRepository,
-            apiKey: String,
+            apiKey: StateFlow<String>,
             attachmentStore: AttachmentStore,
             voice: VoiceController,
             settings: UserSettings,
+            account: AccountClient,
         ) = viewModelFactory {
-            initializer { ChatViewModel(repository, apiKey, attachmentStore, voice, settings) }
+            initializer { ChatViewModel(repository, apiKey, attachmentStore, voice, settings, account) }
         }
     }
 }

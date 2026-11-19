@@ -8,6 +8,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +23,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.feature.chat.ChatScreen
+import io.tinychat.feature.chat.UsageDrawer
 import io.tinychat.feature.chat.ChatViewModel
 import io.tinychat.feature.sessions.SessionsDrawerContent
 import io.tinychat.feature.settings.AboutScreen
@@ -29,6 +31,7 @@ import io.tinychat.feature.settings.DataManagementScreen
 import io.tinychat.feature.settings.ProviderSettingsScreen
 import io.tinychat.feature.settings.SettingsScreen
 import io.tinychat.model.PromptPreset
+import io.tinychat.net.account.KeyCheck
 import kotlinx.coroutines.launch
 
 object Routes {
@@ -52,6 +55,8 @@ fun TinyChatApp() {
 
     val context = LocalContext.current
     val container = remember { AppContainer(context.applicationContext) }
+    val apiKey by container.apiKey.collectAsState()
+    val hasKey = apiKey.isNotBlank()
     val chatViewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.factory(
             repository = container.repository,
@@ -59,11 +64,13 @@ fun TinyChatApp() {
             attachmentStore = container.attachmentStore,
             voice = container.voiceController,
             settings = container.userSettings,
+            account = container.account,
         ),
     )
 
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    var usageOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val closeDrawer = { scope.launch { drawerState.close() } }
 
@@ -99,6 +106,8 @@ fun TinyChatApp() {
                 onToggleSelected = chatViewModel::toggleSelected,
                 onPinSelected = chatViewModel::pinSelected,
                 onDeleteSelected = chatViewModel::deleteSelected,
+                balanceText = chatViewModel.state.balanceText,
+                onRefreshBalance = { chatViewModel.refreshBalance(force = true) },
             )
         },
     ) {
@@ -112,7 +121,7 @@ fun TinyChatApp() {
                 composable(Routes.CHAT) {
                     ChatScreen(
                         state = chatViewModel.state,
-                        hasApiKey = chatViewModel.hasApiKey,
+                        hasApiKey = chatViewModel.state.hasApiKey,
                         autoSpeak = chatViewModel.state.autoSpeak,
                         onInputChange = chatViewModel::onInputChange,
                         onSend = chatViewModel::send,
@@ -120,7 +129,10 @@ fun TinyChatApp() {
                         onToggleThinking = chatViewModel::toggleThinking,
                         onToggleSearch = chatViewModel::toggleSearch,
                         onSelectModel = chatViewModel::selectModel,
-                        onOpenDrawer = { scope.launch { drawerState.open() } },
+                        onOpenDrawer = {
+                            scope.launch { drawerState.open() }
+                            chatViewModel.refreshBalance()
+                        },
                         onNewChat = chatViewModel::newChat,
                         onToggleAutoSpeak = {
                             chatViewModel.setAutoSpeak(!chatViewModel.state.autoSpeak)
@@ -149,6 +161,10 @@ fun TinyChatApp() {
                         },
                         onReadAloud = chatViewModel::toggleSpeak,
                         onClearHint = chatViewModel::clearHint,
+                        onOpenUsage = {
+                            usageOpen = true
+                            chatViewModel.refreshUsageNow()
+                        },
                     )
                 }
                 composable(Routes.SETTINGS) {
@@ -157,13 +173,30 @@ fun TinyChatApp() {
                         onOpenProvider = { navController.navigate(Routes.PROVIDER) },
                         onOpenData = { navController.navigate(Routes.DATA) },
                         onOpenAbout = { navController.navigate(Routes.ABOUT) },
+                        hasKey = chatViewModel.state.hasApiKey,
                         currentPromptPreset = promptPreset,
                         ttsVoice = chatViewModel.state.ttsVoice,
                         onSelectTtsVoice = chatViewModel::setTtsVoice,
+                        showUsage = chatViewModel.state.showUsage,
+                        onToggleShowUsage = chatViewModel::setShowUsage,
+                        reminderEnabled = chatViewModel.state.reminderEnabled,
+                        onToggleReminder = chatViewModel::setReminderEnabled,
                     )
                 }
                 composable(Routes.PROVIDER) {
-                    ProviderSettingsScreen(onBack = { navController.popBackStack() })
+                    ProviderSettingsScreen(
+                        hasKey = hasKey,
+                        onBack = { navController.popBackStack() },
+                        onCheck = { candidate ->
+                            when (val result = container.account.checkKey(candidate)) {
+                                KeyCheck.Ok -> null
+                                KeyCheck.Invalid -> "Key 无效"
+                                is KeyCheck.Failed -> result.message
+                            }
+                        },
+                        onSave = { container.saveApiKey(it) },
+                        onClear = { container.clearApiKey() },
+                    )
                 }
                 composable(Routes.DATA) {
                     DataManagementScreen(
@@ -178,6 +211,15 @@ fun TinyChatApp() {
                     AboutScreen(onBack = { navController.popBackStack() })
                 }
             }
+
+            UsageDrawer(
+                visible = usageOpen,
+                summary = chatViewModel.state.usageSummary,
+                contextUsed = chatViewModel.state.contextUsed,
+                contextWindow = chatViewModel.state.contextWindow,
+                balanceText = chatViewModel.state.balanceText,
+                onDismiss = { usageOpen = false },
+            )
         }
     }
 }

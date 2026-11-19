@@ -71,6 +71,29 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun delete(id: Long)
 
+    @Query(
+        """
+        SELECT prompt_tokens AS promptTokens, cache_hit_tokens AS cacheHitTokens,
+               completion_tokens AS completionTokens, thinking_tokens AS thinkingTokens,
+               search_calls AS searchCalls, fetch_calls AS fetchCalls,
+               image_search_calls AS imageSearchCalls, model, inserted_at AS insertedAt
+        FROM messages WHERE session_id = :sessionId
+        """,
+    )
+    suspend fun usageRows(sessionId: String): List<UsageRow>
     @Query("SELECT COUNT(*) FROM messages WHERE session_id = :sessionId")
     suspend fun countInSession(sessionId: String): Int
 }
+
+/** 逐条消息的用量行（M7-2 会话合计用）：连模型与落库时间一起取，好按当时时段算价。 */
+data class UsageRow(
+    val promptTokens: Int?,
+    val cacheHitTokens: Int?,
+    val completionTokens: Int?,
+    val thinkingTokens: Int?,
+    val searchCalls: Int?,
+    val fetchCalls: Int?,
+    val imageSearchCalls: Int?,
+    val model: String?,
+    val insertedAt: Long,
+)

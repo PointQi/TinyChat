@@ -193,6 +193,8 @@ fun ChatScreen(
     onReadAloud: (ChatMessage) -> Unit,
     /** 语音相关的一次性提示（录音太短/没识别出内容/朗读失败）已弹过 */
     onClearHint: () -> Unit,
+    /** 点输入区圆环：打开右侧用量抽屉（M7-2） */
+    onOpenUsage: () -> Unit,
 ) {
     val palette = TcTheme.palette
     val context = LocalContext.current
@@ -290,6 +292,7 @@ fun ChatScreen(
         } else {
             MessageList(
                 state = state,
+                showUsage = state.showUsage,
                 modifier = Modifier.weight(1f),
                 onEditMessage = onEditMessage,
                 conversationText = conversationText,
@@ -358,6 +361,8 @@ fun ChatScreen(
             onMicClick = onMicClick,
             onVoicePress = onVoicePress,
             onVoiceRelease = onVoiceRelease,
+            contextPercent = state.contextPercent,
+            onOpenUsage = onOpenUsage,
         )
 
         if (state.messages.isNotEmpty()) {
@@ -404,6 +409,8 @@ private fun Greeting(modifier: Modifier = Modifier) {
 @Composable
 private fun MessageList(
     state: ChatUiState,
+    /** 每轮统计条（M7-3，设置里可关） */
+    showUsage: Boolean,
     modifier: Modifier = Modifier,
     onEditMessage: (ChatMessage) -> Unit,
     conversationText: () -> String,
@@ -465,6 +472,7 @@ private fun MessageList(
                 val isLatest = message.id == state.messages.lastOrNull()?.id
                 MessageRow(
                     message = message,
+                    showUsage = showUsage,
                     onTap = { onEditMessage(message) },
                     onCopyMessage = { clipboard.setText(AnnotatedString(message.text)) },
                     onCopyConversation = { clipboard.setText(AnnotatedString(conversationText())) },
@@ -515,6 +523,7 @@ private fun MessageList(
 @Composable
 private fun MessageRow(
     message: ChatMessage,
+    showUsage: Boolean,
     onTap: () -> Unit,
     onCopyMessage: () -> Unit,
     onCopyConversation: () -> Unit,
@@ -743,6 +752,9 @@ private fun MessageRow(
                         )
                     }
                 }
+            }
+            if (showUsage && message.usage != null && message.costMicros != null) {
+                UsageStatsLine(message.usage, message.costMicros)
             }
         }
 
@@ -1434,6 +1446,8 @@ private fun SiteStack(items: List<String>) {
 
 @Composable
 private fun InputCard(
+    contextPercent: Float,
+    onOpenUsage: () -> Unit,
     state: ChatUiState,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -1627,6 +1641,9 @@ private fun InputCard(
             Spacer(Modifier.width(8.dp))
             SearchPill(enabled = state.searchEnabled, onClick = onToggleSearch)
             Spacer(Modifier.weight(1f))
+            // 上下文圆环（M7-2）：回形针左侧，点开右侧用量抽屉
+            ContextRing(percent = contextPercent, onClick = onOpenUsage)
+            Spacer(Modifier.width(2.dp))
             // 编辑态不给加附件（编辑只改文字；进入编辑时草稿已清空）
             if (state.editingMessageId == null && state.canAttach) {
                 CircleIcon(TcIcons.Attach, "附件", palette.labelSecondary) { attachSheet = true }
