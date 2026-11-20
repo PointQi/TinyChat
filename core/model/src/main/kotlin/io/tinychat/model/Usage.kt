@@ -1,4 +1,4 @@
-﻿package io.tinychat.model
+package io.tinychat.model
 
 /**
  * 一次请求的用量。字段名对齐服务端 `usage` 对象（02 §4.7）。
@@ -47,6 +47,13 @@ enum class ErrorKind(val wire: String) {
     HTTP_402("http.402"),
     /** 请求体不合法 */
     HTTP_422("http.422"),
+    /**
+     * 上下文超限：客户端按 95% 预判，或服务端的 400（`prompt is too long` 一类）。
+     *
+     * 两个来源共用这一条，用户看到的是同一句话——不管是提前拦住还是真被服务端拒了，
+     * 出路都是「开个新对话」。不可重试：再发一次结果一样。
+     */
+    CONTEXT_LIMIT("contextLimit"),
     /** 并发 / 限流 */
     HTTP_429("http.429"),
     HTTP_5XX("http.5xx"),
@@ -79,6 +86,7 @@ enum class ErrorKind(val wire: String) {
             HTTP_401 -> "API Key 无效或已删除"
             HTTP_402 -> "账户余额不足，请充值"
             HTTP_422 -> "请求参数有误"
+            CONTEXT_LIMIT -> "当前对话已达上限，请开启新对话继续。"
             HTTP_429 -> "请求过于频繁，请稍后再试"
             HTTP_5XX -> "服务器繁忙，请稍后重试"
             STREAM -> "生成出错"

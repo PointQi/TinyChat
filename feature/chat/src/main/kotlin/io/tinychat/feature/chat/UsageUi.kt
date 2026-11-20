@@ -209,7 +209,7 @@ fun UsageDrawer(
                     Spacer(Modifier.height(16.dp))
 
                     // 上下文占比
-                    val percent = if (contextWindow <= 0) 0f else (contextUsed.toFloat() / contextWindow).coerceIn(0f, 1f)
+                    val percent = contextRatio(contextUsed, contextWindow)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         ExplainableLabel("上下文已用", UsageGlossary.CONTEXT, expanded) { expanded = it }
                         Spacer(Modifier.width(12.dp))

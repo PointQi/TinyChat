@@ -1,4 +1,4 @@
-﻿package io.tinychat.net.transport
+package io.tinychat.net.transport
 
 import io.tinychat.model.ErrorKind
 import io.tinychat.net.SseEvent
@@ -65,7 +65,7 @@ class OkHttpChatTransport(
                         val body = runCatching { resp.body?.string() }.getOrNull().orEmpty()
                         close(
                             ChatException(
-                                kind = kindFor(resp.code),
+                                kind = kindFor(resp.code, body),
                                 httpStatus = resp.code,
                                 message = body.ifBlank { "HTTP ${resp.code}" },
                                 retryAfterMillis = retryAfterMillis(resp.header("Retry-After")),
@@ -105,7 +105,14 @@ class OkHttpChatTransport(
         return (seconds * 1000).coerceIn(0, 60_000)
     }
 
-    private fun kindFor(code: Int): ErrorKind = when (code) {
+    /**
+     * HTTP 状态码 → 错误分类。
+     *
+     * 400 要再看一眼响应体：上下文超限也是 400，但它是「这段对话满了，开新的」，
+     * 和「生成出错」完全是两回事，用户得知道下一步干什么。
+     */
+    private fun kindFor(code: Int, body: String): ErrorKind = when (code) {
+        400 -> if (isContextOverflow(body)) ErrorKind.CONTEXT_LIMIT else ErrorKind.STREAM
         401 -> ErrorKind.HTTP_401
         402 -> ErrorKind.HTTP_402
         422 -> ErrorKind.HTTP_422
@@ -124,3 +131,23 @@ class OkHttpChatTransport(
             .build()
     }
 }
+
+/**
+ * 400 的响应体是不是「上下文超限」。
+ *
+ * 各家措辞不统一，只认这几个特征串（小写比较）。宁可漏判成「生成出错」，
+ * 也不要把别的 400 误判成「对话满了」——后者会骗用户去开新对话。
+ */
+internal fun isContextOverflow(body: String): Boolean {
+    val text = body.lowercase()
+    return CONTEXT_OVERFLOW_MARKERS.any { it in text }
+}
+
+private val CONTEXT_OVERFLOW_MARKERS = listOf(
+    "context_length_exceeded",
+    "maximum context length",
+    "exceed context limit",
+    "prompt is too long",
+    "input is too long",
+    "too many tokens",
+)

@@ -213,6 +213,23 @@ data class ChatMessage(
     val hasFailedAttachment: Boolean get() = attachments.any { it.isFailed }
 }
 
+/**
+ * 上下文到这个占比就不再接受新提问（0.95 = 95%）。
+ *
+ * 为什么不等到 100%：分子是上一轮结束时的真实用量，这一条新消息还要再加进去，
+ * 剩下的 5%（1M 窗口下是 50k）留给「刚好卡在边界上的那条消息」。真实用量由服务端报，
+ * 客户端不估，所以这个阈值只用于拦「追加提问」这一个入口。
+ */
+private const val CONTEXT_BLOCK_RATIO = 0.95f
+
+/** 上下文占比：分母是模型的窗口，拿不到窗口时按 1M 算 */
+internal fun contextRatio(used: Int, window: Int): Float =
+    if (window <= 0) 0f else (used.toFloat() / window).coerceIn(0f, 1f)
+
+/** 是否已到上限（`send()` 拦截追加提问用；重新生成、编辑重发不看它） */
+internal fun isContextFull(used: Int, window: Int): Boolean =
+    contextRatio(used, window) >= CONTEXT_BLOCK_RATIO
+
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val input: String = "",
@@ -298,7 +315,16 @@ data class ChatUiState(
         get() = currentModel?.contextWindow ?: 1_000_000
 
     val contextPercent: Float
-        get() = if (contextWindow <= 0) 0f else (contextUsed.toFloat() / contextWindow).coerceIn(0f, 1f)
+        get() = contextRatio(contextUsed, contextWindow)
+
+    /**
+     * 上下文是否已到上限：到了就不让**追加新提问**（重新生成、编辑重发不受影响）。
+     *
+     * 分子用的是上一轮真实 usage，已经含那一轮的输入与输出，所以到 95% 时再发一条
+     * 基本必然溢出——与其让它发出去被服务端拒掉，不如在本地就拦住。
+     */
+    val contextFull: Boolean
+        get() = isContextFull(contextUsed, contextWindow)
 
     /** 能不能带文件 */
     val canAttachFile: Boolean
@@ -649,6 +675,12 @@ class ChatViewModel(
         send()
     }
 
+    /**
+     * 发送当前输入。
+     *
+     * 发送前有一串本地预检（服务商被删、没 Key、上下文到上限），全部在**清空输入框之前**
+     * 返回：拦下来的内容原样留在输入区，用户能改、能复制、能带去新对话。
+     */
     fun send() {
         val text = state.input.trim()
         val drafts = state.attachments
@@ -664,6 +696,20 @@ class ChatViewModel(
         }
 
         val editingId = state.editingMessageId
+
+        // 上下文到上限：只拦「追加新提问」。编辑重发（editingId != null）不拦——它是从更早的
+        // 节点重建，输入只会变短或不变；重新生成、继续生成走的是别的入口，同样不会被拦。
+        // 拦截点必须在清空输入框之前：被拦下来时文字和附件都留在原地，用户能复制到新对话。
+        if (editingId == null && state.contextFull) {
+            // 语音模式下输入框是藏起来的，识别出来的那句话会跟着一起看不见，所以退回去
+            state = state.copy(
+                error = ErrorKind.CONTEXT_LIMIT.userMessage,
+                errorKind = ErrorKind.CONTEXT_LIMIT,
+                voiceMode = false,
+            )
+            return
+        }
+
         val sendingAttachments = drafts
         // 新问题开始 = 停止正在读的上一条（chat-demo 同款行为）
         stopSpeaking()
