@@ -1,5 +1,7 @@
 package io.tinychat.feature.settings
 
+import androidx.activity.compose.BackHandler
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -183,7 +185,7 @@ private fun ProviderCard(
         Text(
             text = "编辑",
             style = TcTypography.bodyMedium,
-            color = palette.labelSecondary,
+            color = palette.brand,
             modifier = Modifier
                 .clickable(onClick = onEdit)
                 .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -222,6 +224,14 @@ private fun StatusDot(provider: Provider, hasKey: Boolean) {
  *
  * `provider == null` 是新增（两个 tab）；否则是编辑（直接表单，不可改 ID）。
  */
+/** 离开保护用的一份表单快照（02 §10.2）。只比会落库的东西，状态文案不参与。 */
+private data class FormSnapshot(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val protocol: ProviderProtocol,
+    val models: List<Pair<String, String>>,
+)
 @Composable
 fun ProviderEditorScreen(
     provider: Provider?,
@@ -262,6 +272,32 @@ fun ProviderEditorScreen(
         )
     }
     var confirmClear by remember { mutableStateOf(false) }
+    // 离开保护（02 §10.2）：打开这一页时记一份快照，任何一项与之不同就要问一句。
+    // 取消按钮已经删掉，返回是唯一的出口，没有这道确认就会静默丢掉填了一半的密钥。
+    val initialForm = remember {
+        FormSnapshot(
+            id = id,
+            name = name,
+            baseUrl = baseUrl,
+            protocol = protocol,
+            models = models.map { it.id to it.displayName },
+        )
+    }
+    val dirty = FormSnapshot(
+        id = id,
+        name = name,
+        baseUrl = baseUrl,
+        protocol = protocol,
+        models = models.map { it.id to it.displayName },
+    ) != initialForm || key.isNotBlank()
+    var confirmDiscard by remember { mutableStateOf(false) }
+
+    fun leave() {
+        if (busy) return
+        if (dirty) confirmDiscard = true else onBack()
+    }
+
+    BackHandler(enabled = dirty && !busy) { confirmDiscard = true }
 
     val builtin = provider?.builtin == true
     val editableCustom = adding && tab == EditorTab.CUSTOM || (provider != null && provider.kind == ProviderKind.OPENAI_COMPATIBLE)
@@ -346,7 +382,7 @@ fun ProviderEditorScreen(
     ) {
         TcTopBar(
             title = provider?.displayName ?: "添加模型提供商",
-            leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
+            leading = { TcIconButton(TcIcons.Back, "返回", ::leave) },
         )
 
         Column(
@@ -481,7 +517,7 @@ fun ProviderEditorScreen(
                             Text(
                                 text = "重新校验",
                                 style = TcTypography.labelMedium,
-                                color = palette.labelSecondary,
+                                color = palette.brand,
                                 modifier = Modifier
                                     .clickable(enabled = !busy) { recheck() }
                                     .padding(6.dp),
@@ -562,25 +598,36 @@ fun ProviderEditorScreen(
             }
         }
 
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = onBack, enabled = !busy) {
-                Text("取消", color = palette.labelSecondary)
-            }
-            Spacer(Modifier.weight(1f))
-            TcButton(
-                text = if (busy) "保存中…" else "保存",
-                onClick = { save() },
-                enabled = canSave,
-                modifier = Modifier.fillMaxWidth(0.55f),
-            )
-        }
+        // 动作区（02 §10.2）：一屏一个主操作，取消由顶栏返回承担
+        TcButton(
+            text = if (busy) "保存中…" else "保存",
+            onClick = { save() },
+            enabled = canSave,
+            fillWidth = true,
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .padding(top = 8.dp, bottom = 16.dp),
+        )
     }
 
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("放弃修改？") },
+            text = { Text("这一页有还没保存的改动。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDiscard = false
+                    onBack()
+                }) { Text("放弃", color = TcTheme.palette.brand) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDiscard = false }) {
+                    Text("继续编辑", color = TcTheme.palette.labelSecondary)
+                }
+            },
+        )
+    }
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
