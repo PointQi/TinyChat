@@ -47,6 +47,9 @@ class ProviderStore(private val dao: ProviderDao) {
     /**
      * 首次启动播种 DeepSeek：老用户升级上来时，`sessions.provider_id` 已经是 `deepseek`，
      * 这一行必须存在，否则历史会话会被当成「服务商已移除」。
+     *
+     * **只在第一次启动调用一次**（决策 48，`UserSettings.providersSeeded` 记账）：
+     * 所有服务商都能删，删空之后重启不该被塞回一个用户没要的 DeepSeek。
      */
     suspend fun ensureSeeded() {
         if (dao.byId(KnownProviders.deepSeek.id) != null) return

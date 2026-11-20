@@ -49,6 +49,14 @@ class UserSettings(context: Context) {
     /** 提示词表结构与含义的迁移是否已经跑过（一次性） */
     val promptMigrated: Flow<Boolean> = store.data.map { it[PROMPT_MIGRATED] ?: false }
 
+    /**
+     * 服务商目录是否已经播种过一次（决策 48）。
+     *
+     * 不再用「表里有没有 deepseek 这一行」判断：所有服务商都可以删除，
+     * 用户删空之后重启不该被塞回一个他没要的 DeepSeek。
+     */
+    val providersSeeded: Flow<Boolean> = store.data.map { it[PROVIDERS_SEEDED] ?: false }
+
     /** 用户所在地，喂给 `{{location}}` 与 `latest_reminder`；空 = 不填 */
     val promptLocation: Flow<String> = store.data.map { it[PROMPT_LOCATION] ?: "" }
 
@@ -106,6 +114,10 @@ class UserSettings(context: Context) {
         store.edit { it[PROMPT_MIGRATED] = true }
     }
 
+    suspend fun markProvidersSeeded() {
+        store.edit { it[PROVIDERS_SEEDED] = true }
+    }
+
     suspend fun setPromptLocation(location: String) {
         store.edit { it[PROMPT_LOCATION] = location.trim() }
     }
@@ -130,6 +142,7 @@ class UserSettings(context: Context) {
         private val PROMPT_PRESET = stringPreferencesKey("prompt_preset_id")
         private val PROMPT_INCLUDE_OFFICIAL = booleanPreferencesKey("prompt_include_official")
         private val PROMPT_MIGRATED = booleanPreferencesKey("prompt_migrated_v2")
+        private val PROVIDERS_SEEDED = booleanPreferencesKey("providers_seeded_v1")
         private val PROMPT_LOCATION = stringPreferencesKey("prompt_location")
         private val PROMPT_LANGUAGE = stringPreferencesKey("prompt_language")
         private val THEME_MODE = stringPreferencesKey("theme_mode")

@@ -137,25 +137,25 @@ class AppContainer(context: Context) {
         }
         scope.launch {
             // M7-6 的单 Key 迁到 deepseek 名下（M8-6）
-            runCatching { secrets.migrateLegacy("deepseek") }
-            runCatching { providerStore.ensureSeeded() }
-            val stored = runCatching { secrets.read("deepseek") }.getOrNull()
-            if (stored.isNullOrBlank()) {
-                // 仅本机联调便利：把构建期注入的 Key 播种一次。正式版这里不该有内容。
-                val seed = BuildConfig.DEV_API_KEY
-                if (seed.isNotBlank()) {
-                    runCatching { secrets.write("deepseek", seed) }
-                    _apiKey.value = seed
-                }
-            } else {
-                _apiKey.value = stored
+            runCatching { secrets.migrateLegacy(DEEPSEEK_ID) }
+            // 只在**第一次启动**播种（决策 48）：任何服务商都能删，删空之后不要再塞回来一个没要的
+            if (!userSettings.providersSeeded.first()) {
+                runCatching { providerStore.ensureSeeded() }
+                runCatching { userSettings.markProvidersSeeded() }
             }
-            refreshKeyedProviders()
+            // 仅本机联调便利：把构建期注入的 Key 播种一次。正式版这里不该有内容。
+            val seeded = BuildConfig.DEV_API_KEY
+            if (seeded.isNotBlank() && providerStore.byId(DEEPSEEK_ID) != null &&
+                runCatching { secrets.read(DEEPSEEK_ID) }.getOrNull().isNullOrBlank()
+            ) {
+                runCatching { secrets.write(DEEPSEEK_ID, seeded) }
+            }
+            refreshCredentials()
         }
         scope.launch {
             providerStore.observe().collect { list ->
                 _providers.value = list
-                refreshKeyedProviders()
+                refreshCredentials()
             }
         }
         scope.launch {
@@ -163,13 +163,22 @@ class AppContainer(context: Context) {
         }
     }
 
-    private suspend fun refreshKeyedProviders() {
-        val keyed = providerStore.all()
-            .mapNotNull { provider ->
-                apiKeyFor(provider.id)?.takeIf { it.isNotBlank() }?.let { provider.id }
-            }
+    /**
+     * 凭据快照：哪些服务商有 Key，以及「官方那一把」（语音与余额用）。
+     *
+     * 官方可以有多个实例（决策 48），取第一个配了 Key 的当语音/余额的入口；
+     * 会话自己的服务商是官方时，聊天页会优先用那家的 Key。
+     */
+    private suspend fun refreshCredentials() {
+        val providers = providerStore.all()
+        val keyed = providers
+            .mapNotNull { provider -> apiKeyFor(provider.id)?.takeIf { it.isNotBlank() }?.let { provider.id } }
             .toSet()
         _keyedProviders.value = keyed
+        _apiKey.value = providers
+            .firstOrNull { it.kind == ProviderKind.DEEPSEEK_OFFICIAL && it.id in keyed }
+            ?.let { apiKeyFor(it.id) }
+            .orEmpty()
     }
 
     suspend fun apiKeyFor(providerId: String): String? =
@@ -178,30 +187,25 @@ class AppContainer(context: Context) {
     /** 保存某家的 Key；传空白等价于清除。 */
     suspend fun saveProviderKey(providerId: String, key: String) {
         secrets.write(providerId, key.trim())
-        if (providerId == DEEPSEEK_ID) {
-            _apiKey.value = secrets.read(providerId).orEmpty()
-        }
-        refreshKeyedProviders()
+        refreshCredentials()
     }
 
     suspend fun clearProviderKey(providerId: String) {
         secrets.clear(providerId)
-        if (providerId == DEEPSEEK_ID) _apiKey.value = ""
-        refreshKeyedProviders()
+        refreshCredentials()
     }
 
     /** 保存服务商配置与（可选的）新 Key；`newKey == null` 表示沿用已存密钥。 */
     suspend fun saveProvider(provider: Provider, newKey: String?) {
         if (newKey != null) saveProviderKey(provider.id, newKey)
         providerStore.save(provider)
-        refreshKeyedProviders()
+        refreshCredentials()
     }
 
     suspend fun deleteProvider(providerId: String) {
         providerStore.delete(providerId)
         secrets.clear(providerId)
-        if (providerId == DEEPSEEK_ID) _apiKey.value = ""
-        refreshKeyedProviders()
+        refreshCredentials()
     }
 
     /** 该服务商上次用的模型；没有就空串（由上层回落到目录第一个） */
