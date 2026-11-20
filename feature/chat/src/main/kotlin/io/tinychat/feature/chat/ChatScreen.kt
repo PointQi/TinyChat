@@ -684,7 +684,11 @@ private fun MessageRow(
             copied = false
         }
     }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 三个底部面板各有一份状态。共用一个 rememberModalBottomSheetState 会让后开的面板
+    // 继承前一个的展开进度，挂载时锚点已经算好，看起来就是「一打开就往上跳」。
+    val selectSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sourcesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val shareSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -847,7 +851,7 @@ private fun MessageRow(
     if (selectOpen) {
         ModalBottomSheet(
             onDismissRequest = { selectOpen = false },
-            sheetState = sheetState,
+            sheetState = selectSheetState,
             containerColor = palette.bg,
         ) {
             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
@@ -857,12 +861,16 @@ private fun MessageRow(
                     color = palette.labelPrimary,
                 )
                 Spacer(Modifier.height(10.dp))
+                // 正文必须自己滚：面板高度有上限，长回答不加滚动容器就是直接裁掉，
+                // 手指往上划时纵向拖拽全被面板的拖拽手势接管，于是「划不动、松手往上跳」。
                 SelectionContainer {
-                    Text(
-                        text = message.text,
-                        style = TcTypography.bodyLarge,
-                        color = palette.labelPrimary,
-                    )
+                    Box(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        Text(
+                            text = message.text,
+                            style = TcTypography.bodyLarge,
+                            color = palette.labelPrimary,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(24.dp))
             }
@@ -872,14 +880,14 @@ private fun MessageRow(
     if (sourcesOpen) {
         SourceSheet(
             sources = message.sources,
-            sheetState = sheetState,
+            sheetState = sourcesSheetState,
             onDismiss = { sourcesOpen = false },
         )
     }
 
     if (shareOpen) {
         ShareSheet(
-            sheetState = sheetState,
+            sheetState = shareSheetState,
             onDismiss = { shareOpen = false },
             onGenerateImage = {
                 shareOpen = false
