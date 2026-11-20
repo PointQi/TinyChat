@@ -268,7 +268,12 @@ fun TinyChatApp() {
                             scope.launch {
                                 container.deleteProvider(provider.id)
                                 if (provider.id == activeProviderId) {
-                                    container.userSettings.setActiveProviderId("deepseek")
+                                    // 删掉的正是新会话的默认项：顺位选一个还有 Key 的，
+                                    // 别让下一轮新对话停在「已移除」上（决策 48 起任何行都能删）
+                                    val next = container.providers.value
+                                        .firstOrNull { it.id in container.keyedProviders.value }
+                                        ?: container.providers.value.firstOrNull()
+                                    next?.let { container.userSettings.setActiveProviderId(it.id) }
                                 }
                             }
                         },
