@@ -677,6 +677,8 @@ private fun MessageRow(
 
     var selectOpen by remember { mutableStateOf(false) }
     var sourcesOpen by remember { mutableStateOf(false) }
+    // 思维链里的工具行（搜索 / 浏览）：点开是抽屉，不是原位展开
+    var toolSheet by remember(message.id) { mutableStateOf<ToolStep?>(null) }
     // 分享（M8-2）：抽屉 →（生成长图时）进度 → 预览 → 系统分享面板
     var shareOpen by remember { mutableStateOf(false) }
     var shareBusy by remember { mutableStateOf(false) }
@@ -693,6 +695,7 @@ private fun MessageRow(
     // 继承前一个的展开进度，挂载时锚点已经算好，看起来就是「一打开就往上跳」。
     val selectSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val sourcesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val toolSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val shareSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -714,6 +717,7 @@ private fun MessageRow(
                         seconds = message.thinkingSeconds,
                         inProgress = message.isThinking,
                         stopped = message.status == MessageStatus.INCOMPLETE && message.text.isBlank(),
+                        onOpenTool = { toolSheet = it },
                     )
                     Spacer(Modifier.height(8.dp))
                 }
@@ -885,6 +889,14 @@ private fun MessageRow(
         )
     }
 
+    toolSheet?.let { step ->
+        ToolResultSheet(
+            step = step,
+            sheetState = toolSheetState,
+            onDismiss = { toolSheet = null },
+        )
+    }
+
     if (shareOpen) {
         ShareSheet(
             sheetState = shareSheetState,
@@ -935,9 +947,10 @@ private fun MessageRow(
 }
 
 /**
- * 来源页（M2-8）：标题居中「搜索结果」，每行 = 圆形 favicon + 站点域名 + 灰色日期
- * + 右贴边角标；下面两行灰色摘要（超出省略）。点击用浏览器打开源网页。
- * M3-3 会把它扩成带「搜索结果」定位的完整抽屉。
+ * 来源页：标题居中，每行 = 圆形 favicon + 站点 + 灰色日期 + 可选编号角标，
+ * 下面两行灰色摘要（超出省略），点击用浏览器打开源网页。
+ *
+ * 两个入口共用这一份：正文末尾胶囊（**带**编号角标）、思维链里的工具行（**不带**角标）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -946,9 +959,51 @@ private fun SourceSheet(
     sheetState: androidx.compose.material3.SheetState,
     onDismiss: () -> Unit,
 ) {
-    val palette = TcTheme.palette
-    val uriHandler = LocalUriHandler.current
+    ResultSheet(title = "搜索结果", sheetState = sheetState, onDismiss = onDismiss) {
+        sources.forEach { source ->
+            ResultRow(
+                site = source.site,
+                iconUrl = source.iconUrl,
+                publishedDate = source.publishedDate,
+                detail = source.snippet?.takeIf { it.isNotBlank() } ?: source.title,
+                index = source.index,
+                url = source.url,
+            )
+        }
+    }
+}
 
+/** 思维链工具行的抽屉：`搜索结果` / `已浏览搜索结果`，**不标编号角标** */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ToolResultSheet(
+    step: ToolStep,
+    sheetState: androidx.compose.material3.SheetState,
+    onDismiss: () -> Unit,
+) {
+    ResultSheet(title = step.panelTitle, sheetState = sheetState, onDismiss = onDismiss) {
+        step.entries.forEach { entry ->
+            ResultRow(
+                site = entry.site.ifBlank { entry.title.orEmpty() },
+                iconUrl = entry.iconUrl,
+                publishedDate = entry.publishedDate,
+                detail = entry.detail,
+                index = null,
+                url = entry.url,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ResultSheet(
+    title: String,
+    sheetState: androidx.compose.material3.SheetState,
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val palette = TcTheme.palette
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -961,83 +1016,108 @@ private fun SourceSheet(
                 .verticalScroll(rememberScrollState()),
         ) {
             Text(
-                text = "搜索结果",
+                text = title,
                 style = TcTypography.titleMedium,
                 color = palette.labelPrimary,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(14.dp))
+            content()
+        }
+    }
+}
 
-            sources.forEach { source ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable {
-                            source.url?.let { runCatching { uriHandler.openUri(it) } }
-                        }
-                        .padding(vertical = 10.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 左侧一组（图标+站名+日期）吃掉剩余宽度，右侧角标才能真正贴右边
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TcFavicon(
-                                url = source.iconUrl,
-                                fallbackLetter = source.site,
-                                size = 18,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = source.site,
-                                style = TcTypography.bodySmall,
-                                color = palette.labelPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            source.publishedDate?.let { date ->
-                                Text(
-                                    text = date,
-                                    style = TcTypography.labelSmall,
-                                    color = palette.labelTertiary,
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        // 与正文角标同一个气泡形状，右贴边
-                        Box(
-                            modifier = Modifier
-                                .size(width = 22.dp, height = 16.dp)
-                                .clip(CitationBubbleShape)
-                                .background(palette.inlineCodeBg),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = source.index.toString(),
-                                style = TextStyle(
-                                    fontSize = 10.sp,
-                                    lineHeight = 10.sp,
-                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                                ),
-                                color = palette.labelSecondary,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
+/**
+ * 抽屉里的一行结果。
+ *
+ * `index` 为 null 时不画右侧编号气泡——工具行抽屉不标角标，胶囊抽屉标。
+ */
+@Composable
+private fun ResultRow(
+    site: String,
+    iconUrl: String?,
+    publishedDate: String?,
+    detail: String?,
+    index: Int?,
+    url: String?,
+) {
+    val palette = TcTheme.palette
+    val uriHandler = LocalUriHandler.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .then(
+                if (url != null) {
+                    Modifier.clickable { runCatching { uriHandler.openUri(url) } }
+                } else {
+                    Modifier
+                },
+            )
+            .padding(vertical = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 左侧一组（图标+站名+日期）吃掉剩余宽度，右侧角标才能真正贴右边
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TcFavicon(
+                    url = iconUrl,
+                    fallbackLetter = site,
+                    size = 18,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = site,
+                    style = TcTypography.bodySmall,
+                    color = palette.labelPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(8.dp))
+                publishedDate?.let { date ->
                     Text(
-                        text = source.snippet.orEmpty(),
-                        style = TcTypography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
+                        text = date,
+                        style = TcTypography.labelSmall,
                         color = palette.labelTertiary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
+            if (index != null) {
+                Spacer(Modifier.width(8.dp))
+                // 与正文角标同一个气泡形状，右贴边
+                Box(
+                    modifier = Modifier
+                        .size(width = 22.dp, height = 16.dp)
+                        .clip(CitationBubbleShape)
+                        .background(palette.inlineCodeBg),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = index.toString(),
+                        style = TextStyle(
+                            fontSize = 10.sp,
+                            lineHeight = 10.sp,
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        ),
+                        color = palette.labelSecondary,
+                    )
+                }
+            }
+        }
+        detail?.takeIf { it.isNotBlank() }?.let { text ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = text,
+                style = TcTypography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
+                color = palette.labelTertiary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -1353,6 +1433,7 @@ private fun ThinkingBlock(
     seconds: Double?,
     inProgress: Boolean,
     stopped: Boolean,
+    onOpenTool: (ToolStep) -> Unit,
 ) {
     val palette = TcTheme.palette
     var expanded by remember { mutableStateOf(false) }
@@ -1441,7 +1522,7 @@ private fun ThinkingBlock(
                     timeline.forEach { item ->
                         when (item) {
                             is TimelineItem.Text -> TimelineText(item.content)
-                            is TimelineItem.Tool -> ToolCard(item.step)
+                            is TimelineItem.Tool -> ToolCard(item.step, onOpenTool)
                         }
                     }
                 }
@@ -1474,11 +1555,15 @@ private fun TimelineText(content: String) {
     }
 }
 
-/** 工具步骤卡片：`搜索到 N 个网页` + 站点堆叠 + 展开结果列表 */
+/**
+ * 工具步骤行：`搜索到 N 个网页` / `已浏览 N 个页面` + 站点图标堆叠 + `›`。
+ *
+ * 点击**不在原位展开**，而是打开底部抽屉（官方形态）：原位展开会把 29 条结果
+ * 压成一行行站名，既挤又没信息量。失败或没有结果时整行不可点。
+ */
 @Composable
-private fun ToolCard(step: ToolStep) {
+private fun ToolCard(step: ToolStep, onOpen: (ToolStep) -> Unit) {
     val palette = TcTheme.palette
-    var expanded by remember { mutableStateOf(false) }
 
     val icon = when (step.kind) {
         ToolKind.SEARCH -> TcIcons.Search
@@ -1486,83 +1571,72 @@ private fun ToolCard(step: ToolStep) {
         ToolKind.FIND -> TcIcons.Search
     }
 
-    Column {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(enabled = step.items.isNotEmpty()) { expanded = !expanded }
-                .padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(icon, null, tint = palette.labelSecondary, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = step.title,
-                style = TcTypography.bodyMedium,
-                color = palette.labelSecondary,
+    Row(
+        modifier = Modifier
+            .heightIn(min = 32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .then(
+                if (step.canOpen) {
+                    Modifier.clickable(onClickLabel = "打开${step.panelTitle}") { onOpen(step) }
+                } else {
+                    Modifier
+                },
             )
-            if (step.items.isNotEmpty()) {
-                Spacer(Modifier.width(6.dp))
-                SiteStack(step.items)
-                Spacer(Modifier.width(2.dp))
-                Icon(
-                    imageVector = if (expanded) TcIcons.ChevronDown else TcIcons.ChevronRight,
-                    contentDescription = if (expanded) "收起" else "展开",
-                    tint = palette.labelTertiary,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
-        }
-
-        if (expanded) {
-            Column(
-                modifier = Modifier.padding(start = 21.dp, top = 2.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                step.items.forEachIndexed { index, name ->
-                    Text(
-                        text = "${index + 1}. $name",
-                        style = TcTypography.bodySmall,
-                        color = palette.labelTertiary,
-                    )
-                }
-            }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = palette.labelSecondary, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = step.title,
+            style = TcTypography.bodyMedium,
+            color = palette.labelSecondary,
+        )
+        if (step.canOpen) {
+            Spacer(Modifier.width(6.dp))
+            SiteStack(step.entries)
+            Spacer(Modifier.width(2.dp))
+            Icon(
+                imageVector = TcIcons.ChevronRight,
+                contentDescription = null,
+                tint = palette.labelTertiary,
+                modifier = Modifier.size(14.dp),
+            )
         }
     }
 }
 
-/** 站点图标堆叠：最多 3 个 + 溢出圆（真图待 M2 接 Coil） */
+/** 图标堆叠最多几个（参考实现 `SiteThumbnails` 是 4 个） */
+private const val STACK_LIMIT = 4
+
+/**
+ * 站点图标堆叠：真 favicon，同站去重，最多 4 个。
+ *
+ * 每个图标外面套一圈背景色（页底 `bg`）再叠压：没有这圈描边时，后一个不透明的图标
+ * 会直接切掉前一个的边缘，看起来像被裁坏；有描边之后是「压着站一排」。
+ */
 @Composable
-private fun SiteStack(items: List<String>) {
+private fun SiteStack(entries: List<ToolEntry>) {
     val palette = TcTheme.palette
+    val shown = entries
+        .distinctBy { it.site.ifBlank { it.url ?: it.title.orEmpty() } }
+        .take(STACK_LIMIT)
+
     Row {
-        items.take(3).forEachIndexed { index, name ->
+        shown.forEachIndexed { index, entry ->
             Box(
                 modifier = Modifier
-                    // 负 padding 会抛异常，重叠只能用 offset
-                    .offset(x = if (index == 0) 0.dp else (-4).dp)
-                    .size(14.dp)
-                    .clip(CircleShape)
-                    .background(if (index % 2 == 0) palette.bubble else palette.inlineCodeBg),
-                contentAlignment = Alignment.Center,
+                    // 负 padding 会抛异常，叠压只能用 offset
+                    .offset(x = if (index == 0) 0.dp else (-6).dp)
+                    .size(18.dp)
+                    .background(palette.bg, CircleShape)
+                    .padding(1.dp),
             ) {
-                Text(
-                    text = name.take(1),
-                    fontSize = 8.sp,
-                    color = palette.labelSecondary,
+                TcFavicon(
+                    url = entry.iconUrl,
+                    fallbackLetter = entry.site.ifBlank { entry.title.orEmpty() },
+                    size = 16,
                 )
-            }
-        }
-        if (items.size > 3) {
-            Box(
-                modifier = Modifier
-                    .offset(x = (-4).dp)
-                    .size(14.dp)
-                    .clip(CircleShape)
-                    .background(palette.labelTertiary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "+", fontSize = 8.sp, color = palette.bg)
             }
         }
     }

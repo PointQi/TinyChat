@@ -42,7 +42,6 @@ import io.tinychat.model.SessionRow
 import io.tinychat.model.SessionsUiState
 import io.tinychat.model.ThinkPayload
 import io.tinychat.model.ThinkingEffort
-import io.tinychat.model.ToolFindPayload
 import io.tinychat.model.ToolOpenPayload
 import io.tinychat.model.ToolSearchPayload
 import io.tinychat.model.TtsVoice
@@ -64,25 +63,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/** 思维链里的一步：一段思考文字，或一次工具动作。 */
-sealed interface TimelineItem {
-    data class Text(val content: String) : TimelineItem
-    data class Tool(val step: ToolStep) : TimelineItem
-}
-
-enum class ToolKind { SEARCH, OPEN, FIND }
-
-/**
- * 工具步骤（§13）：搜索 → `搜索到 N 个网页`；浏览 → `已浏览 N 个页面`；
- * 页内查找 → `查找关键词 "pattern"`。
- */
-data class ToolStep(
-    val kind: ToolKind,
-    val title: String,
-    val subtitle: String?,
-    val items: List<String>,
-)
-
 /** 正文里的一处引用来源（M2-8）。同一 URL 只对应一条来源，编号复用 */
 data class ChatSource(
     /** 角标编号，1 基，等于它在来源列表里的位置 */
@@ -100,13 +80,7 @@ data class ChatSource(
 ) {
     /** `yyyy/MM/dd`，按本地时区（服务端给的是 UTC，直接截前 10 位会差一天） */
     val publishedDate: String?
-        get() = publishedAt?.let {
-            runCatching {
-                java.time.OffsetDateTime.parse(it)
-                    .atZoneSameInstant(java.time.ZoneId.systemDefault())
-                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"))
-            }.getOrNull()
-        }
+        get() = publishedDateText(publishedAt)
 }
 
 /** 正文里的一处角标：位置 + 指向哪条来源 */
@@ -1484,7 +1458,7 @@ class ChatViewModel(
             }
         }
 
-        val timeline = buildTimeline(fragments)
+        val timeline = buildTimeline(fragments.map { TimelineFragment(it.type, it.payload) })
         if (text.isBlank() && timeline.isEmpty()) return null
 
         val seconds = fragments
@@ -1554,79 +1528,6 @@ private fun StringBuilder.trimmedEnd(): Int {
     while (i > 0 && this[i - 1].isWhitespace()) i--
     return i
 }
-
-/** 把 THINK 与工具碎片按 ord 顺序排成时间轴；连续的浏览合并成一条 */
-    private fun buildTimeline(fragments: List<FragmentEntity>): List<TimelineItem> {
-        val items = mutableListOf<TimelineItem>()
-        val buffer = StringBuilder()
-        val openSites = mutableListOf<String>()
-
-        fun flushText() {
-            val content = buffer.toString().trim()
-            if (content.isNotEmpty()) items += TimelineItem.Text(content)
-            buffer.setLength(0)
-        }
-
-        fun flushOpen() {
-            if (openSites.isNotEmpty()) {
-                items += TimelineItem.Tool(
-                    ToolStep(
-                        kind = ToolKind.OPEN,
-                        title = "已浏览 ${openSites.size} 个页面",
-                        subtitle = openSites.joinToString("、"),
-                        items = openSites.toList(),
-                    ),
-                )
-                openSites.clear()
-            }
-        }
-
-        for (fragment in fragments) {
-            when (fragment.type) {
-                "THINK" -> {
-                    flushOpen()
-                    val payload = FragmentPayloadCodec.decode(fragment.payload) as? ThinkPayload ?: continue
-                    buffer.append(payload.content).append('\n')
-                }
-
-                "TOOL_SEARCH" -> {
-                    flushOpen()
-                    val payload = FragmentPayloadCodec.decode(fragment.payload) as? ToolSearchPayload ?: continue
-                    items += TimelineItem.Tool(
-                        ToolStep(
-                            kind = ToolKind.SEARCH,
-                            title = "搜索到 ${payload.results.size} 个网页",
-                            subtitle = payload.queries.joinToString(" "),
-                            items = payload.results.map { it.siteName ?: it.url },
-                        ),
-                    )
-                }
-
-                "TOOL_OPEN" -> {
-                    flushText()
-                    val payload = FragmentPayloadCodec.decode(fragment.payload) as? ToolOpenPayload ?: continue
-                    openSites += payload.siteName ?: payload.title
-                }
-
-                "TOOL_FIND" -> {
-                    flushOpen()
-                    val payload = FragmentPayloadCodec.decode(fragment.payload) as? ToolFindPayload ?: continue
-                    items += TimelineItem.Tool(
-                        ToolStep(
-                            kind = ToolKind.FIND,
-                            title = "查找关键词 \"${payload.pattern}\"",
-                            subtitle = null,
-                            items = emptyList(),
-                        ),
-                    )
-                }
-            }
-        }
-
-        flushText()
-        flushOpen()
-        return items
-    }
 
     companion object {
         /** 短于这个时长直接当"没说话"（省一次请求，也符合直觉：点一下就松手不算）。 */
