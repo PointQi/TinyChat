@@ -1,4 +1,4 @@
-﻿package io.tinychat.feature.settings
+package io.tinychat.feature.settings
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -57,6 +57,8 @@ fun SettingsScreen(
     onOpenAbout: () -> Unit,
     /** 服务商那一行的副标题（M8-6）：`未配置` / 当前服务商名 / `N 个服务商` */
     providerSubtitle: String = "未配置",
+    /** 当前安装包的版本名（M9）：显示在「关于」那一行的副标题 */
+    versionName: String = "",
     /** 当前系统提示词的名字（M7.5）：显示为「当前预设：默认」 */
     promptName: String = "默认",
     onOpenPrompt: () -> Unit = {},
@@ -138,9 +140,11 @@ fun SettingsScreen(
             )
 
             TcSectionLabel("关于")
-            TcListRow(title = "版本", subtitle = "0.1.0-m0", onClick = onOpenAbout)
-            TcListRow(title = "服务协议与隐私", onClick = {})
-            TcListRow(title = "帮助与反馈", onClick = {})
+            TcListRow(
+                title = "关于",
+                subtitle = if (versionName.isBlank()) "版本未知" else "版本 $versionName",
+                onClick = onOpenAbout,
+            )
         }
     }
 
@@ -512,50 +516,4 @@ private fun formatSize(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> "%.0f KB".format(bytes / 1024.0)
     else -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
-}
-
-/** 关于（docs/02 §12.5 末）。 */
-@Composable
-fun AboutScreen(onBack: () -> Unit) {
-    PlaceholderPage(
-        title = "关于",
-        onBack = onBack,
-        lines = listOf(
-            "TinyChat 0.1.0-m0（M0 工程骨架）",
-            "",
-            "使用你自己的 API Key 访问模型服务，",
-            "本项目与深度求索公司无隶属关系。",
-            "",
-            "界面与协议实现参考 deepseek-ai/chat-demo（MIT）",
-            "图标与 Markdown 渲染器遵循各自开源协议",
-        ),
-    )
-}
-
-@Composable
-private fun PlaceholderPage(title: String, onBack: () -> Unit, lines: List<String>) {
-    val palette = TcTheme.palette
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(palette.bg),
-    ) {
-        TcTopBar(
-            title = title,
-            leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
-        )
-        Column(
-            modifier = Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-        ) {
-            lines.forEach { line ->
-                Text(
-                    text = line.ifEmpty { " " },
-                    style = TcTypography.bodyMedium,
-                    color = if (line.startsWith("  ")) palette.labelTertiary else palette.labelSecondary,
-                )
-            }
-        }
-    }
 }

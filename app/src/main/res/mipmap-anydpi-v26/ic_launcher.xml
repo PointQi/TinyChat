@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标（API 26+）：角色图按原始比例放在 72dp 安全区（108dp 画布的 2/3），
+  四周透明、由同色背景补齐（贴图底色与 tc_icon_bg 都是 #020101，没有接缝）。
+  不提供 monochrome 层，Android 13 主题图标会回退成彩色图标。
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/tc_icon_bg" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>

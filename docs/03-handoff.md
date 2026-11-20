@@ -1,4 +1,4 @@
-﻿# 交接与续作指引（上下文压缩后先读本文）
+# 交接与续作指引（上下文压缩后先读本文）
 
 > 用途：**上下文一旦被压缩/新开 session，先读这一篇**，再按需跳转 01 / 02。
 > 本文只写"不可丢失的事实 + 一手报文 + 下一步动作"，不重复论证。
@@ -120,6 +120,7 @@ git clone --depth 1 https://github.com/deepseek-ai/chat-demo.git temp-doc/chat-d
 | 35 | **协议抽象与第三方降级（2026-11-19，M8-1）**：`ChatProtocols` 按 `ProviderProtocol` 分发（`DEEPSEEK_MESSAGES` / `ANTHROPIC_MESSAGES` / `OPENAI_CHAT`），`ChatStreamRunner` 只吃 `StreamAssembler`。OpenAI 链路：Bearer、`stream_options.include_usage`（400 时降级一次）、`reasoning_content` 显示思考、`finish_reason` 映射状态、**标题本地取首条 24 字**、`latest_reminder` 拼进 system、`APPEND` **不拼** DeepSeek 官方句。第三方不显示 ￥（只 token）、不提供搜索/文件/TTS/语音；**图片（base64）按用户决定本轮不做**，「视觉」不出现 |
 | 37 | **第三方思考参数按模型声明（2026-11-19，M8-1 收尾）**：模型级 `thinking` 三态 `NONE`（默认）/`EFFORT`/`BUDGET`，服务商页每条模型可选；只有声明后才出现思考强度。三档映射：OpenAI `low/medium/high`，Anthropic `budget_tokens` 1024/4096/8192（`max_tokens` 始终大于预算）。服务商若在首帧前 400 且报文点名参数，自动去掉参数重发一次并记 `meta.no_effort=1`，之后不再发。**费用与余额按服务商类型收口**：价格表只对 DeepSeek 官方生效（同一个模型 id 在第三方不代表同样单价），通用第三方不显示 ￥、不去查 DeepSeek 余额 |
 | 36 | **OpenCode Go 独立 kind（2026-11-19）**：对话走 `zen/go/v1/chat/completions`（OpenAI 兼容），目录 `zen/go/v1/models`，额度 `zen/go/v1/usage`；`x-opencode-session = sha256(sessionId).hex`（≤64、同会话所有派生请求同值），UA = `TinyChat/1.0 (Android)`（不伪装 CLI）。额度只取 `rolling/weekly/monthly` 的 `percent`（已用）与 `resetsAt`，UI 显示**已用**（用户拍板：进度条走满才符合直觉）；`rate-limited` 视为 100%；接口失败就整块隐藏，不编数字 |
+| 38 | **图标与关于页收尾（2026-11-20，用户拍板）**：启动图标换成自绘角色（原图 `C:\Users\lenovo\Desktop\logo.png`，1254×1254）：**角色按原始比例缩进 72dp 安全区（108dp 画布的 2/3），四周透明**，背景色与贴图底色同为 `#020101`，所以没有接缝；五档密度从 1254 原图直接缩放，不放大低清图。**不要**把角色铺满 108dp——启动器展示的就是安全区那一块，铺满会被当成 1.5× 放大（实测过一次，脸和星星都被裁掉）。**不提供 monochrome 层**——角色剪影没有识别度，Android 13 主题图标回退成彩色图标即可。「关于」由三行合并为**一行一个入口**：版本（读安装包 `versionName`，不写死）、开源项目（`https://github.com/Takeoff0518/TinyChat`）、开源许可（按 Apache-2.0 / MIT / 仅测试 分组列组件）；服务协议与帮助入口本轮不做，删掉两个死行 |
 
 ---
 

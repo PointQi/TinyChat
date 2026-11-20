@@ -2,5 +2,6 @@
 <resources>
     <!-- 与 designsystem 的 LightPalette.bg 保持一致，避免冷启动闪一下别的颜色 -->
     <color name="tc_window_bg">#FFFFFFFF</color>
-    <color name="tc_icon_bg">#FF3964FE</color>
+    <!-- 自适应图标的背景色：与图标画面底色（#020101）一致；前景满幅，正常看不到 -->
+    <color name="tc_icon_bg">#FF020101</color>
 </resources>

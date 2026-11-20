@@ -33,6 +33,7 @@ import io.tinychat.feature.chat.ChatViewModel
 import io.tinychat.feature.sessions.SessionsDrawerContent
 import io.tinychat.feature.settings.AboutScreen
 import io.tinychat.feature.settings.DataManagementScreen
+import io.tinychat.feature.settings.LicenseScreen
 import io.tinychat.feature.settings.PromptEditorScreen
 import io.tinychat.feature.settings.PromptPresetListScreen
 import io.tinychat.feature.settings.ProviderEditorScreen
@@ -48,6 +49,7 @@ object Routes {
     const val PROVIDER_EDIT = "settings/provider/edit"
     const val DATA = "settings/data"
     const val ABOUT = "settings/about"
+    const val LICENSE = "settings/about/licenses"
     const val PROMPT = "settings/prompt"
     const val PROMPT_EDIT = "settings/prompt/edit"
 }
@@ -63,6 +65,11 @@ fun TinyChatApp() {
     val palette = TcTheme.palette
 
     val context = LocalContext.current
+    // 关于页/设置页显示安装包版本（M9）：不在代码里写死
+    @Suppress("DEPRECATION")
+    val versionName = remember {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+    }
     val container = remember { AppContainer(context.applicationContext) }
     // 服务商目录与凭据（M8-6）：设置页、服务商页、模型选择器都读它
     val providers by container.providers.collectAsState()
@@ -216,6 +223,7 @@ fun TinyChatApp() {
                         onOpenData = { navController.navigate(Routes.DATA) },
                         onOpenAbout = { navController.navigate(Routes.ABOUT) },
                         providerSubtitle = providerSubtitle,
+                        versionName = versionName,
                         promptName = promptName,
                         onOpenPrompt = { navController.navigate(Routes.PROMPT) },
                         ttsVoice = chatViewModel.state.ttsVoice,
@@ -374,7 +382,14 @@ fun TinyChatApp() {
                     }
                 }
                 composable(Routes.ABOUT) {
-                    AboutScreen(onBack = { navController.popBackStack() })
+                    AboutScreen(
+                        versionName = versionName,
+                        onBack = { navController.popBackStack() },
+                        onOpenLicenses = { navController.navigate(Routes.LICENSE) },
+                    )
+                }
+                composable(Routes.LICENSE) {
+                    LicenseScreen(onBack = { navController.popBackStack() })
                 }
                 }
             }
