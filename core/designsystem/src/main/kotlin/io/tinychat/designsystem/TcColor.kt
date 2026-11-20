@@ -36,6 +36,13 @@ data class TcPalette(
     val labelSecondary: Color,
     val labelTertiary: Color,
     val borderL2: Color,
+    /**
+     * 圆角 logo 方块的描边（决策 62）。
+     *
+     * 取图自带的黑底（#020101）与深色页底（#151517）只差一点，纯靠底色分不出边界，
+     * 所以暗色下用一条半透明白把轮廓勾出来；浅色下黑方块本来就有边界，取透明即可。
+     */
+    val logoRing: Color,
     val codeBg: Color,
     val inlineCodeBg: Color,
     val danger: Color,
@@ -56,6 +63,7 @@ val LightPalette = TcPalette(
     labelSecondary = Color(0xFF61666B),
     labelTertiary = Color(0xFF81858C),
     borderL2 = Color(0x1A000000),
+    logoRing = Color(0x00000000),
     codeBg = Color(0xFFF9FAFB),
     inlineCodeBg = Color(0xFFEBEEF2),
     danger = Color(0xFFEC1313),
@@ -82,6 +90,7 @@ val DarkPalette = TcPalette(
     labelSecondary = Color(0xFFCFD3D6),
     labelTertiary = Color(0xFFADB2B8),
     borderL2 = Color(0x1FFFFFFF),
+    logoRing = Color(0x29FFFFFF),
     codeBg = Color(0xFF1B1B1C),
     inlineCodeBg = Color(0xFF2C2C2E),
     danger = Color(0xFFF25A5A),

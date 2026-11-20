@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.tinychat.designsystem.TcLogoMark
 import io.tinychat.markdown.TcMarkdown
 
 /**
@@ -59,6 +60,9 @@ fun ShareCard(
                 color = Color(0xFF81858C),
                 modifier = Modifier.weight(1f),
             )
+            // 页脚标识 = 圆角方块 + 字样（决策 62）；白纸上不需要描边
+            TcLogoMark(size = 14.dp, ring = false)
+            Spacer(Modifier.width(6.dp))
             Text(
                 text = "TinyChat",
                 fontSize = 12.sp,

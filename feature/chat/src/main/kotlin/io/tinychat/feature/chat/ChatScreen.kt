@@ -131,6 +131,7 @@ import io.tinychat.audio.SpectrumAnalyser
 import io.tinychat.designsystem.BubbleShape
 import io.tinychat.designsystem.TcFavicon
 import io.tinychat.designsystem.TcIcons
+import io.tinychat.designsystem.TcLogoMark
 import io.tinychat.designsystem.TcMotion
 import io.tinychat.designsystem.TcPalette
 import io.tinychat.designsystem.TcTheme
@@ -424,12 +425,17 @@ private fun Greeting(modifier: Modifier = Modifier) {
             .padding(horizontal = 32.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = "$greeting，我能帮什么忙吗？",
-            style = TcTypography.headlineSmall,
-            color = palette.labelPrimary,
-            textAlign = TextAlign.Center,
-        )
+        // 图标 + 问候语整块居中（决策 62）：只加图标不破版，文字位置不受影响。
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            TcLogoMark(size = 72.dp)
+            Spacer(Modifier.height(20.dp))
+            Text(
+                text = "$greeting，我能帮什么忙吗？",
+                style = TcTypography.headlineSmall,
+                color = palette.labelPrimary,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

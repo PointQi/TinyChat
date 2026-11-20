@@ -17,10 +17,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.tinychat.designsystem.TcIcons
+import io.tinychat.designsystem.TcLogoMark
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
 import io.tinychat.ui.TcIconButton
@@ -54,9 +56,17 @@ fun AboutScreen(
             leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
         )
         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp)) {
+            // 头部（决策 62）：图标 / 名称 / 版本居中三行，下面的入口行保持原样
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 32.dp, bottom = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                TcLogoMark(size = 72.dp)
+                Spacer(Modifier.height(16.dp))
                 Text("TinyChat", style = TcTypography.headlineSmall, color = palette.labelPrimary)
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
                     text = if (versionName.isBlank()) "版本未知" else "版本 $versionName",
                     style = TcTypography.labelMedium,
