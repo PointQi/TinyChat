@@ -39,6 +39,8 @@ data class MessageEntity(
     @ColumnInfo(name = "inserted_at") val insertedAt: Long,
     // —— 仅本地，不导出 ——
     val model: String? = null,
+    /** 这一轮由哪家服务商作答；会话中途换家后，历史账单按它判定（P 阶段） */
+    @ColumnInfo(name = "provider_id") val providerId: String? = null,
     val effort: ThinkingEffort? = null,
     @ColumnInfo(name = "prompt_tokens") val promptTokens: Int? = null,
     @ColumnInfo(name = "cache_hit_tokens") val cacheHitTokens: Int? = null,

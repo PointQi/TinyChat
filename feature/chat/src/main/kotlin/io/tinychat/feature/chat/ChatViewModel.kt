@@ -1488,20 +1488,27 @@ class ChatViewModel(
             status = message.status,
             canContinue = canContinue,
             usage = rowUsage,
-            costMicros = rowUsage?.let { usage ->
-                // 费用表只覆盖 DeepSeek 官方；第三方同样的模型 id 不代表同样的价格
-                if (state.currentProvider?.kind != ProviderKind.DEEPSEEK_OFFICIAL) {
-                    null
-                } else {
-                    CostCalculator.micros(
-                        usage = usage,
-                        model = message.model ?: KnownProviders.flash.id,
-                        peak = PeakClock.isPeak(
-                            Instant.ofEpochMilli(message.insertedAt).atZone(PeakClock.ZONE),
-                        ),
-                    )
-                }
-            },
+            // 优先用落库时定格的费用（决策 47）；老数据按旧口径现算，数字不会因为这次改动跳一下
+            costMicros = message.costMicros ?: rowUsage?.let { usage -> legacyCostMicros(message, usage) },
+        )
+    }
+
+    /**
+     * 升级前落库的消息没有定格费用：按**这条消息自己的服务商**补算一次；
+     * 老数据没有 `provider_id`，回落到会话当前服务商（与改动前的口径一致）。
+     */
+    private fun legacyCostMicros(message: io.tinychat.data.db.MessageEntity, usage: Usage): Long? {
+        val providerId = message.providerId ?: state.providerId
+        val provider = state.providers.firstOrNull { it.id == providerId } ?: return null
+        if (provider.kind != ProviderKind.DEEPSEEK_OFFICIAL) return null
+        val model = message.model ?: KnownProviders.flash.id
+        if (io.tinychat.model.billing.DefaultPricing.value.forModel(model) == null) return null
+        return CostCalculator.micros(
+            usage = usage,
+            model = model,
+            peak = PeakClock.isPeak(
+                Instant.ofEpochMilli(message.insertedAt).atZone(PeakClock.ZONE),
+            ),
         )
     }
 

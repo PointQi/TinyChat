@@ -58,7 +58,11 @@ data class Message(
     val insertedAt: Long,
     // —— 以下仅本地，不导出 ——
     val model: String? = null,
+    /** 这一轮发给哪家服务商（P 阶段加）：会话中途换家后，历史账单仍按当时那家判定 */
+    val providerId: String? = null,
     val effort: ThinkingEffort? = null,
+    /** 落库时按当时价格与时段定格的费用（微元）；null = 老数据，读取时按旧口径补算 */
+    val costMicros: Long? = null,
     val usage: Usage? = null,
     val errorKind: ErrorKind? = null,
     val errorMessage: String? = null,

@@ -91,10 +91,11 @@ class ChatRepository(
     fun observeSessions(): Flow<List<SessionEntity>> = db.sessionDao().observeAll()
 
     /**
-     * 会话用量合计（M7-2）：token 与费用都按**逐条消息**算。
+     * 会话用量合计（M7-2）：token 求和，费用优先用**落库时定格**的值。
      *
-     * 费用必须在落库时按当时是不是高峰定价，否则历史账单会随"现在几点"漂移。
-     * 不只看当前分支：被编辑/重生成丢弃的旧版本也是真花掉的钱。
+     * 决策 47：会话允许中途换服务商，所以「这一轮算不算钱」按**这一轮自己的服务商**判定，
+     * 不再看会话当前是哪家。老数据（`provider_id` 与 `cost_micros` 都为空）仍按旧口径
+     * 回落到会话服务商补算，保证升级前后数字不跳。
      */
     suspend fun usageSummary(sessionId: String): UsageSummary = withContext(Dispatchers.IO) {
         var prompt = 0
@@ -105,10 +106,8 @@ class ChatRepository(
         var fetch = 0
         var imageSearch = 0
         var cost = 0L
-        // 价格表只覆盖 DeepSeek 官方；第三方即使模型 id 撞名也不代表同样的单价
-        val priceable = db.sessionDao().byId(sessionId)?.let { session ->
-            providerStore.byId(session.providerId)?.kind == io.tinychat.model.ProviderKind.DEEPSEEK_OFFICIAL
-        } ?: true
+        val providers = providerStore.all().associateBy { it.id }
+        val sessionProviderId = db.sessionDao().byId(sessionId)?.providerId
         db.messageDao().usageRows(sessionId).forEach { row ->
             val usage = Usage(
                 promptTokens = row.promptTokens ?: 0,
@@ -127,12 +126,8 @@ class ChatRepository(
             search += usage.searchCalls
             fetch += usage.fetchCalls
             imageSearch += usage.imageSearchCalls
-            if (priceable) {
-                val peak = PeakClock.isPeak(
-                    Instant.ofEpochMilli(row.insertedAt).atZone(PeakClock.ZONE),
-                )
-                cost += CostCalculator.micros(usage, row.model ?: KnownProviders.flash.id, peak)
-            }
+            cost += row.costMicros
+                ?: legacyCost(row, usage, providers, sessionProviderId)
         }
         UsageSummary(
             usage = Usage(
@@ -146,6 +141,38 @@ class ChatRepository(
             ),
             costMicros = cost,
         )
+    }
+
+    /** 升级前落库的消息没有定格费用：仍按「会话当前服务商是官方才算钱」的老口径补算。 */
+    private fun legacyCost(
+        row: io.tinychat.data.db.UsageRow,
+        usage: Usage,
+        providers: Map<String, Provider>,
+        sessionProviderId: String?,
+    ): Long {
+        val provider = (row.providerId ?: sessionProviderId)?.let { providers[it] } ?: return 0
+        if (provider.kind != io.tinychat.model.ProviderKind.DEEPSEEK_OFFICIAL) return 0
+        val peak = PeakClock.isPeak(Instant.ofEpochMilli(row.insertedAt).atZone(PeakClock.ZONE))
+        return CostCalculator.micros(usage, row.model ?: KnownProviders.flash.id, peak)
+    }
+
+    /**
+     * 本轮费用（微元）：写入 `messages.cost_micros`，此后不再随价目表变化（决策 47）。
+     *
+     * 只给 DeepSeek 官方算——第三方没有单价表，写 0 等于宣称「免费」，比留空更糟；
+     * 模型不在价目表里也留空，等以后补价再算。
+     */
+    private fun costFor(
+        provider: Provider,
+        modelId: String,
+        usage: Usage?,
+        atMillis: Long,
+    ): Long? {
+        if (usage == null || usage.isEmpty) return null
+        if (provider.kind != io.tinychat.model.ProviderKind.DEEPSEEK_OFFICIAL) return null
+        if (io.tinychat.model.billing.DefaultPricing.value.forModel(modelId) == null) return null
+        val peak = PeakClock.isPeak(Instant.ofEpochMilli(atMillis).atZone(PeakClock.ZONE))
+        return CostCalculator.micros(usage, modelId, peak)
     }
 
 
@@ -468,6 +495,11 @@ class ChatRepository(
             runCatching { db.messageDao().setStatus(assistantMessageId, MessageStatus.INCOMPLETE) }
             throw e
         }
+        // 续写同样定格费用（决策 47）：一次续写是一笔独立的账
+        val insertedAt = db.messageDao().byId(assistantMessageId)?.insertedAt ?: clock()
+        costFor(provider, session.model, outcome.usage, insertedAt)?.let { micros ->
+            runCatching { db.messageDao().setCost(assistantMessageId, micros) }
+        }
         db.sessionDao().touch(sessionId, clock())
         return outcome
     }
@@ -493,6 +525,7 @@ class ChatRepository(
                 thinkingEnabled = session.thinkingEnabled,
                 searchEnabled = session.searchEnabled,
                 insertedAt = now,
+                providerId = session.providerId,
                 reminderSnapshot = reminder,
             ),
         )
@@ -620,6 +653,7 @@ class ChatRepository(
                 searchEnabled = session.searchEnabled,
                 insertedAt = assistantInsertedAt,
                 model = session.model,
+                providerId = provider.id,
                 effort = session.effort,
             ),
         )
@@ -677,6 +711,11 @@ class ChatRepository(
             ChatProtocols.assembler(request.protocol),
         )
         val finalOutcome = retryWithoutThinking(provider, session, command, key, assistantId, outcome)
+
+        // 费用定格（决策 47）：用这一轮自己的服务商与落库时间算一次写死，之后换家、调价都不改历史账
+        costFor(provider, session.model, finalOutcome.usage, assistantInsertedAt)?.let { micros ->
+            runCatching { db.messageDao().setCost(assistantId, micros) }
+        }
 
         // 标题：官方用服务端下发的；第三方本地取首句前 24 字（02 §5.3 的等价实现）
         if (session.title == null) {

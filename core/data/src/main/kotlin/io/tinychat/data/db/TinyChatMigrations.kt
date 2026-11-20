@@ -99,5 +99,28 @@ object TinyChatMigrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+    /**
+     * v4 → v5：消息补 `provider_id`（P 阶段，决策 47）。
+     *
+     * 会话允许中途换服务商之后，「这一轮花了谁的钱」必须逐条记：原来只看会话当前服务商，
+     * 换家会把历史账单整段重算（第三方转官方凭空多出钱，官方转第三方 ￥ 全部变 `--`）。
+     * 老数据留空，读取时按旧口径回落到会话服务商，不修改既有数字。
+     */
+    val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN provider_id TEXT")
+            // 老数据全部归属到会话当时的那家服务商：升级前不允许换家，所以这个推断是准的。
+            // 不这么做的话，用户一换服务商，历史账就会整段归零或按新价重算。
+            db.execSQL(
+                """
+                UPDATE messages SET provider_id = (
+                    SELECT provider_id FROM sessions WHERE sessions.id = messages.session_id
+                )
+                WHERE provider_id IS NULL
+                """.trimIndent(),
+            )
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }

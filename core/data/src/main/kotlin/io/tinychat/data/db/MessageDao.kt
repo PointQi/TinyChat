@@ -64,6 +64,10 @@ interface MessageDao {
     @Query("UPDATE messages SET thinking_signature = :signature WHERE id = :id")
     suspend fun setThinkingSignature(id: Long, signature: String)
 
+    /** 费用定格（决策 47）：落库时按当时价格与时段写好，之后不再随代码里的价目表漂移 */
+    @Query("UPDATE messages SET cost_micros = :micros WHERE id = :id")
+    suspend fun setCost(id: Long, micros: Long)
+
     @Query("SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id = :sessionId")
     suspend fun maxIdInSession(sessionId: String): Long
 
@@ -76,7 +80,8 @@ interface MessageDao {
         SELECT prompt_tokens AS promptTokens, cache_hit_tokens AS cacheHitTokens,
                completion_tokens AS completionTokens, thinking_tokens AS thinkingTokens,
                search_calls AS searchCalls, fetch_calls AS fetchCalls,
-               image_search_calls AS imageSearchCalls, model, inserted_at AS insertedAt
+               image_search_calls AS imageSearchCalls, model, provider_id AS providerId,
+               cost_micros AS costMicros, inserted_at AS insertedAt
         FROM messages WHERE session_id = :sessionId
         """,
     )
@@ -85,7 +90,7 @@ interface MessageDao {
     suspend fun countInSession(sessionId: String): Int
 }
 
-/** 逐条消息的用量行（M7-2 会话合计用）：连模型与落库时间一起取，好按当时时段算价。 */
+/** 逐条消息的用量行（M7-2 会话合计用）：连模型、服务商与落库时间一起取，好按当时时段算价。 */
 data class UsageRow(
     val promptTokens: Int?,
     val cacheHitTokens: Int?,
@@ -95,5 +100,9 @@ data class UsageRow(
     val fetchCalls: Int?,
     val imageSearchCalls: Int?,
     val model: String?,
+    /** 空 = 本次升级前的老数据，按会话服务商回落到旧口径 */
+    val providerId: String?,
+    /** 非空 = 已定格的费用，直接采用 */
+    val costMicros: Long?,
     val insertedAt: Long,
 )
