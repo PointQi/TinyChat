@@ -97,6 +97,7 @@ fun TinyChatApp() {
             settings = container.userSettings,
             account = container.account,
             quotaFor = { provider -> container.quotaFor(provider) },
+            providerKeyFor = { id -> container.apiKeyFor(id) },
         ),
     )
 
@@ -163,8 +164,6 @@ fun TinyChatApp() {
                 onToggleSelected = chatViewModel::toggleSelected,
                 onPinSelected = chatViewModel::pinSelected,
                 onDeleteSelected = chatViewModel::deleteSelected,
-                balanceText = chatViewModel.state.balanceText,
-                onRefreshBalance = { chatViewModel.refreshBalance(force = true) },
             )
         },
     ) {

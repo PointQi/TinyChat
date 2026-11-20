@@ -848,8 +848,8 @@ private fun ModelDirectory(
 
 /** 模型行下面那行摘要：能力边界在列表里就能读到，不用点进去（决策 49）。 */
 private fun modelSummary(model: ModelInfo): String = buildList {
-    add("${shortTokens(model.contextWindow)} 上下文")
-    add("${shortTokens(model.maxOutputTokens)} 输出")
+    add(if (model.contextWindow > 0) "${shortTokens(model.contextWindow)} 上下文" else "上下文未知")
+    add(if (model.maxOutputTokens > 0) "${shortTokens(model.maxOutputTokens)} 输出" else "输出未知")
     if (model.capabilities.thinking) {
         add(if (model.capabilities.effort) "思考，可调强度" else "思考")
     }

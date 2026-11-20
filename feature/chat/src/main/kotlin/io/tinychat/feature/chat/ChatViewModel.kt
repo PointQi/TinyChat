@@ -373,6 +373,8 @@ class ChatViewModel(
     private val account: AccountClient,
     /** 订阅额度（M8-6）：OpenCode Go 走它，其他服务商返回 null */
     private val quotaFor: suspend (Provider) -> QuotaSnapshot?,
+    /** 按服务商取 Key（决策 48）：官方可以有多个实例，语音与余额要用会话自己那一家 */
+    private val providerKeyFor: suspend (String) -> String? = { null },
 ) : ViewModel() {
 
     var state by mutableStateOf(ChatUiState())
@@ -401,6 +403,13 @@ class ChatViewModel(
 
     /** 当前 Key（Key 页可随时换，所以每次调用都取最新值）。 */
     private val apiKeyValue: String get() = apiKey.value
+
+    /**
+     * 语音（ASR/TTS）只走官方端点：优先用**当前会话那一家**的 Key（可能有第二个官方实例），
+     * 取不到再退回全局官方 Key。
+     */
+    private suspend fun voiceKey(): String =
+        providerKeyFor(state.providerId)?.takeIf { it.isNotBlank() } ?: apiKeyValue
 
 
     /** 频谱数据（Canvas 直接在帧循环里读，不参与重组）。 */
@@ -913,21 +922,30 @@ class ChatViewModel(
     }
 
     /**
-     * 底栏选模型（M8-6）：`providerId` 与模型一起进来，选择器按服务商分组。
+     * 底栏选模型：`providerId` 与模型一起进来，选择器按服务商分组。
      *
-     * 已有消息的会话**不允许换服务商**（thinking 签名与缓存都跟服务商绑定），
-     * 但允许在同一家内换模型；新对话随便切。
+     * 决策 51：**会话中途也能换服务商**。原先拦着是怕思考签名与缓存串味，
+     * 但历史思考本来就不回传，签名只用于「继续生成」，拦整个换家属于过度保守。
+     * 换家时唯一的真实损失是历史里的图片与文件（各家的块形状不同，第三方链路只发文本），
+     * 所以有附件历史时给一句一次性说明。
      */
     fun selectModel(providerId: String, modelId: String, effort: ThinkingEffort) {
-        if (state.messages.isNotEmpty() && providerId != state.providerId) return
+        val switchingProvider = providerId != state.providerId
         val capabilities = state.providers.firstOrNull { it.id == providerId }?.model(modelId)?.capabilities
         val search = state.searchEnabled && (capabilities?.webSearch == true)
+        val lostAttachments = switchingProvider && state.messages.any { it.attachments.isNotEmpty() }
+        val providerName = state.providers.firstOrNull { it.id == providerId }?.displayName
         state = state.copy(
             providerId = providerId,
             modelId = modelId,
             effort = effort,
             searchEnabled = search,
             hasApiKey = providerId in state.keyedProviders,
+            hint = if (lostAttachments) {
+                "已换到 ${providerName ?: "新的服务商"}；历史里的图片与文件不会发给它"
+            } else {
+                state.hint
+            },
         )
         persistStandalone()
         viewModelScope.launch {
@@ -1051,7 +1069,7 @@ class ChatViewModel(
         state = state.copy(voiceStatus = VoiceStatus.TRANSCRIBING, voiceSeconds = 0)
         transcribeJob = viewModelScope.launch {
             try {
-                val text = voice.transcribe(apiKeyValue, audio)
+                val text = voice.transcribe(voiceKey(), audio)
                 if (text.isBlank()) {
                     state = state.copy(hint = "未识别到语音内容")
                 } else {
@@ -1130,7 +1148,7 @@ class ChatViewModel(
         val voiceId = state.ttsVoice
         speakingJob = viewModelScope.launch {
             try {
-                voice.play(apiKeyValue, text, voiceId)
+                voice.play(voiceKey(), text, voiceId)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: PlaybackStopped) {
@@ -1214,15 +1232,16 @@ class ChatViewModel(
             state = state.copy(balanceText = null, quota = null)
             return
         }
-        val key = apiKeyValue
-        if (key.isBlank()) {
-            state = state.copy(balanceText = null, quota = null)
-            return
-        }
         val now = System.currentTimeMillis()
         if (!force && now - balanceAt < BALANCE_TTL_MS) return
         balanceJob?.cancel()
         balanceJob = viewModelScope.launch {
+            // 多个官方实例时用**会话这一家**的 Key（决策 48），取不到才退回全局那一把
+            val key = provider?.let { providerKeyFor(it.id) }?.takeIf { it.isNotBlank() } ?: apiKeyValue
+            if (key.isBlank()) {
+                state = state.copy(balanceText = null, quota = null)
+                return@launch
+            }
             state = state.copy(balanceLoading = true, quota = null)
             val text = runCatching { account.balance(key) }.getOrNull()
                 ?.primary?.totalBalance
@@ -1611,6 +1630,7 @@ private fun StringBuilder.trimmedEnd(): Int {
             settings: UserSettings,
             account: AccountClient,
             quotaFor: suspend (Provider) -> QuotaSnapshot?,
+            providerKeyFor: suspend (String) -> String? = { null },
         ) = viewModelFactory {
             initializer {
                 ChatViewModel(
@@ -1625,6 +1645,7 @@ private fun StringBuilder.trimmedEnd(): Int {
                     settings = settings,
                     account = account,
                     quotaFor = quotaFor,
+                    providerKeyFor = providerKeyFor,
                 )
             }
         }

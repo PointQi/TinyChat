@@ -116,11 +116,17 @@ data class Provider(
         model(modelId)?.capabilities ?: Capabilities(thinking = false, reasoning = false)
 }
 
-/** 思考强度（Messages 协议走 output_config.effort，OpenAI 兼容走 reasoning_effort）。 */
+/**
+ * 思考强度（Messages 协议走 output_config.effort，OpenAI 兼容走 reasoning_effort）。
+ *
+ * 显示名用厂商宣传里的英文原词（P 阶段，决策 50）：用户对 `Low / High / Max` 的直觉，
+ * 来自模型厂商一直以来的写法；「低 / 高 / 最大」是第二个说法，只会多一层翻译。
+ * 报文取值仍按协议映射（OpenAI 兼容链路把 Max 落到 `high`）。
+ */
 enum class ThinkingEffort(val wire: String, val displayName: String) {
-    LOW("low", "低"),
-    HIGH("high", "高"),
-    MAX("max", "最大"),
+    LOW("low", "Low"),
+    HIGH("high", "High"),
+    MAX("max", "Max"),
 }
 
 /** TTS 音色：只用官方两个（决策 3）。 */

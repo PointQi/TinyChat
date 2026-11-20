@@ -67,6 +67,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -150,6 +152,7 @@ import io.tinychat.model.MessageStatus
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.Provider
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.model.ThinkingMode
 import io.tinychat.ui.MenuAnchor
 import io.tinychat.ui.TcAnchorMenu
 import io.tinychat.ui.TcButton
@@ -1760,7 +1763,8 @@ private fun InputCard(
                 providerId = state.providerId,
                 modelId = state.modelId,
                 effort = state.effort,
-                allowProviderSwitch = state.messages.isEmpty(),
+                thinkingEnabled = state.thinkingEnabled,
+                onToggleThinking = onToggleThinking,
                 onSelect = onSelectModel,
             )
             Spacer(Modifier.width(8.dp))
@@ -1838,7 +1842,8 @@ private fun ModelEffortPill(
     providerId: String,
     modelId: String,
     effort: ThinkingEffort,
-    allowProviderSwitch: Boolean,
+    thinkingEnabled: Boolean,
+    onToggleThinking: () -> Unit,
     onSelect: (String, String, ThinkingEffort) -> Unit,
 ) {
     val palette = TcTheme.palette
@@ -1898,7 +1903,8 @@ private fun ModelEffortPill(
                         modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
                     )
                     provider.models.forEach { model ->
-                        val enabled = keyed && (sameProvider || allowProviderSwitch)
+                        // 会话中途也能换家（决策 51）：只要这家配了密钥就可选
+                        val enabled = keyed
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1921,7 +1927,6 @@ private fun ModelEffortPill(
                                 text = when {
                                     sameProvider && model.id == modelId -> "当前"
                                     !keyed -> "未配置"
-                                    !sameProvider -> "新会话可用"
                                     else -> ""
                                 },
                                 style = TcTypography.bodySmall,
@@ -1931,7 +1936,34 @@ private fun ModelEffortPill(
                     }
                 }
 
-                if (currentModel?.capabilities?.effort == true) {
+                // 思考开关（决策 50）：以前这个动作在界面上没有入口，`onToggleThinking` 是个没人调用的死参数。
+                // 判据不是「模型声明了支持思考」，而是「模型确实会发思考参数或返回思考」——
+                // 老配置里有 `thinking=EFFORT` 但能力位 `thinking=false` 的模型，也要能关。
+                if (currentModel != null &&
+                    (currentModel.capabilities.thinking || currentModel.thinking != ThinkingMode.NONE)
+                ) {
+                    Spacer(Modifier.height(14.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("思考", style = TcTypography.bodyMedium, color = palette.labelPrimary)
+                            Text(
+                                text = if (thinkingEnabled) "回答前先想一遍" else "直接回答，不产生思考过程",
+                                style = TcTypography.labelMedium,
+                                color = palette.labelTertiary,
+                            )
+                        }
+                        Switch(
+                            checked = thinkingEnabled,
+                            onCheckedChange = { onToggleThinking() },
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = palette.brand,
+                                checkedThumbColor = palette.brandOn,
+                            ),
+                        )
+                    }
+                }
+
+                if (currentModel?.capabilities?.effort == true && thinkingEnabled) {
                     Spacer(Modifier.height(14.dp))
                     Text("思考强度", style = TcTypography.labelMedium, color = palette.labelSecondary)
                     Spacer(Modifier.height(8.dp))

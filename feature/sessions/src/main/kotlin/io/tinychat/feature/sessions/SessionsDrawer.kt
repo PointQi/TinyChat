@@ -77,7 +77,10 @@ import io.tinychat.ui.TcSectionLabel
 import kotlinx.coroutines.launch
 
 /**
- * 会话抽屉（02 §12.3）：标题行（右侧多选）→ 搜索框 → 分组的会话列表 → 余额 → 设置。
+ * 会话抽屉（02 §12.3）：标题行（右侧多选）→ 搜索框 → 分组的会话列表 → 设置。
+ *
+ * 余额只在右侧「用量与费用」抽屉里出现（决策 52）：两处各显示一遍没有意义，
+ * 右侧抽屉打开时会自动刷新，左抽屉那一行只是重复入口。
  *
  * 三种形态：列表态（默认）、搜索态（点搜索框整栏变搜索页）、多选态（底部换成置顶/删除）。
  */
@@ -93,9 +96,6 @@ fun SessionsDrawerContent(
     onDeleteSession: (String) -> Unit,
     onOpenSearch: () -> Unit,
     onCloseSearch: () -> Unit,
-    /** 余额文案（M7-4）：`￥12.34` 或 null（显示 --） */
-    balanceText: String? = null,
-    onRefreshBalance: () -> Unit = {},
     onSearchQueryChange: (String) -> Unit,
     onPickSearchResult: (String) -> Unit,
     onEnterSelection: () -> Unit,
@@ -175,11 +175,6 @@ fun SessionsDrawerContent(
             )
         } else {
             Spacer(Modifier.height(4.dp))
-            TcListRow(
-                title = "余额",
-                subtitle = balanceText ?: "--",
-                onClick = onRefreshBalance,
-            )
             TcListRow(
                 title = "设置",
                 leading = TcIcons.Settings,
