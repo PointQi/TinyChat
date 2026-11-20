@@ -234,7 +234,8 @@ private data class FormSnapshot(
     val name: String,
     val baseUrl: String,
     val protocol: ProviderProtocol,
-    val models: List<Pair<String, String>>,
+    /** 整条模型信息都进快照：改了上下文窗口或思考开关也算未保存改动 */
+    val models: List<ModelInfo>,
 )
 @Composable
 fun ProviderEditorScreen(
@@ -285,7 +286,7 @@ fun ProviderEditorScreen(
             name = name,
             baseUrl = baseUrl,
             protocol = protocol,
-            models = models.map { it.id to it.displayName },
+            models = models,
         )
     }
     val dirty = FormSnapshot(
@@ -293,7 +294,7 @@ fun ProviderEditorScreen(
         name = name,
         baseUrl = baseUrl,
         protocol = protocol,
-        models = models.map { it.id to it.displayName },
+        models = models,
     ) != initialForm || key.isNotBlank()
     var confirmDiscard by remember { mutableStateOf(false) }
 
