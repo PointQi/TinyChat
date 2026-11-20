@@ -1,4 +1,4 @@
-﻿package io.tinychat.net.protocol
+package io.tinychat.net.protocol
 
 import io.tinychat.model.Capabilities
 import io.tinychat.model.KnownProviders
@@ -97,7 +97,7 @@ class OpenAiChatProtocolTest {
     }
 
     @Test
-    fun `reminder 拼进 system 且不出现自定义角色`() {
+    fun `reminder 拼进用户消息正文且不进 system`() {
         val prepared = OpenAiChatProtocol.build("https://x/v1", "k", command())
         val messages = (Json.parseToJsonElement(prepared.bodyJson) as JsonObject)["messages"]!!.jsonArray
 
@@ -105,9 +105,13 @@ class OpenAiChatProtocolTest {
         assertFalse("latest_reminder 不是 OpenAI 的合法角色", roles.contains("latest_reminder"))
         assertEquals(listOf("system", "user", "assistant", "user"), roles)
 
+        // system 只有用户自己那段：日期放在这里等于每天把整段请求的开头改一次
         val system = messages.first().jsonObject["content"]!!.jsonPrimitive.content
-        assertTrue(system.startsWith("你是 TinyChat 的助手。"))
-        assertTrue(system.contains("2026-11-17,星期一,浙江,App,中文"))
+        assertEquals("你是 TinyChat 的助手。", system)
+
+        // 元信息挪到下一条用户消息的最前面，位置语义与官方链路一致
+        val firstUser = messages[1].jsonObject["content"]!!.jsonPrimitive.content
+        assertEquals("2026-11-17,星期一,浙江,App,中文\n\n你好", firstUser)
     }
 
     @Test

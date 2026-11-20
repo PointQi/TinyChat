@@ -1,4 +1,4 @@
-﻿package io.tinychat.net.protocol
+package io.tinychat.net.protocol
 
 import io.tinychat.model.PromptMode
 import io.tinychat.model.ThinkingEffort
@@ -20,7 +20,10 @@ import kotlinx.serialization.json.put
  * 与官方 Messages 链路的三处差别，都在这里收口：
  * 1. 端点与鉴权（Bearer，而不是 `x-api-key`）；
  * 2. 没有 `thinking` / `tools` / `safety_check` / `title` 这些扩展字段，**标题本地生成**；
- * 3. `latest_reminder` 是 DeepSeek 的自定义角色，这里拼进 system，不伪造未知角色。
+ * 3. `latest_reminder` 是 DeepSeek 的自定义角色，这里**拼进紧随其后的用户消息正文**——
+ *    **不放 system**：system 位于请求的最开头，而元信息里带着日期，日期每天变一次，
+ *    放进去就等于每天的第一条请求全部重新计算（输入未命中的价格是命中的五十倍）。
+ *    拼在末尾那条用户消息里，前缀不动，只有这一条在变。
  */
 object OpenAiChatProtocol {
 
@@ -56,18 +59,25 @@ object OpenAiChatProtocol {
                     },
                 )
             }
-            command.messages
-                .filter { it.role != WireMessage.ROLE_REMINDER }
-                .forEach { message ->
-                    val text = textOf(message)
-                    if (text.isEmpty()) return@forEach
-                    add(
-                        buildJsonObject {
-                            put("role", message.role)
-                            put("content", text)
-                        },
-                    )
+            // 元信息本身不是 OpenAI 的合法角色：攒着，拼到下一条消息正文的最前面。
+            // 位置与官方链路一致（紧挨着用户提问），但不会动到 system 那两个字节。
+            var pendingReminder: String? = null
+            command.messages.forEach { message ->
+                if (message.role == WireMessage.ROLE_REMINDER) {
+                    textOf(message).takeIf { it.isNotEmpty() }?.let { pendingReminder = it }
+                    return@forEach
                 }
+                val text = textOf(message)
+                if (text.isEmpty()) return@forEach
+                val reminder = pendingReminder
+                pendingReminder = null
+                add(
+                    buildJsonObject {
+                        put("role", message.role)
+                        put("content", if (reminder.isNullOrEmpty()) text else "$reminder\n\n$text")
+                    },
+                )
+            }
         }
 
         val body = buildJsonObject {
@@ -105,23 +115,15 @@ object OpenAiChatProtocol {
 
     /**
      * system 的拼法：
-     * - `CLEAR` → 只有 reminder（如果有）；
+     * - `CLEAR` → 不发；
      * - `REPLACE` → 快照；
-     * - `APPEND` → 快照（**不拼官方默认句**：那句是"该助手为 DeepSeek"，只属于官方服务商）；
-     * 之后再拼本轮的 `latest_reminder` 文本。
+     * - `APPEND` → 快照（**不拼官方默认句**：那句是"该助手为 DeepSeek"，只属于官方服务商）。
+     *
+     * 用户元信息**不在这里**——它带着日期，见类注释第 3 条。
      */
-    private fun resolveSystem(command: ChatCommand): String? {
-        val snapshot = command.systemPrompt?.takeIf { it.isNotBlank() }
-        val base = when (command.systemMode) {
-            PromptMode.CLEAR -> null
-            else -> snapshot
-        }
-        val reminder = command.messages
-            .filter { it.role == WireMessage.ROLE_REMINDER }
-            .mapNotNull { (it.content as? JsonPrimitive)?.contentOrNull }
-            .joinToString("\n")
-            .takeIf { it.isNotBlank() }
-        return listOfNotNull(base, reminder).joinToString("\n\n").takeIf { it.isNotBlank() }
+    private fun resolveSystem(command: ChatCommand): String? = when (command.systemMode) {
+        PromptMode.CLEAR -> null
+        else -> command.systemPrompt?.takeIf { it.isNotBlank() }
     }
 
     /** 文本块拼接：字符串直接取，数组只取 `type=text`（附件块在第三方链路不出现）。 */

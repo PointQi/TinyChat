@@ -112,34 +112,30 @@ class ContextRebuilderTest {
             listOf(
                 user(1, "第一次"),
                 assistant(2, "答一"),
-                // 第二轮已经带着当天的 reminder，不应重复插
-                user(3, "第二次", snapshot = reminder),
+                user(3, "第二次"),
                 assistant(4, "答二"),
             ),
-            currentReminder = reminder,
+            currentReminder = null,
         )
 
-        assertEquals(
-            listOf("latest_reminder", "user", "assistant", "user", "assistant"),
-            roles(out),
-        )
+        assertEquals(listOf("user", "assistant", "user", "assistant"), roles(out))
     }
 
     @Test
     fun `孤立 USER 整轮跳过`() {
         val out = ContextRebuilder.build(
             listOf(user(1, "有回复"), assistant(2, "好"), user(3, "没等到回复")),
-            currentReminder = reminder,
+            currentReminder = null,
         )
         // 末尾的 USER 由调用方另外追加，这里不应出现
-        assertEquals(listOf("latest_reminder", "user", "assistant"), roles(out))
+        assertEquals(listOf("user", "assistant"), roles(out))
     }
 
     @Test
     fun `失败态 ASSISTANT 整轮跳过`() {
         val out = ContextRebuilder.build(
             listOf(user(1, "问题"), assistant(2, "——", status = MessageStatus.FAILED)),
-            currentReminder = reminder,
+            currentReminder = null,
         )
         assertEquals(emptyList<String>(), roles(out))
     }
@@ -157,7 +153,7 @@ class ContextRebuilderTest {
                     ),
                 ),
             ),
-            currentReminder = reminder,
+            currentReminder = null,
         )
         assertEquals(emptyList<String>(), roles(out))
     }
@@ -166,23 +162,33 @@ class ContextRebuilderTest {
     fun `空正文不入上下文`() {
         val out = ContextRebuilder.build(
             listOf(user(1, "问题"), assistant(2, "   ")),
-            currentReminder = reminder,
+            currentReminder = null,
         )
         assertEquals(emptyList<String>(), roles(out))
     }
 
     @Test
-    fun `reminder 只在快照不同时插入`() {
+    fun `首轮没有历史也要带上当天的 reminder`() {
+        val out = ContextRebuilder.build(emptyList(), currentReminder = reminder)
+
+        assertEquals(listOf("latest_reminder"), roles(out))
+        assertEquals(reminder, (out.single().content as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `历史 reminder 用各自快照，只在与上一条不同时插`() {
+        val day1 = "2026-11-17,星期一,,App,中文"
+        val day2 = "2026-11-18,星期二,,App,中文"
         val out = ContextRebuilder.build(
             listOf(
-                user(1, "第一轮", snapshot = null),          // 从未发过 → 插
+                user(1, "第一轮", snapshot = day1),
                 assistant(2, "答一"),
-                user(3, "第二轮", snapshot = reminder),      // 与当前相同 → 不插
+                user(3, "第二轮", snapshot = day1),   // 与上一条相同 → 不插
                 assistant(4, "答二"),
-                user(5, "第三轮", snapshot = "2026-11-16,星期日,,App,中文"), // 变了 → 插
+                user(5, "第三轮", snapshot = day2),   // 换了 → 插
                 assistant(6, "答三"),
             ),
-            currentReminder = reminder,
+            currentReminder = day2,                    // 与最后一条相同 → 末尾不再插
         )
 
         assertEquals(
@@ -196,9 +202,40 @@ class ContextRebuilderTest {
     }
 
     @Test
+    fun `隔天再聊时历史逐字节不变，只在末尾补一条新 reminder`() {
+        val day1 = "2026-11-17,星期一,,App,中文"
+        val day2 = "2026-11-18,星期二,,App,中文"
+        val branch = listOf(
+            user(1, "第一轮", snapshot = day1),
+            assistant(2, "答一"),
+            user(3, "第二轮", snapshot = day1),
+            assistant(4, "答二"),
+        )
+
+        val sameDay = ContextRebuilder.build(branch, currentReminder = day1)
+        val nextDay = ContextRebuilder.build(branch, currentReminder = day2)
+
+        // 历史部分完全一致 —— 这正是服务端前缀缓存能吃满的前提
+        assertEquals(sameDay, nextDay.dropLast(1))
+        assertEquals("latest_reminder", nextDay.last().role)
+        assertEquals(day2, (nextDay.last().content as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `没有快照的老数据不拿今天的日期去补`() {
+        val out = ContextRebuilder.build(
+            listOf(user(1, "导入的问题"), assistant(2, "导入的回答")),
+            currentReminder = reminder,
+        )
+
+        // 历史那轮什么都不插，今天的日期只出现在末尾
+        assertEquals(listOf("user", "assistant", "latest_reminder"), roles(out))
+    }
+
+    @Test
     fun `reminder 关闭时一条都不插`() {
         val out = ContextRebuilder.build(
-            listOf(user(1, "问题"), assistant(2, "答案")),
+            listOf(user(1, "问题", snapshot = reminder), assistant(2, "答案")),
             currentReminder = null,
         )
         assertEquals(listOf("user", "assistant"), roles(out))
@@ -207,7 +244,7 @@ class ContextRebuilderTest {
     @Test
     fun `INCOMPLETE 也能进上下文`() {
         val out = ContextRebuilder.build(
-            listOf(user(1, "问题"), assistant(2, "说到一半", status = MessageStatus.INCOMPLETE)),
+            listOf(user(1, "问题", snapshot = reminder), assistant(2, "说到一半", status = MessageStatus.INCOMPLETE)),
             currentReminder = reminder,
         )
         assertEquals(listOf("latest_reminder", "user", "assistant"), roles(out))

@@ -505,11 +505,13 @@ fun buildRequestMessages(session, currentLeaf): List<MessageParam>
 2. 只保留「USER + 可用 ASSISTANT」**成对**的轮次；孤立的 USER、错误的 ASSISTANT 整轮跳过；
 3. 「可用」= `status ∈ {FINISHED, INCOMPLETE}` 且 `stop_reason != refusal` 且不含 `TEMPLATE_RESPONSE` 且正文非空；
 4. ASSISTANT 回传内容 = 正文文本块 + **仅 `kind=read_link` 的调用与结果**（含 `signature`）；**历史 thinking 一律不回传**；
-5. 每个 USER 前，若其 `latest_reminder` 快照与本轮不同，插入一条 `{"role":"latest_reminder","content":...}`；
+5. 历史里的 `latest_reminder` 用**那一轮自己的快照**，且只在与**上一条已插入的**不同时插入
+   （**不能拿今天的日期去比**：日期一跨天，每条历史前都会插一条新的，整段前缀缓存就废了）；
+   末尾在本轮 USER 之前补一条本轮的；开关关闭时一条都不发；
 6. 末尾接本轮 USER（含图片/文件块，文件在前、文本在后）；
 7. 继续生成时，末尾再补未完成的 ASSISTANT（保留本轮 thinking + signature）。
 
-> 单测必覆盖：失败轮次跳过、read_link 签名回传、思考裁剪、reminder 去重、空附件轮次跳过。
+> 单测必覆盖：失败轮次跳过、read_link 签名回传、思考裁剪、reminder 去重与「隔天历史不变」、空附件轮次跳过。
 
 ### 5.3 标题生成
 
@@ -525,10 +527,15 @@ fun buildRequestMessages(session, currentLeaf): List<MessageParam>
 例：2026-11-17,星期一,浙江,App,中文
 ```
 
-- 开关关闭 → 不发送该角色消息；
+- 开关关闭 → 不发送该角色消息（历史快照也不发）；
 - `location` 为空 → 该段为空字符串（保留逗号）；
 - `language` 取官方 70+ 取值表（与 UI 语言联动，`{{language}}` 变量同源）；
 - 快照随消息存储；导出**不保留**（v3 无此字段，与官方一致）。
+- **插入位置**：作为独立消息，紧挨在对应的 USER 之前；历史每条用它自己的快照，只有跨天之后
+  新建的轮次才会再插一条，所以除末尾外整段报文逐字节稳定（服务端前缀缓存的前提）。
+- **第三方服务商（OpenAI 兼容）**：协议没有这个角色，实现上拼进**紧随其后的那条用户消息正文
+  的最前面**，用空行隔开。**绝不能拼进 system** —— system 在请求最开头，而元信息里带日期，
+  日期每天变一次，放进 system 等于每天第一条请求全部重新计算（输入未命中价是命中价的五十倍）。
 
 ### 5.5 导入流程（严格校验，失败即回滚）
 

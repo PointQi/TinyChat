@@ -44,15 +44,35 @@ data class ContextTurn(
  * 3. 「可用」= 状态属于 FINISHED/INCOMPLETE、不是拒答、不含服务端模板块、正文非空；
  * 4. ASSISTANT 回传**正文**；历史思考一律不回传（继续生成是例外，见 M1-9），
  *    且 `read_link` 要把**调用块 + 结果块（含 signature）**成对回传，否则多轮丢网页上下文；
- * 5. 每个 USER 前，若它的 reminder 快照与本轮不同，插入一条 `latest_reminder`；
- * 6. 末尾的本轮 USER 由调用方追加（含附件块，文件在前、文本在后）。
+ * 5. 历史里的 `latest_reminder` 用**那一轮自己的快照**，且只在与上一条已插入的不同时插入；
+ *    开关关闭时（本轮 reminder 为 null）历史快照也一条都不发；
+ * 6. 末尾追加本轮的 `latest_reminder`（与最后一条历史不同才插），本轮的 USER 由调用方追加
+ *    （含附件块，文件在前、文本在后）。
+ *
+ * **规则 5 为什么不能用「今天的日期」重刷历史**（2026-11 修）：服务端的上下文缓存按前缀
+ * 命中，历史里任何一处变了，从那里往后全部重新计费。早期实现拿 `currentReminder` 跟每条
+ * 历史快照比，日期一跨天，所有历史轮次**每条前面都插一条今天的 reminder** —— 既让整段
+ * 前缀作废（隔天第一条消息就是全量重算），又多塞 N 行重复日期。真实行为见参考实现
+ * `chat-demo-ref/src/services/chat/reply.ts` 的 `appendReminder`：历史用它自己那条，
+ * 只有末尾的本轮 reminder 是新的 —— 这样除末尾外整段报文逐字节不变，缓存能一直吃到
+ * 最后一个字。没有快照的老数据（导入的会话）就照原样不带，不拿今天的日期去补。
  */
 object ContextRebuilder {
 
     fun build(branch: List<ContextTurn>, currentReminder: String?): List<WireMessage> {
-        val out = ArrayList<WireMessage>(branch.size)
+        val out = ArrayList<WireMessage>(branch.size + 2)
 
         var pendingUser: ContextTurn? = null
+        // 最近一次插进去的 reminder 原文：只有变化时才插，避免同一天刷一长串
+        var lastReminder: String? = null
+        // 开关关掉（本轮 reminder 为 null）时，历史里的快照也一条都不发 —— 用户要的是「完全不发」
+        val remindersEnabled = currentReminder != null
+
+        fun emitReminder(reminder: String?) {
+            if (!remindersEnabled || reminder == null || reminder == lastReminder) return
+            out += WireMessage.text(WireMessage.ROLE_REMINDER, reminder)
+            lastReminder = reminder
+        }
 
         for (turn in branch) {
             when (turn.message.role) {
@@ -73,17 +93,17 @@ object ContextRebuilder {
                         continue
                     }
 
-                    // 规则 5：reminder 快照不同才插
-                    val snapshot = user.message.reminderSnapshot
-                    if (currentReminder != null && snapshot != currentReminder) {
-                        out += WireMessage.text(WireMessage.ROLE_REMINDER, currentReminder)
-                    }
+                    // 规则 5：用这条 USER 自己的快照（历史不可改，否则前缀缓存全废）
+                    emitReminder(user.message.reminderSnapshot)
                     out += userMessage(userText, attachments)
                     out += turn.assistantMessage(assistantText)
                     pendingUser = null
                 }
             }
         }
+
+        // 规则 6：本轮的位置在末尾，调用方紧接着追加本轮的 USER
+        emitReminder(currentReminder)
 
         return out
     }
