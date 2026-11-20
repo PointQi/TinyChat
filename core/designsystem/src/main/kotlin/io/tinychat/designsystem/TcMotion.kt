@@ -33,6 +33,9 @@ object TcMotion {
     /** 长按菜单进场 */
     const val MenuIn = 120
 
+    /** 长按菜单退场：比进场短一档，收得干脆一点 */
+    const val MenuOut = 90
+
     /** 循环动画：朗读中的跳动竖条 */
     const val Ambient = 520
 

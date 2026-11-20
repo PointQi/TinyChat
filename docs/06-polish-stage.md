@@ -154,6 +154,7 @@
 | `Panel` | 200 | 布局移动与展开：左右抽屉、思维链高度 |
 | `Sheet` | 240 | 底部抽屉上滑（`02 §16`） |
 | `MenuIn` | 120 | 长按菜单进场 |
+| `MenuOut` | 90 | 长按菜单退场（比进场短一档，收得干脆） |
 | `Ambient` | 520 | 循环动画：朗读中的跳动竖条 |
 
 曲线三条：`Standard` = `cubic-bezier(0.4, 0, 0.2, 1)`（即 `02 §16` 的那条）、`Decelerate` = `LinearOutSlowInEasing`、

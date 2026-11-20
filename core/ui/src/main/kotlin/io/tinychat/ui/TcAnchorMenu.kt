@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +40,8 @@ import androidx.compose.ui.window.PopupProperties
 import io.tinychat.designsystem.TcMotion
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** 菜单挂在哪儿：触点（消息）或整行（会话条目）。坐标都是窗口像素。 */
 sealed interface MenuAnchor {
@@ -88,26 +91,44 @@ fun TcAnchorMenu(
     val marginPx = with(density) { ScreenMargin.roundToPx() }
     val provider = remember(anchor, gapPx, marginPx) { TcMenuPositionProvider(anchor, gapPx, marginPx) }
 
+    // 退场要做完整，就不能在点下去那一刻把 Popup 卸掉：先收起动画，动画走完再通知调用方。
+    // 二者必须错开——Popup 一卸载，内容连同动画状态一起没了。
+    val scope = rememberCoroutineScope()
+    var closing by remember { mutableStateOf(false) }
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+
+    fun dismissAfterExit(then: () -> Unit) {
+        if (closing) return
+        closing = true
+        scope.launch {
+            // 多给一帧，否则状态切走时动画还差最后一帧，看起来像被切断
+            delay(TcMotion.MenuOut + 16L)
+            then()
+        }
+    }
+
     Popup(
         popupPositionProvider = provider,
-        onDismissRequest = onDismiss,
+        onDismissRequest = { dismissAfterExit(onDismiss) },
         properties = PopupProperties(
             focusable = true,
             dismissOnBackPress = true,
             dismissOnClickOutside = true,
         ),
     ) {
-        var shown by remember { mutableStateOf(false) }
-        LaunchedEffect(Unit) { shown = true }
         val progress by animateFloatAsState(
-            targetValue = if (shown) 1f else 0f,
-            animationSpec = tween(TcMotion.MenuIn, easing = TcMotion.Standard),
-            label = "anchor-menu-in",
+            targetValue = if (entered && !closing) 1f else 0f,
+            animationSpec = tween(
+                durationMillis = if (closing) TcMotion.MenuOut else TcMotion.MenuIn,
+                easing = if (closing) TcMotion.Decelerate else TcMotion.Standard,
+            ),
+            label = "anchor-menu",
         )
         Column(
             modifier = Modifier
                 .graphicsLayer {
-                    // 从 0.96 放到 1：有点「弹出来」的意思，又不至于夸张
+                    // 进来从 0.96 放到 1，出去原路收回去：有点「弹出来」的意思，又不至于夸张
                     scaleX = 0.96f + 0.04f * progress
                     scaleY = 0.96f + 0.04f * progress
                     alpha = progress
@@ -129,7 +150,7 @@ fun TcAnchorMenu(
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = item.onClick)
+                        .clickable { dismissAfterExit(item.onClick) }
                         .padding(horizontal = 20.dp, vertical = 12.dp),
                 )
             }
