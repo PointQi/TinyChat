@@ -58,9 +58,9 @@ private fun PromptMode.title(): String = when (this) {
 }
 
 private fun PromptMode.explain(): String = when (this) {
-    PromptMode.REPLACE -> "只发送这里的内容"
-    PromptMode.APPEND -> "官方提示词在前，这里的内容接在后面"
-    PromptMode.CLEAR -> "不发送系统提示词"
+    PromptMode.REPLACE -> "仅发送当前自定义内容"
+    PromptMode.APPEND -> "先发送官方提示词，再拼接当前内容"
+    PromptMode.CLEAR -> "不发送任何系统提示词"
 }
 
 /**
@@ -118,7 +118,7 @@ fun PromptPresetListScreen(
         AlertDialog(
             onDismissRequest = { confirmRestore = false },
             title = { Text("恢复默认") },
-            text = { Text("将把默认提示词恢复为官方原文，自定义内容不受影响。") },
+            text = { Text("默认提示词将恢复为官方原文，你的自定义内容不受影响。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmRestore = false
@@ -196,7 +196,7 @@ fun PromptEditorScreen(
         ) {
             if (builtin) {
                 Text(
-                    "内置预设只读。要改的话先复制一份。",
+                    "内置预设不能改，要改请先复制一份。",
                     style = TcTypography.labelMedium,
                     color = palette.labelTertiary,
                     modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
@@ -365,7 +365,7 @@ fun PromptEditorScreen(
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("删除预设") },
-            text = { Text("删除后无法恢复。已经用它创建过的会话不受影响。") },
+            text = { Text("此操作无法恢复。删除后不会影响已用它创建的会话。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false

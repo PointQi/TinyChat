@@ -371,7 +371,7 @@ fun ProviderEditorScreen(
                 Spacer(Modifier.height(12.dp))
                 if (catalogEntries.isEmpty()) {
                     Text(
-                        "目录里的服务商都已添加。要接其他地址请用「自定义模型 API」。",
+                        "目录里的服务商都已添加。要使用其他服务商，请选择「自定义模型 API」。",
                         style = TcTypography.bodyMedium,
                         color = palette.labelSecondary,
                     )
@@ -595,7 +595,7 @@ fun ProviderEditorScreen(
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("清除已保存的密钥？") },
-            text = { Text("清除后需要重新填写才能继续对话，历史记录不受影响。只删除本机保存的密钥，不影响服务商账户。") },
+            text = { Text("清除后要重新填写才能继续对话。只删本机保存的密钥，历史记录和服务商账户不受影响。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmClear = false
@@ -659,9 +659,9 @@ private fun CatalogRow(provider: Provider, picked: Boolean, onClick: () -> Unit)
             Text(provider.displayName, style = TcTypography.bodyLarge, color = palette.labelPrimary)
             Text(
                 text = if (provider.kind == ProviderKind.OPENCODE_GO) {
-                    "订阅制网关，额度按 5 小时、周、月三个窗口"
+                    "opencode.ai/go"
                 } else {
-                    "官方接口，支持联网搜索与文件"
+                    "platform.deepseek.com"
                 },
                 style = TcTypography.labelMedium,
                 color = palette.labelTertiary,
@@ -766,9 +766,9 @@ private fun ModelDirectory(
     if (models.isEmpty()) {
         Text(
             text = if (editable) {
-                "还没有模型。点上面「获取可用模型」，或手动添加。"
+                "还没有模型。点击上面「获取可用模型」，或手动添加。"
             } else {
-                "还没有模型。点上面「获取可用模型」拉取。"
+                "还没有模型。点击上面「获取可用模型」拉取。"
             },
             style = TcTypography.labelMedium,
             color = palette.labelTertiary,

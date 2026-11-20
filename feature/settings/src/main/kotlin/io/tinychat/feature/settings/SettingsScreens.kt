@@ -71,7 +71,7 @@ fun SettingsScreen(
     /** 用户元信息开关（M7-5，默认开） */
     reminderEnabled: Boolean = true,
     onToggleReminder: (Boolean) -> Unit = {},
-    /** 语言 / 外观 / 字号 / 个性化（M8-4） */
+    /** 语言 / 外观 / 字号 / 所在地（M8-4） */
     language: String = "中文",
     onSelectLanguage: (String) -> Unit = {},
     themeMode: String = "system",
@@ -106,7 +106,7 @@ fun SettingsScreen(
             )
             TcListRow(
                 title = "数据管理",
-                subtitle = "导入 / 导出（兼容 v3 格式）",
+                subtitle = "导入 / 导出（兼容 DeepSeek 客户端格式）",
                 onClick = onOpenData,
             )
 
@@ -115,8 +115,8 @@ fun SettingsScreen(
             TcListRow(title = "外观", subtitle = themeMode.themeLabel, onClick = { themePicker = true })
             TcListRow(title = "字体大小", subtitle = fontScale.fontLabel, onClick = { fontPicker = true })
             TcListRow(
-                title = "个性化",
-                subtitle = location.ifBlank { "未设置所在地" },
+                title = "所在地",
+                subtitle = location.ifBlank { "未设置" },
                 onClick = {
                     locationDraft = location
                     locationEdit = true
@@ -218,7 +218,7 @@ fun SettingsScreen(
             text = {
                 Column {
                     Text(
-                        "{{location}} 与用户元信息会用到它，可以留空。",
+                        "填写所在地，让回答更贴合你的本地场景。\n可以留空。",
                         style = TcTypography.labelMedium,
                         color = palette.labelTertiary,
                     )
@@ -434,12 +434,12 @@ fun DataManagementScreen(
             TcSectionLabel("备份")
             TcListRow(
                 title = "导入对话",
-                subtitle = if (busy) "正在处理，请稍候…" else "DeepSeek 导出包（v3）",
+                subtitle = if (busy) "正在处理，请稍候…" else "导入从 DeepSeek 客户端导出的 .zip 对话记录",
                 onClick = { if (!busy) confirmImport = true },
             )
             TcListRow(
                 title = "导出对话",
-                subtitle = if (busy) "正在处理，请稍候…" else "兼容模式（纯 v3，不含提示词与用量）",
+                subtitle = if (busy) "正在处理，请稍候…" else "导出为兼容 DeepSeek 客户端的 .zip 对话记录",
                 onClick = {
                     if (!busy) {
                         exportPicker.launch("tinychat-backup-${System.currentTimeMillis()}.zip")
@@ -460,7 +460,7 @@ fun DataManagementScreen(
             TcSectionLabel("清理")
             TcListRow(
                 title = "清空所有对话",
-                subtitle = "连同本机附件一起删除，不可撤销",
+                subtitle = "删除全部对话和附件，无法撤销。",
                 onClick = { if (!busy) confirmClear = true },
             )
 
@@ -497,7 +497,7 @@ fun DataManagementScreen(
         AlertDialog(
             onDismissRequest = { confirmImport = false },
             title = { Text("导入会覆盖现有对话？") },
-            text = { Text("当前设备上的全部对话与附件都会被替换成包里内容，且不可撤销。") },
+            text = { Text("当前设备上的全部对话和附件都会被替换成导入的内容，且无法撤销。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmImport = false

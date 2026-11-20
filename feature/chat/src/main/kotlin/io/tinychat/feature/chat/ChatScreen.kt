@@ -1,4 +1,4 @@
-﻿package io.tinychat.feature.chat
+package io.tinychat.feature.chat
 
 import android.Manifest
 import android.content.Context
@@ -631,7 +631,7 @@ private fun MessageRow(
     var menuOpen by remember { mutableStateOf(false) }
     var selectOpen by remember { mutableStateOf(false) }
     var sourcesOpen by remember { mutableStateOf(false) }
-    // 分享（M8-2）：抽屉 →（生成图片时）进度 → 预览 → 系统分享面板
+    // 分享（M8-2）：抽屉 →（生成长图时）进度 → 预览 → 系统分享面板
     var shareOpen by remember { mutableStateOf(false) }
     var shareBusy by remember { mutableStateOf(false) }
     var shareResult by remember { mutableStateOf<ShareCapture.Output?>(null) }
@@ -845,8 +845,8 @@ private fun MessageRow(
                     shareBusy = false
                     result.onSuccess { shareResult = it }
                         .onFailure { throwable ->
-                            android.util.Log.w("ShareCapture", "生成图片失败", throwable)
-                            Toast.makeText(context, "生成图片失败，请重试", Toast.LENGTH_SHORT).show()
+                            android.util.Log.w("ShareCapture", "生成长图失败", throwable)
+                            Toast.makeText(context, "生成长图失败，请重试", Toast.LENGTH_SHORT).show()
                         }
                 }
             },

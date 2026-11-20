@@ -35,7 +35,7 @@ import io.tinychat.designsystem.TcTypography
 import java.io.File
 
 /**
- * 分享抽屉（M8-2 / 02 §12.9）：生成图片 / 复制文本 / 分享文本。
+ * 分享抽屉（M8-2 / 02 §12.9）：生成长图 / 复制文本 / 分享文本。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,7 +55,7 @@ fun ShareSheet(
         Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
             Text("分享", style = TcTypography.titleMedium, color = palette.labelPrimary)
             Spacer(Modifier.height(10.dp))
-            ShareRow("生成图片", "长图，公式与代码一起带上", onGenerateImage)
+            ShareRow("生成长图", null, onGenerateImage)
             ShareRow("复制文本", null, onCopyText)
             ShareRow("分享文本", null, onShareText)
         }
@@ -90,7 +90,7 @@ fun ShareProgressDialog() {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(modifier = Modifier.size(26.dp), color = palette.brand)
                 Spacer(Modifier.height(12.dp))
-                Text("正在生成图片", style = TcTypography.bodyMedium, color = palette.labelPrimary)
+                Text("正在生成长图", style = TcTypography.bodyMedium, color = palette.labelPrimary)
             }
         },
     )
@@ -108,7 +108,7 @@ fun SharePreviewDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = if (output.pages > 1) "分享图片（共 ${output.pages} 张）" else "分享图片",
+                text = if (output.pages > 1) "分享长图（共 ${output.pages} 张）" else "分享长图",
                 style = TcTypography.titleMedium,
                 color = palette.labelPrimary,
             )
@@ -162,5 +162,5 @@ fun shareImages(context: Context, files: List<File>) {
         }
     }
     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    context.startActivity(Intent.createChooser(intent, "分享图片"))
+    context.startActivity(Intent.createChooser(intent, "分享长图"))
 }

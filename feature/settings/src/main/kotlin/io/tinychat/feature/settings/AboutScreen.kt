@@ -88,13 +88,6 @@ fun AboutScreen(
                     )
                 },
             )
-            Spacer(Modifier.height(20.dp))
-            Text(
-                text = "使用你自己的 API Key 访问模型服务。本项目与深度求索公司无隶属关系，界面与协议实现参考 deepseek-ai/chat-demo（MIT）。",
-                style = TcTypography.bodySmall,
-                color = palette.labelTertiary,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
             Spacer(Modifier.height(24.dp))
         }
     }

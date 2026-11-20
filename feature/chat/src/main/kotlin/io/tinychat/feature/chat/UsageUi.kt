@@ -1,4 +1,4 @@
-﻿package io.tinychat.feature.chat
+package io.tinychat.feature.chat
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -66,19 +66,15 @@ object UsageGlossary {
 
     fun of(key: String): String = when (key) {
         CONTEXT ->
-            "上一轮请求实际发送的 token（未缓存输入 + 缓存读取 + 输出）占模型上限的比例。" +
-                "超过 80% 后，较早的对话会在发送时被截断，表现是模型“忘了”前面聊过的内容。"
+            "这一轮实际发给模型的全部内容，占模型上限的比例。"
         CACHE_HIT ->
-            "服务端复用了上一轮已经算过的上下文前缀，这部分按约 2% 的价格计费，命中率越高越省钱。" +
-                "编辑提问、重新生成、切换提示词或模型都会改动历史，命中率会掉一截，属于正常现象。"
+            "服务端直接复用了上一轮的对话内容，不用重新计算。"
         COST ->
-            "用服务商价目表在本地估算，含搜索与抓取（每次 0.005 元）。" +
-                "高峰时段（工作日 9:00 到 12:00、14:00 到 18:00）单价翻倍，按每轮发生时的时段计算。" +
-                "语音不计入这里，与真实账单可能有几分钱误差。"
+            "按服务商的价目表估算，和真实账单可能有几分钱误差。"
         BALANCE ->
-            "含赠送余额与充值余额，来自服务商的余额接口，仅在打开本抽屉时刷新。只有 DeepSeek 官方提供这个接口。"
+            "通过服务商接口获取的账户余额。"
         USAGE_TOTAL ->
-            "本会话的累计值，包括重新生成和编辑前那些已经被丢弃的版本，因为那部分确实已经计费。"
+            "本会话的累计用量数据，包括所有重新生成和重新编辑的版本。"
         else -> ""
     }
 }
@@ -264,7 +260,7 @@ fun UsageDrawer(
                     Spacer(Modifier.height(16.dp))
                     Row(Modifier.fillMaxWidth()) {
                         Column(Modifier.weight(1f)) {
-                            ExplainableLabel("费用", UsageGlossary.COST, expanded) { expanded = it }
+                            ExplainableLabel("预估费用", UsageGlossary.COST, expanded) { expanded = it }
                             Text(
                                 text = if (summary.costMicros == 0L) "--" else Money.format(summary.costMicros),
                                 style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
@@ -355,7 +351,7 @@ private fun QuotaRow(window: QuotaWindow) {
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = "已用 ${window.usedPercent}%",
+                text = "${window.usedPercent}%",
                 style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
                 color = color,
             )
@@ -385,16 +381,21 @@ private fun QuotaRow(window: QuotaWindow) {
     }
 }
 
-/** 重置时间：只给相对说法（`3 小时后重置`），不暴露 ISO 串。 */
+/** 重置时间：只给相对说法（`3 小时后重置`），不暴露 ISO 串。单位为零时省略。 */
 private fun resetLabel(resetAt: String?): String? {
     if (resetAt.isNullOrBlank()) return null
     val instant = runCatching { java.time.Instant.parse(resetAt) }.getOrNull() ?: return null
     val minutes = java.time.Duration.between(java.time.Instant.now(), instant).toMinutes()
+    if (minutes <= 0) return "即将重置"
+    val days = minutes / (24 * 60)
+    val hours = minutes % (24 * 60) / 60
+    val mins = minutes % 60
     return when {
-        minutes <= 0 -> "即将重置"
-        minutes < 60 -> "$minutes 分钟后重置"
-        minutes < 48 * 60 -> "${minutes / 60} 小时后重置"
-        else -> "${minutes / (24 * 60)} 天后重置"
+        days > 0 && hours > 0 -> "$days 天 $hours 小时后重置"
+        days > 0 -> "$days 天后重置"
+        hours > 0 && mins > 0 -> "$hours 小时 $mins 分钟后重置"
+        hours > 0 -> "$hours 小时后重置"
+        else -> "$mins 分钟后重置"
     }
 }
 
