@@ -1,8 +1,7 @@
-package io.tinychat.markdown
+﻿package io.tinychat.markdown
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -32,7 +30,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -102,19 +99,7 @@ internal fun TcMermaidBlock(code: String, style: TextStyle) {
         HorizontalDivider(color = palette.borderL2, thickness = Dp.Hairline)
 
         if (showCode) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-            ) {
-                Text(
-                    text = code,
-                    style = style.copy(fontFamily = FontFamily.Monospace),
-                    color = palette.labelPrimary,
-                    softWrap = false,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                )
-            }
+            TcCodeText(code = code, language = SyntaxLanguage.MERMAID, style = style)
         } else {
             error?.let {
                 Text(
@@ -124,19 +109,7 @@ internal fun TcMermaidBlock(code: String, style: TextStyle) {
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                 )
                 HorizontalDivider(color = palette.borderL2, thickness = Dp.Hairline)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                ) {
-                    Text(
-                        text = code,
-                        style = style.copy(fontFamily = FontFamily.Monospace),
-                        color = palette.labelPrimary,
-                        softWrap = false,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    )
-                }
+                TcCodeText(code = code, language = SyntaxLanguage.MERMAID, style = style)
             } ?: MermaidImage(code = code, onError = { error = it })
         }
     }

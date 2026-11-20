@@ -379,8 +379,8 @@ data class Capabilities(
 
 | 能力 | 方案 | 理由 |
 |---|---|---|
-| Markdown | `com.mikepenz:multiplatform-markdown-renderer`（**v0.46.0**，2026-10） | Compose 原生；**自带流式增量 API**（`rememberStreamingMarkdownState()` / `collectAsStreamingMarkdownState()`），append 时只重解析"不稳定尾部"；内置 GFM 表格、GitHub alerts、`LazyMarkdownSuccess`（基于 LazyColumn 的超长文档）；语法高亮走可选 `-code` 模块（底层 Highlights，KMP） |
-| 代码高亮 | renderer 的 `-code` 模块 | 免去自研 tokenizer |
+| Markdown | `com.mikepenz:multiplatform-markdown-renderer`（**v0.46.0**，2026-10） | Compose 原生；**自带流式增量 API**（`rememberStreamingMarkdownState()` / `collectAsStreamingMarkdownState()`），append 时只重解析"不稳定尾部"；内置 GFM 表格、GitHub alerts、`LazyMarkdownSuccess`（基于 LazyColumn 的超长文档） |
+| 代码高亮 | **自研词法扫描器**（`core/markdown/SyntaxHighlighter.kt`，+21 条单测） | 十二种语言。官方 `-code` 模块的引擎只有十七种且**没有 JSON 与 SQL**（SQL 连 `--` 注释都不认），引擎作者自己留了「已排除区间未应用到全部定位器」的 TODO，导致字符串里的数字与标点被错色；它的可视组件我们又用不上（代码块是自绘的）。详见 03 决策 42 |
 | 行内 LaTeX | ✅ **已定稿：WebView + 离线 KaTeX** | 纯 Compose 候选 `io.github.huarangmeng:latex:0.0.1` **已排除**：`.module` 依赖 `latex:latex-base:unspecified`（group 写错）→ Maven Central **404**，构建必挂；且只有 0.0.1（2026-01）、强制 CMP 1.9.3 + kotlin-stdlib 2.3.0。详见 04 §4 |
 | 块级 LaTeX | 同上（与行内共用宿主） | 需处理"未闭合 `$$`"的流式中间态（见 §4.5.1） |
 | Mermaid | **WebView + 本地 `mermaid.min.js`**（assets，离线，与 KaTeX 共用同一 WebView 宿主） | 生态上没有成熟的 Compose 原生实现；`huarangmeng/diagram` 无 LICENSE |
@@ -389,7 +389,7 @@ data class Capabilities(
 > 1. ~~`huarangmeng/latex`~~ → **排除**（见上表：依赖 group 写错、Maven 404、0.0.1 且倒逼 CMP 1.9.3）。
 > 2. `huarangmeng/diagram`（纯 Kotlin Mermaid）：**仓库无 LICENSE 文件** → **不可直接依赖或复制**。Mermaid 走 WebView。
 > 3. 坐标已实测：`com.mikepenz:multiplatform-markdown-renderer:0.46.0` + `-m3` **可用**（编译通过）；
->    `io.github.huarangmeng:codehighlight:1.0.7` 可用候选（M2-4 再验）。
+>    `io.github.huarangmeng:codehighlight:1.0.7` 存在但**不采用**（引擎语言覆盖与错色问题见上表，M2-4 改为自研）。
 >    **流式必须用 `rememberStreamingMarkdownState` + `append()`**：实测 0 次高度回缩；用 `Markdown(String)` 或 `rememberMarkdownState` 驱动追加会每帧塌陷（42–61 次回缩 / 2042dp）。
 >
 > ⚠️ **不要选 `jeziellago:compose-markdown`**：它封装 Markwon 4.6.2（自 2021 年停更），本质是 `TextView` 包装，**没有增量解析**，在流式场景会整段重排。

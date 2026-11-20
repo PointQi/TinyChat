@@ -617,7 +617,7 @@ fun resolveSystem(session): String? = when (session.systemPromptMode) {
 | M2-1 | Markdown 渲染接入 + 令牌映射（**必须用 `rememberStreamingMarkdownState`**，禁用 `Markdown(String)` 重载，见 04 §3） | 1d | M0-3 | 表格/列表/引用/代码/删除线 |
 | M2-2 | 流式增量渲染 + 帧合并 | 1d | M2-1 | 3000 字流式：真机 ≥55fps、耗时 ≤1.3× 理论时长 |
 | M2-3 | 抖动三坑修复（setext/key 稳定/未闭合公式） | 1.5d | M2-2 | 逐帧高度单调不减（Spike 的统计脚本可复用） |
-| M2-4 | 代码块（高亮/语言标签/复制/长文折叠） | 1d | M2-1 | 20+ 语言；可试 `io.github.huarangmeng:codehighlight:1.0.7` |
+| M2-4 | 代码块（高亮/语言标签/复制/长文折叠） | 1d | M2-1 | **十二种语言**（Kotlin、Java、Python、JavaScript、TypeScript、JSON、SQL、Shell、C、C++、Markdown、Mermaid）着色正确，未识别语言退化为纯文本；着色器自研，见 03 决策 42 |
 | M2-5 | 公式：WebView 宿主 + 离线 KaTeX（**选型已定稿**，见 04 §4） | 2d | — | 20 条样例公式视觉对照；首帧 ≤300ms |
 | M2-6 | Mermaid（**共用 M2-5 的 WebView 宿主** + 高度回传 + 深色主题 + 图/码切换） | 2d | M2-5 | 5 类图不溢出 |
 | M2-7 | 思维链折叠（用时、展开态、流式展开） | 1d | M2-1 | 与截图一致 |

@@ -14,5 +14,9 @@
             android:name="io.tinychat.debug.ArchiveLabActivity"
             android:exported="true"
             android:label="导入导出验收" />
+        <activity
+            android:name="io.tinychat.debug.CodeLabActivity"
+            android:exported="true"
+            android:label="代码着色验收" />
     </application>
 </manifest>

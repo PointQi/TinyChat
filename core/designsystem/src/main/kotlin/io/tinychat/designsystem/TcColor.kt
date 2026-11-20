@@ -1,6 +1,24 @@
-﻿package io.tinychat.designsystem
+package io.tinychat.designsystem
 
 import androidx.compose.ui.graphics.Color
+
+/**
+ * 代码着色令牌（M2-4）。
+ *
+ * 只服务等宽代码区，所以单独成组，不混进界面配色。取值要在 `codeBg`
+ * （浅色 #F9FAFB / 深色 #1B1B1C）上都能读清：关键字与属性偏冷，字符串偏深，
+ * 注释压到最淡——注释本来就不该抢视线。
+ */
+data class TcSyntaxColors(
+    val keyword: Color,
+    val string: Color,
+    val number: Color,
+    val comment: Color,
+    val punctuation: Color,
+    val annotation: Color,
+    /** JSON 的键、Markdown 的链接地址、Shell 的变量名：都是「名字」类 */
+    val property: Color,
+)
 
 /**
  * 色板（M0-3）。取值来自 chat-demo `src/app/theme.css`（MIT），见 docs/02 §10.2。
@@ -23,6 +41,8 @@ data class TcPalette(
     val danger: Color,
     /** 警示橙：断网/限流这类「可以手动重试」的失败用它（官方 App 的重试圆钮就是这个色） */
     val warning: Color,
+    /** 代码着色令牌，见 [TcSyntaxColors] */
+    val syntax: TcSyntaxColors,
 )
 
 val LightPalette = TcPalette(
@@ -40,6 +60,15 @@ val LightPalette = TcPalette(
     inlineCodeBg = Color(0xFFEBEEF2),
     danger = Color(0xFFEC1313),
     warning = Color(0xFFEF8A0C),
+    syntax = TcSyntaxColors(
+        keyword = Color(0xFFCF222E),
+        string = Color(0xFF0A3069),
+        number = Color(0xFF953800),
+        comment = Color(0xFF6E7781),
+        punctuation = Color(0xFF57606A),
+        annotation = Color(0xFF8250DF),
+        property = Color(0xFF0550AE),
+    ),
 )
 
 val DarkPalette = TcPalette(
@@ -57,4 +86,13 @@ val DarkPalette = TcPalette(
     inlineCodeBg = Color(0xFF2C2C2E),
     danger = Color(0xFFF25A5A),
     warning = Color(0xFFF0A13C),
+    syntax = TcSyntaxColors(
+        keyword = Color(0xFFFF7B72),
+        string = Color(0xFFA5D6FF),
+        number = Color(0xFFFFA657),
+        comment = Color(0xFF8B949E),
+        punctuation = Color(0xFFC9D1D9),
+        annotation = Color(0xFFD2A8FF),
+        property = Color(0xFF79C0FF),
+    ),
 )

@@ -2,7 +2,6 @@ package io.tinychat.markdown
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -29,7 +27,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -60,9 +57,9 @@ internal fun collapsedCode(
 /**
  * 代码块（M2-4）：`[语言] ... [复制]` 的顶部栏 + 等宽代码区 + 长文折叠。
  *
- * 语言名就是 ``` 后面那段原文（`json` / `cpp` / 空），为空时顶部只留复制按钮。
- * 目前**不做语法高亮**：库没有可用的 KMP 高亮实现，自研 tokenizer 留到有明确收益时再说，
- * 现在保证「看得清、能复制、不塌版」。
+ * 语言名就是 ``` 后面那段原文（`json` / `cpp` / 空），为空时顶部只留复制按钮；
+ * 顶部栏显示原文，着色用别名表映射后的语言（`kt`、`c++` 这类写法都认）。
+ * 着色覆盖十二种常用语言，未识别的语言按纯文本渲染，见 [SyntaxLanguage]。
  */
 @Composable
 internal fun TcCodeBlock(code: String, language: String?, style: TextStyle) {
@@ -131,15 +128,7 @@ internal fun TcCodeBlock(code: String, language: String?, style: TextStyle) {
 
         HorizontalDivider(color = palette.borderL2, thickness = Dp.Hairline)
 
-        Box(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-            Text(
-                text = visibleCode,
-                style = style.copy(fontFamily = FontFamily.Monospace),
-                color = palette.labelPrimary,
-                softWrap = false,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            )
-        }
+        TcCodeText(code = visibleCode, language = SyntaxLanguage.fromFence(language), style = style)
 
         if (collapsible) {
             HorizontalDivider(color = palette.borderL2, thickness = Dp.Hairline)
