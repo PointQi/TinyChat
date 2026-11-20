@@ -1,14 +1,11 @@
 package io.tinychat.feature.chat
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,12 +41,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.tinychat.designsystem.TcIcons
-import io.tinychat.designsystem.TcMotion
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.model.QuotaSnapshot
 import io.tinychat.model.QuotaWindow
@@ -55,6 +56,7 @@ import io.tinychat.model.Usage
 import io.tinychat.model.billing.Money
 import io.tinychat.model.billing.UsageSummary
 import io.tinychat.ui.TcIconButton
+import kotlin.math.roundToInt
 
 /** 说明文案（点标签展开）。集中在一处，做 i18n 时只改这里。 */
 object UsageGlossary {
@@ -144,15 +146,22 @@ fun UsageStatsLine(usage: Usage, costMicros: Long?) {
     )
 }
 
+/** 面板宽度：屏宽 × 0.82，最大 320dp（02 §12.10）。左滑手势按它换算进度，所以提出来共用。 */
+fun usageDrawerWidth(screenWidthDp: Int): Dp = (screenWidthDp * 0.82f).coerceAtMost(320f).dp
+
 /**
  * 右侧「用量与费用」抽屉（M7-2，决策 27）。
  *
  * 只放会话级汇总：上下文占比 + 进度条、token 五项、账户余额。
  * 不出现本轮明细（在消息下方）、不出现脚注小字、不放刷新按钮。
+ *
+ * 位移与遮罩都跟着 [progress] 走（P-028）：拖拽期间由手指直接改，松手由调用方结算后补一段
+ * 动画，所以这里不自己管进出场 —— 进出场如果留在这里，那就会有两个动画源。
  */
 @Composable
 fun UsageDrawer(
-    visible: Boolean,
+    /** 展开进度：0 = 完全收起、1 = 完全展开。跟手，拖一半就是一半。 */
+    progress: Float,
     summary: UsageSummary,
     contextUsed: Int,
     contextWindow: Int,
@@ -160,40 +169,50 @@ fun UsageDrawer(
     /** 订阅额度（M8-6）：OpenCode Go 的三窗口；null = 不是订阅制或没取到 */
     quota: QuotaSnapshot? = null,
     onDismiss: () -> Unit,
+    onDragStart: () -> Unit,
+    onDragDelta: (dxPx: Float) -> Unit,
+    onDragEnd: (velocityDp: Float) -> Unit,
 ) {
+    // 完全收起时整块不参与布局：否则那块透明遮罩会挡住聊天页的点击
+    if (progress <= 0f) return
+
     val palette = TcTheme.palette
-    val widthDp = (LocalConfiguration.current.screenWidthDp * 0.82f).coerceAtMost(320f).dp
+    val width = usageDrawerWidth(LocalConfiguration.current.screenWidthDp)
+    val widthPx = with(LocalDensity.current) { width.toPx() }
+    val densityValue = LocalDensity.current.density
     var expanded by remember { mutableStateOf<String?>(null) }
 
+    // draggable 的状态是 remember 出来的：直接闭包会一直用首次那个回调
+    val dragDelta = rememberUpdatedState(onDragDelta)
+    val dragState = rememberDraggableState { delta -> dragDelta.value(delta) }
+
     Box(Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(TcMotion.Panel, easing = TcMotion.Standard)),
-            exit = fadeOut(tween(TcMotion.Base, easing = TcMotion.Decelerate)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.32f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismiss,
-                    ),
-            )
-        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.32f * progress))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
+        )
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
-            AnimatedVisibility(
-                visible = visible,
-                enter = slideInHorizontally(tween(TcMotion.Panel, easing = TcMotion.Standard)) { it },
-                exit = slideOutHorizontally(tween(TcMotion.Base, easing = TcMotion.Decelerate)) { it },
-            ) {
+            // 位移单独放这一层：offset 的 lambda 每帧读进度，不触发重组
+            Box(modifier = Modifier.offset { IntOffset(((1f - progress) * widthPx).roundToInt(), 0) }) {
                 Column(
                     modifier = Modifier
-                        .width(widthDp)
+                        .width(width)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp))
                         .background(palette.bg)
+                        // 面板上向右拖关闭（02 §12.10 一直写着「可右滑关闭」，之前没实现）
+                        .draggable(
+                            orientation = Orientation.Horizontal,
+                            state = dragState,
+                            onDragStarted = { onDragStart() },
+                            onDragStopped = { velocity -> onDragEnd(velocity / densityValue) },
+                        )
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 20.dp),
                 ) {

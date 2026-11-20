@@ -1,5 +1,7 @@
 package io.tinychat
 
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,23 +15,29 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.tinychat.data.db.PromptPresetEntity
 import io.tinychat.designsystem.LocalTcFontScale
+import io.tinychat.designsystem.TcMotion
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.feature.chat.ChatScreen
 import io.tinychat.feature.chat.UsageDrawer
 import io.tinychat.feature.chat.ChatViewModel
+import io.tinychat.feature.chat.usageDrawerWidth
 import io.tinychat.feature.sessions.SessionsDrawerContent
 import io.tinychat.feature.settings.AboutScreen
 import io.tinychat.feature.settings.DataManagementScreen
@@ -39,6 +47,9 @@ import io.tinychat.feature.settings.PromptSettingsScreen
 import io.tinychat.feature.settings.ProviderEditorScreen
 import io.tinychat.feature.settings.ProviderListScreen
 import io.tinychat.feature.settings.SettingsScreen
+import io.tinychat.ui.SidePanel
+import io.tinychat.ui.panelTargetOpen
+import io.tinychat.ui.swipeLeftToOpenPanel
 import kotlinx.coroutines.launch
 
 object Routes {
@@ -103,9 +114,61 @@ fun TinyChatApp() {
 
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    var usageOpen by remember { mutableStateOf(false) }
+    // 两侧面板同一时刻只能有一个（P-028）：所有权收在一个变量里，互斥是结构性的。
+    // 之前左抽屉归 M3、右抽屉只是一个布尔叠加层，两者互不知道，于是能同时开着。
+    var sidePanel by remember { mutableStateOf(SidePanel.None) }
     val scope = rememberCoroutineScope()
-    val closeDrawer = { scope.launch { drawerState.close() } }
+    val closeDrawer = { sidePanel = SidePanel.None }
+
+    // 左抽屉能被手势直接拉出来，M3 不会通知任何人：这边跟着它走。
+    // 反向由 gesturesEnabled 兜住 —— 右抽屉开着时左抽屉的手势根本不接收事件。
+    LaunchedEffect(drawerState.isOpen) {
+        if (drawerState.isOpen && sidePanel != SidePanel.Sessions) {
+            sidePanel = SidePanel.Sessions
+        } else if (!drawerState.isOpen && sidePanel == SidePanel.Sessions) {
+            sidePanel = SidePanel.None
+        }
+    }
+    LaunchedEffect(sidePanel) {
+        if (sidePanel == SidePanel.Sessions) drawerState.open() else drawerState.close()
+    }
+
+    // 右抽屉的展开进度（P-028）：拖拽时由手指写，松手与开关由这段动画补完。
+    // 只有一个动画源，所以拖到一半松手不会跳一下。
+    var panelProgress by remember { mutableFloatStateOf(0f) }
+    var panelDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(sidePanel, panelDragging) {
+        if (panelDragging) return@LaunchedEffect
+        val target = if (sidePanel == SidePanel.Usage) 1f else 0f
+        if (panelProgress == target) return@LaunchedEffect
+        animate(
+            initialValue = panelProgress,
+            targetValue = target,
+            animationSpec = tween(
+                durationMillis = if (target > 0f) TcMotion.Panel else TcMotion.Base,
+                easing = if (target > 0f) TcMotion.Standard else TcMotion.Decelerate,
+            ),
+        ) { value, _ -> panelProgress = value }
+    }
+    val panelWidthPx = with(LocalDensity.current) {
+        usageDrawerWidth(LocalConfiguration.current.screenWidthDp).toPx()
+    }
+    // 两个入口（整页左滑、面板上右滑）共用一套位移折算：dx 向左为负，进度就往大走
+    val onPanelDragStart = { panelDragging = true }
+    val onPanelDrag: (Float) -> Unit = { dx ->
+        panelProgress = (panelProgress - dx / panelWidthPx).coerceIn(0f, 1f)
+    }
+    val onPanelDragEnd: (Float, Boolean) -> Unit = { velocityDp, currentlyOpen ->
+        val open = panelTargetOpen(panelProgress, velocityDp, currentlyOpen)
+        panelDragging = false
+        sidePanel = if (open) SidePanel.Usage else SidePanel.None
+    }
+    // 右抽屉打开就刷一次用量，滑开的和点开的都走这里
+    LaunchedEffect(sidePanel) {
+        if (sidePanel == SidePanel.Usage) chatViewModel.refreshUsageNow()
+    }
+    // 左滑手势只挂在会话页：设置那几页也有整块内容，不该一滑就出用量面板
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
 
     // 系统提示词（决策 45）：开关 + 用户预设。进入页面时读库，改完后就地刷新
     var promptPresets by remember { mutableStateOf<List<PromptPresetEntity>>(emptyList()) }
@@ -135,7 +198,8 @@ fun TinyChatApp() {
     ModalNavigationDrawer(
         drawerState = drawerState,
         // 会话页向右滑就能拉出抽屉（不必每次点左上角）；抽屉打开后向左滑收起。
-        gesturesEnabled = true,
+        // 右抽屉开着时整块手势关掉：否则在它的遮罩上一拖就能把左抽屉也拉出来。
+        gesturesEnabled = sidePanel != SidePanel.Usage,
         drawerContent = {
             SessionsDrawerContent(
                 state = chatViewModel.sessionsUi,
@@ -171,7 +235,16 @@ fun TinyChatApp() {
             modifier = Modifier
                 .fillMaxSize()
                 .background(palette.bg)
-                .safeDrawingPadding(),
+                .safeDrawingPadding()
+                // 整页左滑拉开右抽屉（P-028）：面板开着时不接收。
+                // 注意别把「正在拖」也写进这个条件 —— 拖到一半把 pointerInput 摘掉会中断这次手势，
+                // 松手事件就永远等不到，进度会卡在半路。
+                .swipeLeftToOpenPanel(
+                    enabled = currentRoute == Routes.CHAT && sidePanel == SidePanel.None,
+                    onDragStart = onPanelDragStart,
+                    onDragDelta = onPanelDrag,
+                    onDragEnd = { velocityDp -> onPanelDragEnd(velocityDp, false) },
+                ),
         ) {
             CompositionLocalProvider(LocalTcFontScale provides fontScale) {
                 NavHost(navController = navController, startDestination = Routes.CHAT) {
@@ -187,7 +260,7 @@ fun TinyChatApp() {
                         onToggleSearch = chatViewModel::toggleSearch,
                         onSelectModel = chatViewModel::selectModel,
                         onOpenDrawer = {
-                            scope.launch { drawerState.open() }
+                            if (sidePanel == SidePanel.None) sidePanel = SidePanel.Sessions
                             chatViewModel.refreshBalance()
                         },
                         onNewChat = chatViewModel::newChat,
@@ -218,8 +291,7 @@ fun TinyChatApp() {
                         onReadAloud = chatViewModel::toggleSpeak,
                         onClearHint = chatViewModel::clearHint,
                         onOpenUsage = {
-                            usageOpen = true
-                            chatViewModel.refreshUsageNow()
+                            if (sidePanel == SidePanel.None) sidePanel = SidePanel.Usage
                         },
                     )
                 }
@@ -387,13 +459,16 @@ fun TinyChatApp() {
             }
 
             UsageDrawer(
-                visible = usageOpen,
+                progress = panelProgress,
                 summary = chatViewModel.state.usageSummary,
                 contextUsed = chatViewModel.state.contextUsed,
                 contextWindow = chatViewModel.state.contextWindow,
                 balanceText = chatViewModel.state.balanceText,
                 quota = chatViewModel.state.quota,
-                onDismiss = { usageOpen = false },
+                onDismiss = { sidePanel = SidePanel.None },
+                onDragStart = onPanelDragStart,
+                onDragDelta = onPanelDrag,
+                onDragEnd = { velocityDp -> onPanelDragEnd(velocityDp, true) },
             )
         }
     }
