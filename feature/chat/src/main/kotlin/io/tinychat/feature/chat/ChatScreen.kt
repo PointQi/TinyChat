@@ -13,7 +13,6 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -65,8 +64,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -100,11 +97,16 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalFocusManager
@@ -118,6 +120,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.round
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.FileProvider
@@ -126,6 +129,7 @@ import io.tinychat.audio.SpectrumAnalyser
 import io.tinychat.designsystem.BubbleShape
 import io.tinychat.designsystem.TcFavicon
 import io.tinychat.designsystem.TcIcons
+import io.tinychat.designsystem.TcMotion
 import io.tinychat.designsystem.TcPalette
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
@@ -146,9 +150,13 @@ import io.tinychat.model.MessageStatus
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.Provider
 import io.tinychat.model.ThinkingEffort
+import io.tinychat.ui.MenuAnchor
+import io.tinychat.ui.TcAnchorMenu
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcInlineHint
+import io.tinychat.ui.TcMenuItem
 import io.tinychat.ui.TcTopBar
+import io.tinychat.ui.tcPressPosition
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -178,7 +186,6 @@ fun ChatScreen(
     onOpenProviderSettings: () -> Unit,
     onEditMessage: (ChatMessage) -> Unit,
     onCancelEdit: () -> Unit,
-    conversationText: () -> String,
     onSwitchVersion: (Long, Int) -> Unit,
     onRegenerate: (ChatMessage) -> Unit,
     onContinue: (ChatMessage) -> Unit,
@@ -306,7 +313,6 @@ fun ChatScreen(
                 showUsage = state.showUsage,
                 modifier = Modifier.weight(1f),
                 onEditMessage = onEditMessage,
-                conversationText = conversationText,
                 onSwitchVersion = onSwitchVersion,
                 onRegenerate = onRegenerate,
                 onContinue = onContinue,
@@ -429,7 +435,6 @@ private fun MessageList(
     showUsage: Boolean,
     modifier: Modifier = Modifier,
     onEditMessage: (ChatMessage) -> Unit,
-    conversationText: () -> String,
     onSwitchVersion: (Long, Int) -> Unit,
     onRegenerate: (ChatMessage) -> Unit,
     onContinue: (ChatMessage) -> Unit,
@@ -491,7 +496,6 @@ private fun MessageList(
                     showUsage = showUsage,
                     onTap = { onEditMessage(message) },
                     onCopyMessage = { clipboard.setText(AnnotatedString(message.text)) },
-                    onCopyConversation = { clipboard.setText(AnnotatedString(conversationText())) },
                     onSwitchVersion = { delta -> onSwitchVersion(message.id, delta) },
                     onRegenerate = if (!message.isUser && isLatest) ({ onRegenerate(message) }) else null,
                     onContinue = if (!message.isUser && isLatest && message.canContinue) ({ onContinue(message) }) else null,
@@ -533,8 +537,11 @@ private fun MessageList(
 
 /**
  * 一条消息。
- * - 用户消息：**短按进入编辑重发**，**长按复制这条消息**；
- * - AI 消息：长按弹出菜单（复制整个会话 / 选择文本）。
+ * - 用户消息：**短按进入编辑重发**，**长按弹菜单**（复制 / 编辑消息）；
+ * - AI 消息：长按弹菜单（复制这条回复 / 选择文本）。
+ *
+ * 菜单贴在触点正上方（`06` §二）：手指按哪儿，菜单就出现在那儿的正上方，
+ * 不会盖住手指，也不会跑到画面左上角去。
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -543,7 +550,6 @@ private fun MessageRow(
     showUsage: Boolean,
     onTap: () -> Unit,
     onCopyMessage: () -> Unit,
-    onCopyConversation: () -> Unit,
     onSwitchVersion: (Int) -> Unit,
     onRegenerate: (() -> Unit)?,
     onContinue: (() -> Unit)?,
@@ -556,6 +562,22 @@ private fun MessageRow(
     onReadAloud: () -> Unit,
 ) {
     val palette = TcTheme.palette
+    val haptics = LocalHapticFeedback.current
+
+    // 长按菜单（决策 44）：记下按下的位置与所在节点的坐标，菜单出现在手指正上方。
+    // 用户消息与 AI 消息各占一个分支，同一时刻只有一个节点在写这两个值。
+    var menuOpen by remember { mutableStateOf(false) }
+    var menuAnchor by remember { mutableStateOf<MenuAnchor?>(null) }
+    var pressPos by remember { mutableStateOf(Offset.Zero) }
+    var pressCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+    fun openMenuAtPress() {
+        val coords = pressCoords
+        if (coords == null || !coords.isAttached) return
+        menuAnchor = MenuAnchor.Pointer((coords.positionInWindow() + pressPos).round())
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        menuOpen = true
+    }
 
     if (message.isUser) {
         Column(
@@ -596,7 +618,9 @@ private fun MessageRow(
                         modifier = Modifier
                             .widthIn(max = 300.dp)
                             .background(palette.bubble, BubbleShape)
-                            .combinedClickable(onClick = onTap, onLongClick = onCopyMessage)
+                            .onGloballyPositioned { pressCoords = it }
+                            .tcPressPosition { pressPos = it }
+                            .combinedClickable(onClick = onTap, onLongClick = { openMenuAtPress() })
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                     )
                 }
@@ -625,10 +649,27 @@ private fun MessageRow(
                 VersionSwitcher(message.versionIndex, message.versionCount, onSwitchVersion)
             }
         }
+
+        menuAnchor?.let { anchor ->
+            TcAnchorMenu(
+                visible = menuOpen,
+                anchor = anchor,
+                onDismiss = { menuOpen = false },
+                items = listOf(
+                    TcMenuItem("复制") {
+                        menuOpen = false
+                        onCopyMessage()
+                    },
+                    TcMenuItem("编辑消息") {
+                        menuOpen = false
+                        onTap()
+                    },
+                ),
+            )
+        }
         return
     }
 
-    var menuOpen by remember { mutableStateOf(false) }
     var selectOpen by remember { mutableStateOf(false) }
     var sourcesOpen by remember { mutableStateOf(false) }
     // 分享（M8-2）：抽屉 →（生成长图时）进度 → 预览 → 系统分享面板
@@ -648,35 +689,41 @@ private fun MessageRow(
     val scope = rememberCoroutineScope()
 
     Box {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .combinedClickable(onClick = {}, onLongClick = { menuOpen = true }),
-        ) {
-            if (message.hasThinking) {
-                ThinkingBlock(
-                    timeline = message.timeline,
-                    seconds = message.thinkingSeconds,
-                    inProgress = message.isThinking,
-                    stopped = message.status == MessageStatus.INCOMPLETE && message.text.isBlank(),
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-
-            if (message.text.isNotBlank()) {
-                // 正文走 Markdown（M2-1/2/3）：流式期间按渲染耗时节流出帧，禁止整篇重解析
-                TcMarkdown(
-                    content = message.text,
-                    streaming = message.status == MessageStatus.WIP,
-                    citations = message.anchors.map { CitationAnchor(it.anchor, it.index) },
-                    onCitationClick = { sourcesOpen = true },
-                )
-                if (message.sources.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    SourceCapsule(
-                        sources = message.sources,
-                        onClick = { sourcesOpen = true },
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // 长按只挂在这段内容区（思考块、正文、来源胶囊）。操作栏不在里面——
+            // 以前整条消息都能触发，长按「复制」图标也会弹菜单。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { pressCoords = it }
+                    .tcPressPosition { pressPos = it }
+                    .combinedClickable(onClick = {}, onLongClick = { openMenuAtPress() }),
+            ) {
+                if (message.hasThinking) {
+                    ThinkingBlock(
+                        timeline = message.timeline,
+                        seconds = message.thinkingSeconds,
+                        inProgress = message.isThinking,
+                        stopped = message.status == MessageStatus.INCOMPLETE && message.text.isBlank(),
                     )
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                if (message.text.isNotBlank()) {
+                    // 正文走 Markdown（M2-1/2/3）：流式期间按渲染耗时节流出帧，禁止整篇重解析
+                    TcMarkdown(
+                        content = message.text,
+                        streaming = message.status == MessageStatus.WIP,
+                        citations = message.anchors.map { CitationAnchor(it.anchor, it.index) },
+                        onCitationClick = { sourcesOpen = true },
+                    )
+                    if (message.sources.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        SourceCapsule(
+                            sources = message.sources,
+                            onClick = { sourcesOpen = true },
+                        )
+                    }
                 }
             }
 
@@ -778,20 +825,21 @@ private fun MessageRow(
             }
         }
 
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(
-                text = { Text("复制", style = TcTypography.bodyMedium, color = palette.labelPrimary) },
-                onClick = {
-                    menuOpen = false
-                    onCopyConversation()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("选择文本", style = TcTypography.bodyMedium, color = palette.labelPrimary) },
-                onClick = {
-                    menuOpen = false
-                    selectOpen = true
-                },
+        menuAnchor?.let { anchor ->
+            TcAnchorMenu(
+                visible = menuOpen,
+                anchor = anchor,
+                onDismiss = { menuOpen = false },
+                items = listOf(
+                    TcMenuItem("复制") {
+                        menuOpen = false
+                        onCopyMessage()
+                    },
+                    TcMenuItem("选择文本") {
+                        menuOpen = false
+                        selectOpen = true
+                    },
+                ),
             )
         }
     }
@@ -1195,9 +1243,9 @@ private fun ReadingBars(
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
                     animation = tween(
-                        durationMillis = 520,
-                        delayMillis = index * 120,
-                        easing = FastOutSlowInEasing,
+                        durationMillis = TcMotion.Ambient,
+                        delayMillis = index * TcMotion.Quick,
+                        easing = TcMotion.Standard,
                     ),
                     repeatMode = RepeatMode.Reverse,
                 ),
@@ -1331,7 +1379,7 @@ private fun ThinkingBlock(
             // 文案切换（正在思考 → 已思考（用时 N 秒））用淡入淡出，别硬跳
             Crossfade(
                 targetState = label,
-                animationSpec = tween(durationMillis = 180),
+                animationSpec = tween(TcMotion.Base, easing = TcMotion.Standard),
                 label = "thinking-label",
             ) { text ->
                 Text(text = text, style = TcTypography.bodyMedium, color = palette.labelSecondary)
@@ -1340,7 +1388,7 @@ private fun ThinkingBlock(
             // 一个图标转 90°：收起是 ›，展开是 ˅（官方就是这个手感，别用两张图硬切）
             val chevronRotation by animateFloatAsState(
                 targetValue = if (expanded) 90f else 0f,
-                animationSpec = tween(durationMillis = 180),
+                animationSpec = tween(TcMotion.Base, easing = TcMotion.Standard),
                 label = "thinking-chevron",
             )
             Icon(
@@ -1356,13 +1404,13 @@ private fun ThinkingBlock(
         AnimatedVisibility(
             visible = expanded,
             enter = expandVertically(
-                animationSpec = tween(durationMillis = 200),
+                animationSpec = tween(TcMotion.Panel, easing = TcMotion.Standard),
                 expandFrom = Alignment.Top,
-            ) + fadeIn(animationSpec = tween(durationMillis = 200)),
+            ) + fadeIn(animationSpec = tween(TcMotion.Fade, easing = TcMotion.Standard)),
             exit = shrinkVertically(
-                animationSpec = tween(durationMillis = 180),
+                animationSpec = tween(TcMotion.Base, easing = TcMotion.Decelerate),
                 shrinkTowards = Alignment.Top,
-            ) + fadeOut(animationSpec = tween(durationMillis = 120)),
+            ) + fadeOut(animationSpec = tween(TcMotion.Quick, easing = TcMotion.Decelerate)),
         ) {
             Row(
                 modifier = Modifier

@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.tinychat.designsystem.TcIcons
+import io.tinychat.designsystem.TcMotion
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.model.QuotaSnapshot
 import io.tinychat.model.QuotaWindow
@@ -167,8 +168,8 @@ fun UsageDrawer(
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(
             visible = visible,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
+            enter = fadeIn(tween(TcMotion.Panel, easing = TcMotion.Standard)),
+            exit = fadeOut(tween(TcMotion.Base, easing = TcMotion.Decelerate)),
         ) {
             Box(
                 modifier = Modifier
@@ -184,8 +185,8 @@ fun UsageDrawer(
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
             AnimatedVisibility(
                 visible = visible,
-                enter = slideInHorizontally(tween(200)) { it },
-                exit = slideOutHorizontally(tween(200)) { it },
+                enter = slideInHorizontally(tween(TcMotion.Panel, easing = TcMotion.Standard)) { it },
+                exit = slideOutHorizontally(tween(TcMotion.Base, easing = TcMotion.Decelerate)) { it },
             ) {
                 Column(
                     modifier = Modifier

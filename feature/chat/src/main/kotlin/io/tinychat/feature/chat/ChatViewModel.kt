@@ -841,15 +841,6 @@ class ChatViewModel(
         }
     }
 
-    /** 复制整个会话（纯文本，用户/AI 交替） */
-    fun conversationText(): String = buildString {
-        state.messages.forEach { message ->
-            if (message.isUser) append("我：")
-            append(message.text.trim())
-            append("\n\n")
-        }
-    }.trim()
-
     fun stop() {
         job?.cancel()
         state = state.copy(isStreaming = false)

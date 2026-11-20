@@ -27,8 +27,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -48,11 +46,19 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
@@ -61,7 +67,11 @@ import io.tinychat.model.SessionRow
 import io.tinychat.model.SessionSearchHit
 import io.tinychat.model.SessionsUiState
 import io.tinychat.model.groupSessions
+import io.tinychat.ui.MenuAnchor
+import io.tinychat.ui.TcAnchorMenu
 import io.tinychat.ui.TcIconButton
+import io.tinychat.ui.TcMenuItem
+import io.tinychat.ui.TcListRow
 import io.tinychat.ui.TcListRow
 import io.tinychat.ui.TcSectionLabel
 import kotlinx.coroutines.launch
@@ -424,6 +434,21 @@ private fun SessionListBody(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    // 长按菜单挂在整行上方（决策 44）。状态提到列表这一层，是因为「列表一动就关菜单」
+    // 只能在知道滚动状态的地方做；每行各留一份状态的话，滚走的那一行没人负责关。
+    var menuRow by remember { mutableStateOf<SessionRow?>(null) }
+    var menuBounds by remember { mutableStateOf<IntRect?>(null) }
+
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) menuRow = null
+    }
+    LaunchedEffect(state.selectionMode) {
+        if (state.selectionMode) menuRow = null
+    }
+    LaunchedEffect(isOpen) {
+        if (!isOpen) menuRow = null
+    }
+
     val items = remember(state.rows) {
         buildList {
             groupSessions(state.rows, System.currentTimeMillis()).forEach { section ->
@@ -468,6 +493,7 @@ private fun SessionListBody(
                     selected = item.session.id == currentSessionId,
                     selectionMode = state.selectionMode,
                     checked = item.session.id in state.selected,
+                    highlighted = menuRow?.id == item.session.id,
                     onClick = {
                         if (state.selectionMode) {
                             onToggleSelected(item.session.id)
@@ -475,16 +501,41 @@ private fun SessionListBody(
                             onPickSession(item.session.id)
                         }
                     },
-                                        onRename = { onRename(item.session) },
-                    onTogglePin = {
-                        onTogglePin(item.session)
-                        // 置顶后滚到顶部，否则被列表位置锚定顶到屏幕外，看着像没生效
-                        scope.launch { listState.animateScrollToItem(0) }
+                    onMenuRequest = { bounds ->
+                        menuBounds = bounds
+                        menuRow = item.session
                     },
-                    onDelete = { onDelete(item.session) },
                 )
             }
         }
+    }
+
+    // 已移除行尾的「⋯」：官方 App 没有这个按钮，长按整行才是一级入口。
+    // 位置对齐整行中心、从行上方弹出，手指按在行中间时菜单就在正上方。
+    val target = menuRow
+    val bounds = menuBounds
+    if (target != null && bounds != null) {
+        TcAnchorMenu(
+            visible = true,
+            anchor = MenuAnchor.Row(bounds),
+            onDismiss = { menuRow = null },
+            items = listOf(
+                TcMenuItem("重命名") {
+                    menuRow = null
+                    onRename(target)
+                },
+                TcMenuItem(if (target.pinned) "取消置顶" else "置顶") {
+                    menuRow = null
+                    onTogglePin(target)
+                    // 置顶后滚到顶部，否则被列表位置锚定顶到屏幕外，看着像没生效
+                    scope.launch { listState.animateScrollToItem(0) }
+                },
+                TcMenuItem("删除", danger = true) {
+                    menuRow = null
+                    onDelete(target)
+                },
+            ),
+        )
     }
 }
 
@@ -494,22 +545,53 @@ private fun SessionItem(
     selected: Boolean,
     selectionMode: Boolean,
     checked: Boolean,
+    /** 这一行的菜单正开着：底色标出来，用户才知道菜单属于哪一条 */
+    highlighted: Boolean,
     onClick: () -> Unit,
-
-    onRename: () -> Unit,
-    onTogglePin: () -> Unit,
-    onDelete: () -> Unit,
+    onMenuRequest: (IntRect) -> Unit,
 ) {
     val palette = TcTheme.palette
-    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    var bounds by remember { mutableStateOf(IntRect.Zero) }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(if (selected && !selectionMode) palette.selector else Color.Transparent)
-            .combinedClickable(onClick = onClick, onLongClick = { if (!selectionMode) menuOpen = true })
+            .background(
+                if ((selected && !selectionMode) || highlighted) palette.selector else Color.Transparent,
+            )
+            .onGloballyPositioned {
+                val rect = it.boundsInWindow()
+                bounds = IntRect(
+                    left = rect.left.toInt(),
+                    top = rect.top.toInt(),
+                    right = rect.right.toInt(),
+                    bottom = rect.bottom.toInt(),
+                )
+            }
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    if (!selectionMode) {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onMenuRequest(bounds)
+                    }
+                },
+            )
+            .semantics {
+                // 行尾的「⋯」删掉之后，读屏用户没有别的入口，这里补一个等价动作
+                if (!selectionMode) {
+                    customActions = listOf(
+                        CustomAccessibilityAction("会话操作") {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onMenuRequest(bounds)
+                            true
+                        },
+                    )
+                }
+            }
             .heightIn(min = 44.dp)
             .padding(start = if (selectionMode) 12.dp else 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -526,44 +608,6 @@ private fun SessionItem(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (!selectionMode) {
-            Box {
-                TcIconButton(
-                    icon = TcIcons.Ellipsis,
-                    contentDescription = "会话操作",
-                    onClick = { menuOpen = true },
-                )
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("重命名", style = TcTypography.bodyMedium, color = palette.labelPrimary) },
-                        onClick = {
-                            menuOpen = false
-                            onRename()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = if (row.pinned) "取消置顶" else "置顶",
-                                style = TcTypography.bodyMedium,
-                                color = palette.labelPrimary,
-                            )
-                        },
-                        onClick = {
-                            menuOpen = false
-                            onTogglePin()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("删除", style = TcTypography.bodyMedium, color = palette.danger) },
-                        onClick = {
-                            menuOpen = false
-                            onDelete()
-                        },
-                    )
-                }
-            }
-        }
     }
 }
 

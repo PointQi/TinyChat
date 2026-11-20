@@ -189,7 +189,6 @@ fun TinyChatApp() {
                         onOpenProviderSettings = { navController.navigate(Routes.PROVIDER) },
                         onEditMessage = chatViewModel::startEdit,
                         onCancelEdit = chatViewModel::cancelEdit,
-                        conversationText = chatViewModel::conversationText,
                         onSwitchVersion = chatViewModel::switchVersion,
                         onRegenerate = chatViewModel::regenerate,
                         onContinue = chatViewModel::continueGeneration,
