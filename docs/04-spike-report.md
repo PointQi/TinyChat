@@ -155,8 +155,10 @@ ZIP 条目 3422 / 未压缩 153.3MB / export_format_version=3 / 第一条=manife
 3. **版本倒逼**：它要求 Compose Multiplatform **1.9.3** + `kotlin-stdlib 2.3.0` + CMP material3 1.9.0，
    引入即强迫整个 App 对齐一套与我们无关的版本，收益远小于成本。
 
-> 附带结论：同一作者仍有可用的库——`io.github.huarangmeng:codehighlight` 已到 **1.0.7**（2026-04），
-> 若 M2-4 需要代码高亮，这是候选之一（**待验证**，本次未接）。`diagram` 仍因仓库无 LICENSE 不可依赖。
+> 附带结论：同一作者仍有可用的库——`io.github.huarangmeng:codehighlight` 已到 **1.0.7**（2026-04）。
+> M2-4 开工时核实过：**不采用**（2026-11-20）。理由不是「没验证」，而是验完发现不够用——它底下的
+> `dev.snipme:highlights` 只有十七种语言、没有 JSON 与 SQL，且字符串里的数字与标点会被错色；
+> 代码高亮最终自研，见 03 决策 42。`diagram` 仍因仓库无 LICENSE 不可依赖。
 
 ### 4.2 Mermaid 无可用 Kotlin 方案
 
@@ -220,7 +222,7 @@ ZIP 条目 3422 / 未压缩 153.3MB / export_format_version=3 / 第一条=manife
 | 在线 SSE 真打 | 待 Key | 用户给 Key 后 5 分钟 |
 | 真机 fps / jank 验收 | 模拟器软件渲染不可作准 | M2-2 之后用真机 |
 | KaTeX / mermaid 离线资源与高度回传 | 机制已定，实现属 M2-5/M2-6 | M2 |
-| `codehighlight` 1.0.7 是否可用 | 未验证 | M2-4 开工时试一次 |
+| `codehighlight` 1.0.7 是否可用 | **已核实：可用但不采用**（引擎十七种语言、无 JSON 与 SQL、字符串内错色） | M2-4 已定，见 03 决策 42 |
 
 ---
 
