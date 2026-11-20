@@ -22,8 +22,26 @@ const val PANEL_SETTLE_FRACTION = 0.35f
 /** 甩动的判定速度，dp/s（同上，与底部抽屉一致）。 */
 const val PANEL_FLING_DP = 800f
 
+/**
+ * 结算速度的上限，单位是「面板宽度/秒」。松手速度来自 `VelocityTracker`，偶尔会有一个尖峰，
+ * 限一下免得面板被一记假甩甩飞。
+ */
+const val PANEL_MAX_SETTLE_VELOCITY = 8f
+
 /** 左滑必须明显偏横才接管，否则竖向翻聊天会被当成开面板。 */
 private const val PANEL_SWIPE_RATIO = 1.5f
+
+/**
+ * 松手速度（dp/s，向右为正）换算成「进度速度」（1/s，向开为正），并限幅。
+ *
+ * 进度 1 正好对应一整块面板宽度，所以除以宽度就够；符号要取反：向左甩是打开。
+ * 弹簧拿它当初始速度，接缝处才不会从静止重新起步。
+ */
+fun panelSettleVelocity(velocityDp: Float, panelWidthDp: Float): Float {
+    if (panelWidthDp <= 0f) return 0f
+    return (-velocityDp / panelWidthDp)
+        .coerceIn(-PANEL_MAX_SETTLE_VELOCITY, PANEL_MAX_SETTLE_VELOCITY)
+}
 
 /**
  * 松手时该开还是该关（纯函数，可单测）。

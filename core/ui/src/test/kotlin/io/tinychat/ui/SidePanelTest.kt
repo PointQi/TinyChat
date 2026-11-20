@@ -57,4 +57,26 @@ class SidePanelTest {
         assertEquals("收起且进度 0、速度 0 时不该开", false, target(0f, 0f, false))
         assertEquals("展开且进度 1、速度 0 时应保持", true, target(1f, 0f, true))
     }
+
+    @Test
+    fun `向左甩换算成正的进度速度`() {
+        // 300dp 的面板、300dp/s 向左甩 = 每秒走完一整个面板
+        assertEquals(1f, panelSettleVelocity(velocityDp = -300f, panelWidthDp = 300f), 0.0001f)
+    }
+
+    @Test
+    fun `向右甩是负的进度速度`() {
+        assertEquals(-0.5f, panelSettleVelocity(velocityDp = 150f, panelWidthDp = 300f), 0.0001f)
+    }
+
+    @Test
+    fun `疯狂甩动会被限幅`() {
+        assertEquals(PANEL_MAX_SETTLE_VELOCITY, panelSettleVelocity(-9000f, 300f), 0.0001f)
+        assertEquals(-PANEL_MAX_SETTLE_VELOCITY, panelSettleVelocity(9000f, 300f), 0.0001f)
+    }
+
+    @Test
+    fun `宽度为零时不做除法`() {
+        assertEquals(0f, panelSettleVelocity(-900f, 0f), 0f)
+    }
 }

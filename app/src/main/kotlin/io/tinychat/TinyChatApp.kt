@@ -1,7 +1,7 @@
 package io.tinychat
 
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,7 +32,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.tinychat.data.db.PromptPresetEntity
 import io.tinychat.designsystem.LocalTcFontScale
-import io.tinychat.designsystem.TcMotion
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.feature.chat.ChatScreen
 import io.tinychat.feature.chat.UsageDrawer
@@ -48,6 +47,7 @@ import io.tinychat.feature.settings.ProviderEditorScreen
 import io.tinychat.feature.settings.ProviderListScreen
 import io.tinychat.feature.settings.SettingsScreen
 import io.tinychat.ui.SidePanel
+import io.tinychat.ui.panelSettleVelocity
 import io.tinychat.ui.panelTargetOpen
 import io.tinychat.ui.swipeLeftToOpenPanel
 import kotlinx.coroutines.launch
@@ -134,32 +134,47 @@ fun TinyChatApp() {
     }
 
     // 右抽屉的展开进度（P-028）：拖拽时由手指写，松手与开关由这段动画补完。
-    // 只有一个动画源，所以拖到一半松手不会跳一下。
+    // 结算用临界阻尼弹簧，并把松手速度接上（见 onPanelDragEnd）：接缝处位置与速度都连续，
+    // 所以不会「顿一下再加速」；临界阻尼下停下所需的时间由 ω 决定，跟甩多快几乎无关。
     var panelProgress by remember { mutableFloatStateOf(0f) }
     var panelDragging by remember { mutableStateOf(false) }
+    var panelVelocity by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(sidePanel, panelDragging) {
         if (panelDragging) return@LaunchedEffect
         val target = if (sidePanel == SidePanel.Usage) 1f else 0f
         if (panelProgress == target) return@LaunchedEffect
+        val velocity = panelVelocity
+        panelVelocity = 0f
         animate(
             initialValue = panelProgress,
             targetValue = target,
-            animationSpec = tween(
-                durationMillis = if (target > 0f) TcMotion.Panel else TcMotion.Base,
-                easing = if (target > 0f) TcMotion.Standard else TcMotion.Decelerate,
+            initialVelocity = velocity,
+            // 临界阻尼（不弹、不回弹一下）；ω = √500 ≈ 22.4，走到 95% 约 0.21s，
+            // 而停下所需的时间由 ω 决定 —— 甩得快只是开头更陡，总时长几乎不变。
+            // 可见阈值压到 0.4%（约 1dp），落点对齐全靠下面那行，免得留一条遮罩缝。
+            animationSpec = spring(
+                dampingRatio = 1f,
+                stiffness = 500f,
+                visibilityThreshold = 0.004f,
             ),
-        ) { value, _ -> panelProgress = value }
+        ) { value, _ -> panelProgress = value.coerceIn(0f, 1f) }
+        // 弹簧按可见阈值提前结束，落点可能停在 0.008 这种值上：
+        // 那样遮罩会留着一条永不消失的点击层，所以最后一步必须对齐
+        panelProgress = target
     }
-    val panelWidthPx = with(LocalDensity.current) {
-        usageDrawerWidth(LocalConfiguration.current.screenWidthDp).toPx()
-    }
+    val panelWidth = usageDrawerWidth(LocalConfiguration.current.screenWidthDp)
+    val panelWidthPx = with(LocalDensity.current) { panelWidth.toPx() }
     // 两个入口（整页左滑、面板上右滑）共用一套位移折算：dx 向左为负，进度就往大走
-    val onPanelDragStart = { panelDragging = true }
+    val onPanelDragStart = {
+        panelDragging = true
+        panelVelocity = 0f
+    }
     val onPanelDrag: (Float) -> Unit = { dx ->
         panelProgress = (panelProgress - dx / panelWidthPx).coerceIn(0f, 1f)
     }
     val onPanelDragEnd: (Float, Boolean) -> Unit = { velocityDp, currentlyOpen ->
         val open = panelTargetOpen(panelProgress, velocityDp, currentlyOpen)
+        panelVelocity = panelSettleVelocity(velocityDp, panelWidth.value)
         panelDragging = false
         sidePanel = if (open) SidePanel.Usage else SidePanel.None
     }
