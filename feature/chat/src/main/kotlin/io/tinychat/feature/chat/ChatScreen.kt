@@ -1757,19 +1757,27 @@ private fun InputCard(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ModelEffortPill(
-                providers = state.providers,
-                keyedProviders = state.keyedProviders,
-                providerId = state.providerId,
-                modelId = state.modelId,
-                effort = state.effort,
-                thinkingEnabled = state.thinkingEnabled,
-                onToggleThinking = onToggleThinking,
-                onSelect = onSelectModel,
-            )
+            // 左组（模型 pill + 搜索）占剩余宽度；pill 按需取宽，名字太长就省略，
+            // 右侧三个圆钮的空间先保住——以前 pill 没有上限，长模型名会把发送键挤出屏幕
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ModelEffortPill(
+                    providers = state.providers,
+                    keyedProviders = state.keyedProviders,
+                    providerId = state.providerId,
+                    modelId = state.modelId,
+                    effort = state.effort,
+                    thinkingEnabled = state.thinkingEnabled,
+                    onToggleThinking = onToggleThinking,
+                    onSelect = onSelectModel,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(8.dp))
+                SearchPill(enabled = state.searchEnabled, onClick = onToggleSearch)
+            }
             Spacer(Modifier.width(8.dp))
-            SearchPill(enabled = state.searchEnabled, onClick = onToggleSearch)
-            Spacer(Modifier.weight(1f))
             // 上下文圆环（M7-2）：回形针左侧，点开右侧用量抽屉
             ContextRing(percent = contextPercent, onClick = onOpenUsage)
             Spacer(Modifier.width(2.dp))
@@ -1846,6 +1854,7 @@ private fun ModelEffortPill(
     thinkingEnabled: Boolean,
     onToggleThinking: () -> Unit,
     onSelect: (String, String, ThinkingEffort) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val palette = TcTheme.palette
     var sheetOpen by remember { mutableStateOf(false) }
@@ -1857,7 +1866,7 @@ private fun ModelEffortPill(
     }
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .height(32.dp)
             .clip(RoundedCornerShape(100.dp))
             .background(palette.brand.copy(alpha = 0.10f))
