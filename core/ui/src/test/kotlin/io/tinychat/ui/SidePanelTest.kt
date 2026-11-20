@@ -6,10 +6,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 右抽屉松手时的开合结算（P-028）。
+ * 侧栏松手时的开合结算（P-028 ~ P-031）。
  *
- * 阈值口径与 02 §16 的底部抽屉一致：走过 35%（展开状态下是往回走 35%）或者甩得够快。
- * 这些用例就是把真机上「拖到一半松手」的几种落点钉死。
+ * 两个方向的判据不对称：**打开很松**（走过 2%，或者 250dp/s 的轻拨就整个拉出），
+ * **关闭要明确**（走过 35%，或者 800dp/s）—— 前者就是官方那种「轻轻一划抽屉就出来」，
+ * 后者保证手一抖不会把已打开的抽屉收掉。速度只决定开合，不决定动画快慢。
+ * 速度方向统一成「正 = 打开」，左右两个侧栏由调用方换符号。
  */
 class SidePanelTest {
 
@@ -17,23 +19,30 @@ class SidePanelTest {
         panelTargetOpen(progress, velocity, currentlyOpen = open)
 
     @Test
-    fun `收起状态只拖了一点就松手，回弹`() {
-        assertFalse(target(progress = 0.2f, velocity = 0f, open = false))
+    fun `收起状态只要有一点位移就开`() {
+        assertTrue(target(progress = 0.02f, velocity = 0f, open = false))
+        assertTrue(target(progress = 0.3f, velocity = 0f, open = false))
     }
 
     @Test
-    fun `收起状态走过 35 就开`() {
-        assertTrue(target(progress = 0.35f, velocity = 0f, open = false))
+    fun `收起状态几乎没动才回弹`() {
+        assertFalse(target(progress = 0.005f, velocity = 0f, open = false))
     }
 
     @Test
-    fun `收起状态没走够但向左甩，开`() {
-        assertTrue(target(progress = 0.08f, velocity = -900f, open = false))
+    fun `收起状态轻轻一拨也开`() {
+        assertTrue(target(progress = 0.01f, velocity = 300f, open = false))
     }
 
     @Test
-    fun `展开状态往回拖了 40 仍算开着`() {
+    fun `收起状态反向甩回就回弹`() {
+        assertFalse(target(progress = 0.1f, velocity = -900f, open = false))
+    }
+
+    @Test
+    fun `展开状态往回拖一点仍然开着`() {
         assertTrue(target(progress = 0.7f, velocity = 0f, open = true))
+        assertTrue(target(progress = 0.9f, velocity = 0f, open = true))
     }
 
     @Test
@@ -43,40 +52,13 @@ class SidePanelTest {
     }
 
     @Test
-    fun `展开状态向右甩，关`() {
-        assertFalse(target(progress = 0.95f, velocity = 900f, open = true))
-    }
-
-    @Test
-    fun `速度优先于位置：位置够但反向甩回`() {
-        assertFalse(target(progress = 0.9f, velocity = 1200f, open = false))
+    fun `展开状态朝关闭方向甩，关`() {
+        assertFalse(target(progress = 0.95f, velocity = -900f, open = true))
     }
 
     @Test
     fun `方向为零的极端值不会算错`() {
         assertEquals("收起且进度 0、速度 0 时不该开", false, target(0f, 0f, false))
         assertEquals("展开且进度 1、速度 0 时应保持", true, target(1f, 0f, true))
-    }
-
-    @Test
-    fun `向左甩换算成正的进度速度`() {
-        // 300dp 的面板、300dp/s 向左甩 = 每秒走完一整个面板
-        assertEquals(1f, panelSettleVelocity(velocityDp = -300f, panelWidthDp = 300f), 0.0001f)
-    }
-
-    @Test
-    fun `向右甩是负的进度速度`() {
-        assertEquals(-0.5f, panelSettleVelocity(velocityDp = 150f, panelWidthDp = 300f), 0.0001f)
-    }
-
-    @Test
-    fun `疯狂甩动会被限幅`() {
-        assertEquals(PANEL_MAX_SETTLE_VELOCITY, panelSettleVelocity(-9000f, 300f), 0.0001f)
-        assertEquals(-PANEL_MAX_SETTLE_VELOCITY, panelSettleVelocity(9000f, 300f), 0.0001f)
-    }
-
-    @Test
-    fun `宽度为零时不做除法`() {
-        assertEquals(0f, panelSettleVelocity(-900f, 0f), 0f)
     }
 }

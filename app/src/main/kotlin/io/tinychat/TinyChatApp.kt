@@ -1,14 +1,11 @@
 package io.tinychat
 
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -32,12 +29,14 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.tinychat.data.db.PromptPresetEntity
 import io.tinychat.designsystem.LocalTcFontScale
+import io.tinychat.designsystem.TcMotion
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.feature.chat.ChatScreen
 import io.tinychat.feature.chat.UsageDrawer
 import io.tinychat.feature.chat.ChatViewModel
 import io.tinychat.feature.chat.usageDrawerWidth
 import io.tinychat.feature.sessions.SessionsDrawerContent
+import io.tinychat.feature.sessions.SessionsDrawerWidth
 import io.tinychat.feature.settings.AboutScreen
 import io.tinychat.feature.settings.DataManagementScreen
 import io.tinychat.feature.settings.LicenseScreen
@@ -47,9 +46,9 @@ import io.tinychat.feature.settings.ProviderEditorScreen
 import io.tinychat.feature.settings.ProviderListScreen
 import io.tinychat.feature.settings.SettingsScreen
 import io.tinychat.ui.SidePanel
-import io.tinychat.ui.panelSettleVelocity
+import io.tinychat.ui.TcSideSheet
 import io.tinychat.ui.panelTargetOpen
-import io.tinychat.ui.swipeLeftToOpenPanel
+import io.tinychat.ui.swipeToOpenPanel
 import kotlinx.coroutines.launch
 
 object Routes {
@@ -113,76 +112,79 @@ fun TinyChatApp() {
     )
 
     val navController = rememberNavController()
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
     // 两侧面板同一时刻只能有一个（P-028）：所有权收在一个变量里，互斥是结构性的。
-    // 之前左抽屉归 M3、右抽屉只是一个布尔叠加层，两者互不知道，于是能同时开着。
     var sidePanel by remember { mutableStateOf(SidePanel.None) }
     val scope = rememberCoroutineScope()
     val closeDrawer = { sidePanel = SidePanel.None }
 
-    // 左抽屉能被手势直接拉出来，M3 不会通知任何人：这边跟着它走。
-    // 反向由 gesturesEnabled 兜住 —— 右抽屉开着时左抽屉的手势根本不接收事件。
-    LaunchedEffect(drawerState.isOpen) {
-        if (drawerState.isOpen && sidePanel != SidePanel.Sessions) {
-            sidePanel = SidePanel.Sessions
-        } else if (!drawerState.isOpen && sidePanel == SidePanel.Sessions) {
-            sidePanel = SidePanel.None
-        }
+    // 两个侧栏都是自绘的（P-030 起左抽屉也自己画，不再用 M3 的 DrawerState）：
+    // 拖拽期间进度由手指写，松手后由固定时长的标准缓动补完 —— 速度只用来判断开合，
+    // 不参与动画，所以不存在「冲过终点再弹回来」那一下。
+    var sessionsProgress by remember { mutableFloatStateOf(0f) }
+    var usageProgress by remember { mutableFloatStateOf(0f) }
+    var draggingPanel by remember { mutableStateOf(SidePanel.None) }
+
+    // 松手后走完剩下的路：固定时长 + 标准缓动（两头慢、中间快），与松手速度无关
+    fun settleSpec(open: Boolean) = tween<Float>(
+        durationMillis = if (open) TcMotion.Panel else TcMotion.Base,
+        easing = TcMotion.Standard,
+    )
+
+    LaunchedEffect(sidePanel, draggingPanel) {
+        if (draggingPanel == SidePanel.Sessions) return@LaunchedEffect
+        val target = if (sidePanel == SidePanel.Sessions) 1f else 0f
+        if (sessionsProgress == target) return@LaunchedEffect
+        animate(
+            initialValue = sessionsProgress,
+            targetValue = target,
+            animationSpec = settleSpec(open = target > 0f),
+        ) { value, _ -> sessionsProgress = value.coerceIn(0f, 1f) }
+        sessionsProgress = target
     }
-    LaunchedEffect(sidePanel) {
-        if (sidePanel == SidePanel.Sessions) drawerState.open() else drawerState.close()
+    LaunchedEffect(sidePanel, draggingPanel) {
+        if (draggingPanel == SidePanel.Usage) return@LaunchedEffect
+        val target = if (sidePanel == SidePanel.Usage) 1f else 0f
+        if (usageProgress == target) return@LaunchedEffect
+        animate(
+            initialValue = usageProgress,
+            targetValue = target,
+            animationSpec = settleSpec(open = target > 0f),
+        ) { value, _ -> usageProgress = value.coerceIn(0f, 1f) }
+        usageProgress = target
     }
 
-    // 右抽屉的展开进度（P-028）：拖拽时由手指写，松手与开关由这段动画补完。
-    // 结算用临界阻尼弹簧，并把松手速度接上（见 onPanelDragEnd）：接缝处位置与速度都连续，
-    // 所以不会「顿一下再加速」；临界阻尼下停下所需的时间由 ω 决定，跟甩多快几乎无关。
-    var panelProgress by remember { mutableFloatStateOf(0f) }
-    var panelDragging by remember { mutableStateOf(false) }
-    var panelVelocity by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(sidePanel, panelDragging) {
-        if (panelDragging) return@LaunchedEffect
-        val target = if (sidePanel == SidePanel.Usage) 1f else 0f
-        if (panelProgress == target) return@LaunchedEffect
-        val velocity = panelVelocity
-        panelVelocity = 0f
-        animate(
-            initialValue = panelProgress,
-            targetValue = target,
-            initialVelocity = velocity,
-            // 临界阻尼（不弹、不回弹一下）；ω = √500 ≈ 22.4，走到 95% 约 0.21s，
-            // 而停下所需的时间由 ω 决定 —— 甩得快只是开头更陡，总时长几乎不变。
-            // 可见阈值压到 0.4%（约 1dp），落点对齐全靠下面那行，免得留一条遮罩缝。
-            animationSpec = spring(
-                dampingRatio = 1f,
-                stiffness = 500f,
-                visibilityThreshold = 0.004f,
-            ),
-        ) { value, _ -> panelProgress = value.coerceIn(0f, 1f) }
-        // 弹簧按可见阈值提前结束，落点可能停在 0.008 这种值上：
-        // 那样遮罩会留着一条永不消失的点击层，所以最后一步必须对齐
-        panelProgress = target
+    val density = LocalDensity.current
+    val sessionsWidthPx = with(density) { SessionsDrawerWidth.toPx() }
+    val usageWidthPx = with(density) {
+        usageDrawerWidth(LocalConfiguration.current.screenWidthDp).toPx()
     }
-    val panelWidth = usageDrawerWidth(LocalConfiguration.current.screenWidthDp)
-    val panelWidthPx = with(LocalDensity.current) { panelWidth.toPx() }
-    // 两个入口（整页左滑、面板上右滑）共用一套位移折算：dx 向左为负，进度就往大走
-    val onPanelDragStart = {
-        panelDragging = true
-        panelVelocity = 0f
+
+    // 三个入口（整页滑动、两个抽屉上各自的拖动）共用这一套：dx 向右为正。
+    // 会话列表向右是打开，用量与费用向左是打开，位移按各自的宽度折算成 0..1 的进度。
+    val onPanelDragStart: (SidePanel) -> Unit = { panel -> draggingPanel = panel }
+    val onPanelDrag: (SidePanel, Float) -> Unit = { panel, dx ->
+        if (panel == SidePanel.Sessions) {
+            sessionsProgress = (sessionsProgress + dx / sessionsWidthPx).coerceIn(0f, 1f)
+        } else {
+            usageProgress = (usageProgress - dx / usageWidthPx).coerceIn(0f, 1f)
+        }
     }
-    val onPanelDrag: (Float) -> Unit = { dx ->
-        panelProgress = (panelProgress - dx / panelWidthPx).coerceIn(0f, 1f)
-    }
-    val onPanelDragEnd: (Float, Boolean) -> Unit = { velocityDp, currentlyOpen ->
-        val open = panelTargetOpen(panelProgress, velocityDp, currentlyOpen)
-        panelVelocity = panelSettleVelocity(velocityDp, panelWidth.value)
-        panelDragging = false
-        sidePanel = if (open) SidePanel.Usage else SidePanel.None
+    val onPanelDragEnd: (SidePanel, Float) -> Unit = { panel, velocityDp ->
+        val progress = if (panel == SidePanel.Sessions) sessionsProgress else usageProgress
+        // 判定口径统一成「正 = 打开」：左抽屉向右是开，右抽屉向左是开
+        val open = if (panel == SidePanel.Sessions) {
+            panelTargetOpen(progress, velocityDp, sidePanel == SidePanel.Sessions)
+        } else {
+            panelTargetOpen(progress, -velocityDp, sidePanel == SidePanel.Usage)
+        }
+        draggingPanel = SidePanel.None
+        sidePanel = if (open) panel else SidePanel.None
     }
     // 右抽屉打开就刷一次用量，滑开的和点开的都走这里
     LaunchedEffect(sidePanel) {
         if (sidePanel == SidePanel.Usage) chatViewModel.refreshUsageNow()
     }
-    // 左滑手势只挂在会话页：设置那几页也有整块内容，不该一滑就出用量面板
+    // 手势只挂在会话页：设置那几页也有整块内容，不该一滑就出面板
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
 
     // 系统提示词（决策 45）：开关 + 用户预设。进入页面时读库，改完后就地刷新
@@ -210,55 +212,24 @@ fun TinyChatApp() {
         else -> "不发送"
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        // 会话页向右滑就能拉出抽屉（不必每次点左上角）；抽屉打开后向左滑收起。
-        // 右抽屉开着时整块手势关掉：否则在它的遮罩上一拖就能把左抽屉也拉出来。
-        gesturesEnabled = sidePanel != SidePanel.Usage,
-        drawerContent = {
-            SessionsDrawerContent(
-                state = chatViewModel.sessionsUi,
-                currentSessionId = chatViewModel.sessionId,
-                isOpen = drawerState.isOpen,
-                onOpenSettings = {
-                    closeDrawer()
-                    navController.navigate(Routes.SETTINGS)
-                },
-                onPickSession = { id ->
-                    chatViewModel.openSession(id)
-                    closeDrawer()
-                },
-                onRenameSession = chatViewModel::renameSession,
-                onTogglePinSession = chatViewModel::togglePinnedSession,
-                onDeleteSession = chatViewModel::deleteSession,
-                onOpenSearch = chatViewModel::openSearch,
-                onCloseSearch = chatViewModel::closeSearch,
-                onSearchQueryChange = chatViewModel::onSearchQueryChange,
-                onPickSearchResult = { id ->
-                    chatViewModel.pickSearchResult(id)
-                    closeDrawer()
-                },
-                onEnterSelection = chatViewModel::enterSelection,
-                onExitSelection = chatViewModel::exitSelection,
-                onToggleSelected = chatViewModel::toggleSelected,
-                onPinSelected = chatViewModel::pinSelected,
-                onDeleteSelected = chatViewModel::deleteSelected,
-            )
-        },
-    ) {
+    Box(Modifier.fillMaxSize().background(palette.bg)) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(palette.bg)
                 .safeDrawingPadding()
-                // 整页左滑拉开右抽屉（P-028）：面板开着时不接收。
-                // 注意别把「正在拖」也写进这个条件 —— 拖到一半把 pointerInput 摘掉会中断这次手势，
-                // 松手事件就永远等不到，进度会卡在半路。
-                .swipeLeftToOpenPanel(
+                // 整页横向滑动拉开侧栏（P-030）：左滑出用量与费用，右滑出会话列表。
+                // 别把「正在拖」写进 enabled —— 拖到一半摘掉 pointerInput 会中断手势，进度卡住。
+                .swipeToOpenPanel(
                     enabled = currentRoute == Routes.CHAT && sidePanel == SidePanel.None,
-                    onDragStart = onPanelDragStart,
-                    onDragDelta = onPanelDrag,
-                    onDragEnd = { velocityDp -> onPanelDragEnd(velocityDp, false) },
+                    onDragStart = { leftward ->
+                        onPanelDragStart(if (leftward) SidePanel.Usage else SidePanel.Sessions)
+                    },
+                    onDragDelta = { leftward, dx ->
+                        onPanelDrag(if (leftward) SidePanel.Usage else SidePanel.Sessions, dx)
+                    },
+                    onDragEnd = { leftward, velocityDp ->
+                        onPanelDragEnd(if (leftward) SidePanel.Usage else SidePanel.Sessions, velocityDp)
+                    },
                 ),
         ) {
             CompositionLocalProvider(LocalTcFontScale provides fontScale) {
@@ -474,16 +445,57 @@ fun TinyChatApp() {
             }
 
             UsageDrawer(
-                progress = panelProgress,
+                progress = usageProgress,
                 summary = chatViewModel.state.usageSummary,
                 contextUsed = chatViewModel.state.contextUsed,
                 contextWindow = chatViewModel.state.contextWindow,
                 balanceText = chatViewModel.state.balanceText,
                 quota = chatViewModel.state.quota,
-                onDismiss = { sidePanel = SidePanel.None },
-                onDragStart = onPanelDragStart,
-                onDragDelta = onPanelDrag,
-                onDragEnd = { velocityDp -> onPanelDragEnd(velocityDp, true) },
+                onDismiss = { closeDrawer() },
+                onDragStart = { onPanelDragStart(SidePanel.Usage) },
+                onDragDelta = { dx -> onPanelDrag(SidePanel.Usage, dx) },
+                onDragEnd = { velocityDp -> onPanelDragEnd(SidePanel.Usage, velocityDp) },
+            )
+        }
+
+        // 会话抽屉：全屏高度（内容自带状态栏内边距），画在内容之后所以在最上层
+        TcSideSheet(
+            progress = sessionsProgress,
+            fromStart = true,
+            width = SessionsDrawerWidth,
+            title = "会话列表",
+            onDismiss = { closeDrawer() },
+            onDragStart = { onPanelDragStart(SidePanel.Sessions) },
+            onDragDelta = { dx -> onPanelDrag(SidePanel.Sessions, dx) },
+            onDragEnd = { velocityDp -> onPanelDragEnd(SidePanel.Sessions, velocityDp) },
+        ) {
+            SessionsDrawerContent(
+                state = chatViewModel.sessionsUi,
+                currentSessionId = chatViewModel.sessionId,
+                isOpen = sidePanel == SidePanel.Sessions,
+                onOpenSettings = {
+                    closeDrawer()
+                    navController.navigate(Routes.SETTINGS)
+                },
+                onPickSession = { id ->
+                    chatViewModel.openSession(id)
+                    closeDrawer()
+                },
+                onRenameSession = chatViewModel::renameSession,
+                onTogglePinSession = chatViewModel::togglePinnedSession,
+                onDeleteSession = chatViewModel::deleteSession,
+                onOpenSearch = chatViewModel::openSearch,
+                onCloseSearch = chatViewModel::closeSearch,
+                onSearchQueryChange = chatViewModel::onSearchQueryChange,
+                onPickSearchResult = { id ->
+                    chatViewModel.pickSearchResult(id)
+                    closeDrawer()
+                },
+                onEnterSelection = chatViewModel::enterSelection,
+                onExitSelection = chatViewModel::exitSelection,
+                onToggleSelected = chatViewModel::toggleSelected,
+                onPinSelected = chatViewModel::pinSelected,
+                onDeleteSelected = chatViewModel::deleteSelected,
             )
         }
     }

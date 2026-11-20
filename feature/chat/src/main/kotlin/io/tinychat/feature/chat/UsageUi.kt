@@ -27,11 +27,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +44,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.invisibleToUser
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -173,8 +178,14 @@ fun UsageDrawer(
     onDragDelta: (dxPx: Float) -> Unit,
     onDragEnd: (velocityDp: Float) -> Unit,
 ) {
-    // 完全收起时整块不参与布局：否则那块透明遮罩会挡住聊天页的点击
-    if (progress <= 0f) return
+    // 收起时也整块留在树上、只推到屏幕外：首次组合 + 测量的钱要在启动后先付掉，
+    // 否则第一次划出来时主线程会卡一下（左侧会话抽屉踩过这个坑，P-032）
+    var warmed by remember { mutableStateOf(progress > 0f) }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        warmed = true
+    }
+    if (progress <= 0f && !warmed) return
 
     val palette = TcTheme.palette
     val width = usageDrawerWidth(LocalConfiguration.current.screenWidthDp)
@@ -187,16 +198,20 @@ fun UsageDrawer(
     val dragState = rememberDraggableState { delta -> dragDelta.value(delta) }
 
     Box(Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.32f * progress))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss,
-                ),
-        )
+        // 收起时不要这张遮罩：它全屏可点，会把聊天页的点击全吃掉
+        if (progress > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.32f * progress))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClickLabel = "关闭",
+                        onClick = onDismiss,
+                    ),
+            )
+        }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
             // 位移单独放这一层：offset 的 lambda 每帧读进度，不触发重组
             Box(modifier = Modifier.offset { IntOffset(((1f - progress) * widthPx).roundToInt(), 0) }) {
@@ -206,6 +221,11 @@ fun UsageDrawer(
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp))
                         .background(palette.bg)
+                        .semantics {
+                            paneTitle = "用量与费用"
+                            // 收在屏幕外时对读屏也要藏起来
+                            if (progress <= 0f) invisibleToUser()
+                        }
                         // 面板上向右拖关闭（02 §12.10 一直写着「可右滑关闭」，之前没实现）
                         .draggable(
                             orientation = Orientation.Horizontal,

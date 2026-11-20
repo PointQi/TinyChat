@@ -11,78 +11,74 @@ import kotlin.math.abs
  * 屏幕两侧的面板（P-028）。同一时刻至多一个 —— 用一个变量表示，而不是两个布尔，
  * 互斥因此是结构性的，不依赖任何一段记得清理另一边的代码。
  *
- * - [Sessions] 左抽屉，归 Material3 的 `ModalNavigationDrawer` 管（它可以被手势直接拉出来）；
- * - [Usage] 右抽屉「用量与费用」，自绘，跟手滑入滑出。
+ * 两个面板都是自绘的（P-030 起左抽屉也自己画）：拖拽 1:1 跟手，松手走固定时长的
+ * 曲线，速度只参与「开还是关」的判定，不参与动画 —— 所以不会冲过终点再弹回来。
+ *
+ * - [Sessions] 左侧会话抽屉；
+ * - [Usage] 右侧「用量与费用」。
  */
 enum class SidePanel { None, Sessions, Usage }
 
-/** 松手时走了多少算数：35% 宽度（02 §16 底部抽屉的同一口径）。 */
-const val PANEL_SETTLE_FRACTION = 0.35f
+/** 朝打开方向走过多少算开：2%。左右两个侧栏都几乎「有位移就开」（P-031，对齐官方那种手感）。 */
+const val PANEL_OPEN_FRACTION = 0.02f
 
-/** 甩动的判定速度，dp/s（同上，与底部抽屉一致）。 */
-const val PANEL_FLING_DP = 800f
+/** 朝关闭方向走过多少算关：35%。关要更明确一点，免得手一抖就把抽屉收了（与底部抽屉同一口径）。 */
+const val PANEL_CLOSE_FRACTION = 0.35f
 
-/**
- * 结算速度的上限，单位是「面板宽度/秒」。松手速度来自 `VelocityTracker`，偶尔会有一个尖峰，
- * 限一下免得面板被一记假甩甩飞。
- */
-const val PANEL_MAX_SETTLE_VELOCITY = 8f
+/** 打开方向的甩动判定，dp/s：250 比底部抽屉松得多，轻轻一拨就开。 */
+const val PANEL_OPEN_FLING_DP = 250f
 
-/** 左滑必须明显偏横才接管，否则竖向翻聊天会被当成开面板。 */
+/** 关闭方向的甩动判定，dp/s：800，与底部抽屉一致。 */
+const val PANEL_CLOSE_FLING_DP = 800f
+
+/** 横向必须明显大于纵向才接管，否则竖向翻聊天会被当成开面板。 */
 private const val PANEL_SWIPE_RATIO = 1.5f
-
-/**
- * 松手速度（dp/s，向右为正）换算成「进度速度」（1/s，向开为正），并限幅。
- *
- * 进度 1 正好对应一整块面板宽度，所以除以宽度就够；符号要取反：向左甩是打开。
- * 弹簧拿它当初始速度，接缝处才不会从静止重新起步。
- */
-fun panelSettleVelocity(velocityDp: Float, panelWidthDp: Float): Float {
-    if (panelWidthDp <= 0f) return 0f
-    return (-velocityDp / panelWidthDp)
-        .coerceIn(-PANEL_MAX_SETTLE_VELOCITY, PANEL_MAX_SETTLE_VELOCITY)
-}
 
 /**
  * 松手时该开还是该关（纯函数，可单测）。
  *
- * [progress] 是当前展开进度（0 收起、1 展开），[velocityDp] 是手指的横向速度 dp/s
- * （正 = 向右 = 收起方向），[currentlyOpen] 是松手前那一侧的状态 —— 展开状态下的阈值
- * 是「往回走了 35%」，收起状态下是「往前走了 35%」，两者都用 [PANEL_SETTLE_FRACTION]。
+ * [progress] 是当前展开进度（0 收起、1 展开），[velocityDp] 是指向「打开」方向的速度
+ * （正 = 打开，调用方负责把左右两个方向的符号统一），[currentlyOpen] 是松手前那一侧的状态。
+ *
+ * 两个方向的判据是**不对称**的：打开很松（2%，或者 250dp/s 的轻拨），关闭要明确
+ * （35%，或者 800dp/s）—— 官方那种「手指轻轻一划、抽屉就整个出来」的观感来自前者，
+ * 而后者保证不会因为手一抖就把已经打开的抽屉关掉。
+ *
+ * 这里只判断开合；开合**怎么走完**由固定时长曲线决定，与速度无关。
  */
 fun panelTargetOpen(
     progress: Float,
     velocityDp: Float,
     currentlyOpen: Boolean,
-    fraction: Float = PANEL_SETTLE_FRACTION,
-    flingDp: Float = PANEL_FLING_DP,
+    openFraction: Float = PANEL_OPEN_FRACTION,
+    closeFraction: Float = PANEL_CLOSE_FRACTION,
+    openFlingDp: Float = PANEL_OPEN_FLING_DP,
+    closeFlingDp: Float = PANEL_CLOSE_FLING_DP,
 ): Boolean = when {
-    velocityDp <= -flingDp -> true
-    velocityDp >= flingDp -> false
-    currentlyOpen -> progress > 1f - fraction
-    else -> progress >= fraction
+    velocityDp >= openFlingDp -> true
+    velocityDp <= -closeFlingDp -> false
+    currentlyOpen -> progress > 1f - closeFraction
+    else -> progress >= openFraction
 }
 
 /**
- * 整页左滑拉开右侧面板（P-028）：和左抽屉的整面手势对称。
+ * 整页横向滑动拉开侧栏（P-028 / P-030）：向左拉出右侧面板，向右拉出左侧面板。
  *
- * 为什么不是「贴着右边缘起手」：返回手势的触区就在两侧边缘（AOSP 原文为 inward swipe
- * from either edge），从那里起手会被系统当成返回 —— 聊天页是栈底，表现就是直接退出应用。
- * 面板打开时也不检测横向滑动：我们那两块面板都是 `ModalBottomSheet`，它们是真正的 Dialog
- * 窗口，输入根本到不了这一层，所以不需要额外开关。
+ * 为什么不贴边缘起手：返回手势的触区就在两侧边缘（AOSP 原文为 inward swipe from either
+ * edge），从那里起手会被系统当成返回 —— 聊天页是栈底，表现就是直接退出应用。所以起手
+ * 位置不限，唯独边缘那一下归系统。
  *
- * 为什么只会赢在「子级先消费」上：M3 左抽屉的拖拽检测器挂在祖先层，Main 通道里子级先收到
- * 事件；本检测器在同一个 touchSlop 上消费掉左滑，它看到已消费就自行放弃，右滑不消费则原样
- * 交给它。这就是不套第二个 `ModalNavigationDrawer` 的替代做法。
+ * 为什么这样不会抢竖向滚动：本检测器挂在内容层之上、在 Main 通道里排在子级之后，
+ * 竖列表、横向滚动的代码块先消费，这里看到 `isConsumed` 就放弃。
  *
  * @param onDragDelta 相对上一次的水平位移，px（向左为负）
  * @param onDragEnd 松手时的横向速度，dp/s（向右为正）——已换算好，调用方不必再管密度
  */
-fun Modifier.swipeLeftToOpenPanel(
+fun Modifier.swipeToOpenPanel(
     enabled: Boolean,
-    onDragStart: () -> Unit,
-    onDragDelta: (dxPx: Float) -> Unit,
-    onDragEnd: (velocityDp: Float) -> Unit,
+    onDragStart: (leftward: Boolean) -> Unit,
+    onDragDelta: (leftward: Boolean, dxPx: Float) -> Unit,
+    onDragEnd: (leftward: Boolean, velocityDp: Float) -> Unit,
 ): Modifier = if (!enabled) {
     this
 } else {
@@ -94,13 +90,13 @@ fun Modifier.swipeLeftToOpenPanel(
             val startY = down.position.y
             var lastX = startX
             var claimed = false
+            var leftward = false
             val tracker = VelocityTracker()
             tracker.addPosition(down.uptimeMillis, down.position)
 
             while (true) {
                 val event = awaitPointerEvent()
                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                // 竖向滚动、自己以外的拖拽已经把事件吃掉了：不是我们的事
                 if (change.isConsumed || !change.pressed) break
 
                 if (!claimed) {
@@ -109,22 +105,22 @@ fun Modifier.swipeLeftToOpenPanel(
                         tracker.addPosition(change.uptimeMillis, change.position)
                         continue
                     }
-                    // 向右是左抽屉的，斜着来的是竖向滚动的
-                    if (dx >= 0f || abs(dx) < abs(change.position.y - startY) * PANEL_SWIPE_RATIO) break
+                    if (abs(dx) < abs(change.position.y - startY) * PANEL_SWIPE_RATIO) break
                     claimed = true
-                    onDragStart()
+                    leftward = dx < 0f
+                    onDragStart(leftward)
                     lastX = change.position.x
                     change.consume()
                     continue
                 }
 
                 tracker.addPosition(change.uptimeMillis, change.position)
-                onDragDelta(change.position.x - lastX)
+                onDragDelta(leftward, change.position.x - lastX)
                 lastX = change.position.x
                 change.consume()
             }
 
-            if (claimed) onDragEnd(tracker.calculateVelocity().x / density)
+            if (claimed) onDragEnd(leftward, tracker.calculateVelocity().x / density)
         }
     }
 }
