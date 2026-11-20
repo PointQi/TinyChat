@@ -128,7 +128,7 @@ fun SharePreviewDialog(
             TextButton(onClick = onShare) { Text("分享") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onDismiss) { Text("取消", color = TcTheme.palette.labelSecondary) }
         },
     )
 }

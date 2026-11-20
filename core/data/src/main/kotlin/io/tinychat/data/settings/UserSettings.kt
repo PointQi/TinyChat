@@ -35,8 +35,19 @@ class UserSettings(context: Context) {
     /** 用户元信息（`latest_reminder`）开关（M7-5）；默认开，与官方一致 */
     val reminderEnabled: Flow<Boolean> = store.data.map { it[REMINDER] ?: true }
 
-    /** 当前选中的系统提示词（M7.5）；内置 id 或自定义预设 id */
-    val promptPresetId: Flow<String> = store.data.map { it[PROMPT_PRESET] ?: "default" }
+    /**
+     * 当前选中的系统提示词预设（决策 45）。**null = 不使用自定义内容**。
+     * 旧版本这个键存的是内置 id（`default` / `none` / …），迁移时会被改写或清掉。
+     */
+    val promptSelectedId: Flow<String?> = store.data.map { prefs ->
+        prefs[PROMPT_PRESET]?.takeIf { it.isNotBlank() }
+    }
+
+    /** 是否同时发送官方那句提示词；默认开 */
+    val promptIncludeOfficial: Flow<Boolean> = store.data.map { it[PROMPT_INCLUDE_OFFICIAL] ?: true }
+
+    /** 提示词表结构与含义的迁移是否已经跑过（一次性） */
+    val promptMigrated: Flow<Boolean> = store.data.map { it[PROMPT_MIGRATED] ?: false }
 
     /** 用户所在地，喂给 `{{location}}` 与 `latest_reminder`；空 = 不填 */
     val promptLocation: Flow<String> = store.data.map { it[PROMPT_LOCATION] ?: "" }
@@ -81,8 +92,18 @@ class UserSettings(context: Context) {
         store.edit { it[REMINDER] = enabled }
     }
 
-    suspend fun setPromptPresetId(id: String) {
-        store.edit { it[PROMPT_PRESET] = id }
+    suspend fun setPromptSelectedId(id: String?) {
+        store.edit { prefs ->
+            if (id == null) prefs.remove(PROMPT_PRESET) else prefs[PROMPT_PRESET] = id
+        }
+    }
+
+    suspend fun setPromptIncludeOfficial(enabled: Boolean) {
+        store.edit { it[PROMPT_INCLUDE_OFFICIAL] = enabled }
+    }
+
+    suspend fun markPromptMigrated() {
+        store.edit { it[PROMPT_MIGRATED] = true }
     }
 
     suspend fun setPromptLocation(location: String) {
@@ -107,6 +128,8 @@ class UserSettings(context: Context) {
         private val SHOW_USAGE = booleanPreferencesKey("show_usage")
         private val REMINDER = booleanPreferencesKey("reminder_enabled")
         private val PROMPT_PRESET = stringPreferencesKey("prompt_preset_id")
+        private val PROMPT_INCLUDE_OFFICIAL = booleanPreferencesKey("prompt_include_official")
+        private val PROMPT_MIGRATED = booleanPreferencesKey("prompt_migrated_v2")
         private val PROMPT_LOCATION = stringPreferencesKey("prompt_location")
         private val PROMPT_LANGUAGE = stringPreferencesKey("prompt_language")
         private val THEME_MODE = stringPreferencesKey("theme_mode")

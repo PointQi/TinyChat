@@ -35,11 +35,10 @@ import io.tinychat.feature.settings.AboutScreen
 import io.tinychat.feature.settings.DataManagementScreen
 import io.tinychat.feature.settings.LicenseScreen
 import io.tinychat.feature.settings.PromptEditorScreen
-import io.tinychat.feature.settings.PromptPresetListScreen
+import io.tinychat.feature.settings.PromptSettingsScreen
 import io.tinychat.feature.settings.ProviderEditorScreen
 import io.tinychat.feature.settings.ProviderListScreen
 import io.tinychat.feature.settings.SettingsScreen
-import io.tinychat.model.PromptMode
 import kotlinx.coroutines.launch
 
 object Routes {
@@ -107,9 +106,10 @@ fun TinyChatApp() {
     val scope = rememberCoroutineScope()
     val closeDrawer = { scope.launch { drawerState.close() } }
 
-    // 系统提示词（M7.5）：列表与当前选中项在进入页面时读库，改完后就地刷新
+    // 系统提示词（决策 45）：开关 + 用户预设。进入页面时读库，改完后就地刷新
     var promptPresets by remember { mutableStateOf<List<PromptPresetEntity>>(emptyList()) }
-    var promptSelectedId by remember { mutableStateOf("default") }
+    var promptSelectedId by remember { mutableStateOf<String?>(null) }
+    var promptIncludeOfficial by remember { mutableStateOf(true) }
     var editingPromptId by remember { mutableStateOf<String?>(null) }
     var creatingPrompt by remember { mutableStateOf(false) }
     var promptReloadKey by remember { mutableStateOf(0) }
@@ -118,9 +118,18 @@ fun TinyChatApp() {
     var addingProvider by remember { mutableStateOf(false) }
     LaunchedEffect(promptReloadKey) {
         promptPresets = container.promptStore.all()
-        promptSelectedId = container.promptStore.current().id
+        val state = container.promptStore.state()
+        promptSelectedId = state.selected?.id
+        promptIncludeOfficial = state.includeOfficial
     }
-    val promptName = promptPresets.firstOrNull { it.id == promptSelectedId }?.name ?: "默认"
+    val promptName = when {
+        promptSelectedId != null && promptIncludeOfficial ->
+            "官方提示词 + ${promptPresets.firstOrNull { it.id == promptSelectedId }?.name.orEmpty()}"
+
+        promptSelectedId != null -> promptPresets.firstOrNull { it.id == promptSelectedId }?.name.orEmpty()
+        promptIncludeOfficial -> "官方提示词"
+        else -> "不发送"
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -298,17 +307,26 @@ fun TinyChatApp() {
                     )
                 }
                 composable(Routes.PROMPT) {
-                    PromptPresetListScreen(
+                    PromptSettingsScreen(
+                        includeOfficial = promptIncludeOfficial,
                         presets = promptPresets,
                         selectedId = promptSelectedId,
                         onBack = { navController.popBackStack() },
-                        onOpen = { id ->
-                            editingPromptId = id
-                            creatingPrompt = false
+                        onToggleOfficial = { enabled ->
+                            scope.launch {
+                                container.promptStore.setIncludeOfficial(enabled)
+                                promptReloadKey++
+                            }
+                        },
+                        onSelect = { id ->
                             scope.launch {
                                 container.promptStore.select(id)
-                                promptSelectedId = id
+                                promptReloadKey++
                             }
+                        },
+                        onEdit = { id ->
+                            editingPromptId = id
+                            creatingPrompt = false
                             navController.navigate(Routes.PROMPT_EDIT)
                         },
                         onNew = {
@@ -316,63 +334,34 @@ fun TinyChatApp() {
                             creatingPrompt = true
                             navController.navigate(Routes.PROMPT_EDIT)
                         },
-                        onRestoreDefault = {
-                            scope.launch {
-                                container.promptStore.restoreDefault()
-                                promptPresets = container.promptStore.all()
-                                promptSelectedId = container.promptStore.current().id
-                                promptReloadKey++
-                            }
-                        },
                     )
                 }
                 composable(Routes.PROMPT_EDIT) {
                     val preset = promptPresets.firstOrNull { it.id == editingPromptId }
-                    val builtin = !creatingPrompt && preset?.builtin == true
                     key(editingPromptId, creatingPrompt, promptReloadKey) {
                         PromptEditorScreen(
-                            title = if (creatingPrompt) "新建预设" else "编辑预设",
                             initialName = if (creatingPrompt) "" else preset?.name.orEmpty(),
                             initialContent = if (creatingPrompt) "" else preset?.content.orEmpty(),
-                            initialMode = if (creatingPrompt) {
-                                PromptMode.REPLACE
-                            } else {
-                                preset?.mode ?: PromptMode.REPLACE
-                            },
-                            builtin = builtin,
-                            canDelete = !creatingPrompt && preset != null && !builtin,
+                            isNew = creatingPrompt || preset == null,
+                            canDelete = !creatingPrompt && preset != null,
+                            existingNames = promptPresets.map { it.name },
                             onBack = { navController.popBackStack() },
-                            onSave = { name, content, mode ->
+                            onSave = { name, content, asNew ->
                                 scope.launch {
                                     val id = container.promptStore.save(
-                                        id = editingPromptId.takeIf { !creatingPrompt },
+                                        id = editingPromptId.takeIf { !asNew },
                                         name = name,
                                         content = content,
-                                        mode = mode,
                                     )
                                     container.promptStore.select(id)
-                                    promptSelectedId = id
-                                    promptPresets = container.promptStore.all()
-                                    creatingPrompt = false
-                                    editingPromptId = id
+                                    promptReloadKey++
                                     navController.popBackStack()
-                                }
-                            },
-                            onCopy = {
-                                val source = editingPromptId ?: return@PromptEditorScreen
-                                scope.launch {
-                                    val copied = container.promptStore.copyBuiltin(source) ?: return@launch
-                                    promptPresets = container.promptStore.all()
-                                    editingPromptId = copied
-                                    creatingPrompt = false
                                 }
                             },
                             onDelete = {
                                 val id = editingPromptId ?: return@PromptEditorScreen
                                 scope.launch {
-                                    container.promptStore.deleteCustom(id)
-                                    promptPresets = container.promptStore.all()
-                                    promptSelectedId = container.promptStore.current().id
+                                    container.promptStore.delete(id)
                                     promptReloadKey++
                                     navController.popBackStack()
                                 }

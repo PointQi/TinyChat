@@ -152,6 +152,8 @@ import io.tinychat.model.Provider
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.ui.MenuAnchor
 import io.tinychat.ui.TcAnchorMenu
+import io.tinychat.ui.TcButton
+import io.tinychat.ui.TcButtonVariant
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcInlineHint
 import io.tinychat.ui.TcMenuItem
@@ -810,16 +812,11 @@ private fun MessageRow(
                     }
                     Spacer(Modifier.weight(1f))
                     if (onContinue != null) {
-                        // 灰色胶囊 + 黑字，靠右
-                        Text(
+                        TcButton(
                             text = "继续生成",
-                            style = TcTypography.bodyMedium,
-                            color = palette.labelPrimary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(100.dp))
-                                .border(1.dp, palette.labelTertiary.copy(alpha = 0.5f), RoundedCornerShape(100.dp))
-                                .clickable(onClick = onContinue)
-                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            onClick = onContinue,
+                            variant = TcButtonVariant.Outline,
+                            compact = true,
                         )
                     }
                 }
@@ -2243,14 +2240,14 @@ private fun QuickPromptChip(text: String, onClick: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = text,
-                style = TcTypography.bodySmall,
+                style = TcTypography.bodyMedium,
                 color = palette.labelPrimary,
                 maxLines = 1,
             )
             Spacer(Modifier.width(6.dp))
             Text(
                 text = "→",
-                style = TcTypography.bodySmall,
+                style = TcTypography.bodyMedium,
                 color = palette.labelTertiary,
                 maxLines = 1,
             )

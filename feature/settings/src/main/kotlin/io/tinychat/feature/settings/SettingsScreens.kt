@@ -59,8 +59,8 @@ fun SettingsScreen(
     providerSubtitle: String = "未配置",
     /** 当前安装包的版本名（M9）：显示在「关于」那一行的副标题 */
     versionName: String = "",
-    /** 当前系统提示词的名字（M7.5）：显示为「当前预设：默认」 */
-    promptName: String = "默认",
+    /** 当前系统提示词的状态（决策 45）：`官方提示词` / `官方提示词 + 角色扮演` / `不发送` */
+    promptName: String = "官方提示词",
     onOpenPrompt: () -> Unit = {},
     /** 当前朗读音色（M5-4，只有官方两个） */
     ttsVoice: TtsVoice = TtsVoice.STELLA,
@@ -124,7 +124,7 @@ fun SettingsScreen(
             )
             TcListRow(
                 title = "系统提示词",
-                subtitle = "当前预设：$promptName",
+                subtitle = promptName,
                 onClick = onOpenPrompt,
             )
 
@@ -167,7 +167,7 @@ fun SettingsScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { voicePicker = false }) { Text("关闭") }
+                TextButton(onClick = { voicePicker = false }) { Text("关闭", color = TcTheme.palette.labelSecondary) }
             },
         )
     }
@@ -257,7 +257,7 @@ fun SettingsScreen(
                 }) { Text("保存") }
             },
             dismissButton = {
-                TextButton(onClick = { locationEdit = false }) { Text("取消") }
+                TextButton(onClick = { locationEdit = false }) { Text("取消", color = TcTheme.palette.labelSecondary) }
             },
         )
     }
@@ -341,7 +341,7 @@ private fun <T> PickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
+            TextButton(onClick = onDismiss) { Text("关闭", color = TcTheme.palette.labelSecondary) }
         },
     )
 }
@@ -487,7 +487,7 @@ fun DataManagementScreen(
                 }) { Text("清空") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmClear = false }) { Text("取消") }
+                TextButton(onClick = { confirmClear = false }) { Text("取消", color = TcTheme.palette.labelSecondary) }
             },
             containerColor = palette.bg,
         )
@@ -505,7 +505,7 @@ fun DataManagementScreen(
                 }) { Text("选择文件") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmImport = false }) { Text("取消") }
+                TextButton(onClick = { confirmImport = false }) { Text("取消", color = TcTheme.palette.labelSecondary) }
             },
             containerColor = palette.bg,
         )

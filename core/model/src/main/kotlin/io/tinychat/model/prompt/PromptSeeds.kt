@@ -1,29 +1,19 @@
 package io.tinychat.model.prompt
 
-import io.tinychat.model.PromptMode
-
 /**
- * 内置系统提示词（M7-5-1）。
+ * 系统提示词里那些固定文本（决策 45）。
  *
- * - 5 个内置，`builtin = 1`，列表里可选中、可看，但**不可改不可删**（改要先复制）；
- * - [DEFAULT] 的正文是官方原句，**逐字照抄**，`恢复默认` 就是回到这里；
- * - 其余 4 个是骨架，写在「够用且不啰嗦」的长度上，用户可以复制后再改。
+ * - [OFFICIAL_SYSTEM] 是官方那句，逐字照抄（一手证实：chat-demo `store.ts:38`）。协议层也引用它。
+ * - [templates] 是编辑器里「常用预设」的按钮：点一下把正文填进内容框。
+ *   它们**不再是可切换的条目**——内置条目那一层已经取消，用户想长期用某套就存成自己的预设。
  */
-data class PromptSeed(
-    val id: String,
-    val name: String,
-    val content: String,
-    val mode: PromptMode,
-    val sort: Int,
-)
-
 object PromptSeeds {
 
-    /** 官方默认 system 句（一手证实：chat-demo `store.ts:38`）。协议层与预设共用这一份。 */
     const val OFFICIAL_SYSTEM = "该助手为DeepSeek，由深度求索公司创造。"
 
-    const val DEFAULT_ID = "default"
-    const val NONE_ID = "none"
+    /** 迁移专用：旧版本里内置条目的 id，v2 之后不再存在。 */
+    const val LEGACY_DEFAULT_ID = "default"
+    const val LEGACY_NONE_ID = "none"
 
     val roleplay: String = """
         请完全沉浸并扮演以下角色：
@@ -57,11 +47,12 @@ object PromptSeeds {
         4. 鼓励式反馈：当用户尝试作答但出错时，先肯定正确的部分，再指出具体哪一步出现了偏差。
     """.trimIndent()
 
-    val builtIns: List<PromptSeed> = listOf(
-        PromptSeed(DEFAULT_ID, "默认", OFFICIAL_SYSTEM, PromptMode.REPLACE, 0),
-        PromptSeed(NONE_ID, "无提示词", "", PromptMode.CLEAR, 1),
-        PromptSeed("roleplay", "角色扮演", roleplay, PromptMode.REPLACE, 2),
-        PromptSeed("translate", "翻译润色", translate, PromptMode.REPLACE, 3),
-        PromptSeed("tutor", "学习辅导", tutor, PromptMode.REPLACE, 4),
+    val templates: List<PromptTemplate> = listOf(
+        PromptTemplate("角色扮演", roleplay),
+        PromptTemplate("翻译润色", translate),
+        PromptTemplate("学习辅导", tutor),
     )
 }
+
+/** 编辑器「常用预设」里的一颗按钮。 */
+data class PromptTemplate(val name: String, val content: String)

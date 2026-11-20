@@ -4,6 +4,7 @@ import io.tinychat.data.db.PromptPresetDao
 import io.tinychat.data.db.PromptPresetEntity
 import io.tinychat.data.db.TinyChatDatabase
 import io.tinychat.model.PromptMode
+import io.tinychat.model.prompt.PromptComposer
 import io.tinychat.model.prompt.PromptSeeds
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -11,82 +12,147 @@ import java.util.UUID
 
 /**
  * 新会话落库时写进 `sessions` 的那一对值（决策 10：快照之后会话只读）。
- * `content` 为 null 表示不发 system（`CLEAR` 或内容为空）。
+ * `content` 为 null 表示不发 system。
  */
 data class PromptSnapshot(val content: String?, val mode: PromptMode)
 
+/** 当前生效的一组设置：开关 + 选中的预设（null = 不使用自定义内容）。 */
+data class PromptState(
+    val includeOfficial: Boolean,
+    val selected: PromptPresetEntity?,
+)
+
 /**
- * 系统提示词预设（M7.5）。
+ * 系统提示词（决策 45）。
  *
- * 三件事只在这里做，别处不许再拼：
- * 1. **播种**：内置 5 条每次启动对齐一遍（内置不可改，所以覆盖写是安全的）；
- * 2. **选择**：全局只有一个「当前预设」，id 存在 DataStore；
- * 3. **快照**：新会话创建时取一次，之后会话怎么改都不回写。
+ * 只在两个地方说「发什么」：这里给出组合结果，`ChatRepository` 落快照。
+ * - 预设表里只有用户自己建的条目；内置五条已随 v2 迁移退场；
+ * - 「无提示词」不再是条目，而是「开关关 + 不选预设」这个状态；
+ * - 新会话快照里存的是**拼好的最终文本**，`mode` 恒为 `REPLACE`，
+ *   所以协议层不会再自己拼一次官方前缀（旧会话的快照带着自己的 mode，行为不变）。
  */
 class PromptPresetStore(
     private val dao: PromptPresetDao,
-    private val selected: Flow<String>,
-    private val selectPreset: suspend (String) -> Unit,
+    private val selected: Flow<String?>,
+    private val selectPreset: suspend (String?) -> Unit,
+    private val includeOfficialSetting: Flow<Boolean>,
+    private val setIncludeOfficialSetting: suspend (Boolean) -> Unit,
+    private val migrated: Flow<Boolean>,
+    private val markMigrated: suspend () -> Unit,
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
 
-    /** 启动时调用。表空则插入，已有则把内置条目对齐到官方正文。 */
-    suspend fun ensureSeeded() {
-        val now = clock()
-        val existing = dao.all().associateBy { it.id }
-        PromptSeeds.builtIns.forEach { seed ->
-            val row = existing[seed.id]
-            if (row == null || !row.builtin || row.content != seed.content ||
-                row.name != seed.name || row.mode != seed.mode
-            ) {
-                dao.upsert(
-                    PromptPresetEntity(
-                        id = seed.id,
-                        name = seed.name,
-                        content = seed.content,
-                        mode = seed.mode,
-                        builtin = true,
-                        sort = seed.sort,
-                        updatedAt = now,
-                    ),
+    /**
+     * v1 → v2 的一次性迁移，启动时调用。
+     *
+     * 旧模型是「5 条内置 + 组合方式三选一」，新模型是「开关 + 用户预设」。映射必须无损：
+     * - 旧的 `默认` → 开关开、不选预设；
+     * - 旧的 `无提示词` → 开关关、不选预设；
+     * - 旧的骨架（角色扮演/翻译润色/学习辅导）如果正被选中 → **复制成同名用户预设**再选中，
+     *   否则这些人升级后会静默掉回「只发官方」，行为变了还不知道；
+     * - 旧的自定义预设保留，组合方式归一成 `REPLACE`（组合的含义已经上移到开关）；
+     * - 内容为空的预设没有意义了（空内容不再允许保存），直接删掉。
+     */
+    suspend fun migrateIfNeeded() {
+        if (migrated.first()) return
+
+        val rows = dao.all()
+        val oldSelectedId = selected.first()
+        val oldSelected = oldSelectedId?.let { id -> rows.firstOrNull { it.id == id } }
+
+        var include = true
+        var newSelected: String? = null
+
+        when {
+            oldSelected == null -> {
+                // 从没动过提示词，或者选中的行早就不在了
+                include = true
+                newSelected = null
+            }
+
+            oldSelected.id == PromptSeeds.LEGACY_DEFAULT_ID -> {
+                include = true
+                newSelected = null
+            }
+
+            oldSelected.id == PromptSeeds.LEGACY_NONE_ID -> {
+                include = false
+                newSelected = null
+            }
+
+            oldSelected.builtin -> {
+                val copy = oldSelected.copy(
+                    id = UUID.randomUUID().toString(),
+                    builtin = false,
+                    mode = PromptMode.REPLACE,
+                    sort = dao.nextSort(),
+                    updatedAt = clock(),
                 )
+                dao.upsert(copy)
+                newSelected = copy.id
+                include = oldSelected.mode != PromptMode.REPLACE
+            }
+
+            else -> {
+                newSelected = oldSelected.id
+                include = oldSelected.mode == PromptMode.APPEND
+                if (oldSelected.mode == PromptMode.CLEAR) {
+                    newSelected = null
+                    include = false
+                }
             }
         }
+
+        // 非内置行：空内容删掉，组合方式归一
+        rows.filter { !it.builtin }.forEach { row ->
+            when {
+                row.content.isBlank() -> dao.delete(row.id)
+                row.mode != PromptMode.REPLACE -> dao.upsert(row.copy(mode = PromptMode.REPLACE))
+            }
+        }
+        // 内置行全部退场
+        rows.filter { it.builtin }.forEach { dao.delete(it.id) }
+
+        if (newSelected != null && dao.byId(newSelected) == null) newSelected = null
+
+        selectPreset(newSelected)
+        setIncludeOfficialSetting(include)
+        markMigrated()
     }
 
     suspend fun all(): List<PromptPresetEntity> = dao.all()
 
     suspend fun byId(id: String): PromptPresetEntity? = dao.byId(id)
 
-    suspend fun select(id: String) = selectPreset(id)
-
-    /** 当前选中项；行被删掉/不存在时回退到内置默认（不留在「无预设」这种状态里）。 */
-    suspend fun current(): PromptPresetEntity {
+    suspend fun state(): PromptState {
         val id = selected.first()
-        return dao.byId(id) ?: dao.byId(PromptSeeds.DEFAULT_ID) ?: fallbackDefault()
+        return PromptState(
+            includeOfficial = includeOfficialSetting.first(),
+            selected = id?.let { dao.byId(it) },
+        )
     }
 
+    suspend fun select(id: String?) = selectPreset(id)
+
+    suspend fun setIncludeOfficial(enabled: Boolean) = setIncludeOfficialSetting(enabled)
+
     /**
-     * 保存。`id == null` 为新建；内置预设**不允许**就地改（编辑器会先复制），
-     * 所以这里遇到内置 id 直接拒绝，避免 UI 的 bug 悄悄改掉官方原文。
+     * 保存。`id == null` 为新建。名称与内容都不许为空——
+     * 「不发自定义内容」用「不选预设」表达，不靠一条空预设。
      */
-    suspend fun save(id: String?, name: String, content: String, mode: PromptMode): String {
+    suspend fun save(id: String?, name: String, content: String): String {
         val trimmedName = name.trim()
         require(trimmedName.isNotEmpty()) { "名称不能为空" }
-        val targetId = if (id == null) {
-            UUID.randomUUID().toString()
-        } else {
-            val row = dao.byId(id) ?: error("预设不存在：$id")
-            require(!row.builtin) { "内置预设不可修改" }
-            id
-        }
+        require(content.isNotBlank()) { "内容不能为空" }
+
+        val targetId = id ?: UUID.randomUUID().toString()
         val sort = dao.byId(targetId)?.sort ?: dao.nextSort()
         dao.upsert(
             PromptPresetEntity(
                 id = targetId,
                 name = trimmedName,
                 content = content,
-                mode = mode,
+                mode = PromptMode.REPLACE,
                 builtin = false,
                 sort = sort,
                 updatedAt = clock(),
@@ -95,67 +161,21 @@ class PromptPresetStore(
         return targetId
     }
 
-    /** 内置预设不可改，先复制一份再编辑（02 §12.7）。返回新预设 id。 */
-    suspend fun copyBuiltin(id: String): String? {
-        val row = dao.byId(id) ?: return null
-        val newId = UUID.randomUUID().toString()
-        dao.upsert(
-            PromptPresetEntity(
-                id = newId,
-                name = "${row.name} 副本",
-                content = row.content,
-                mode = row.mode,
-                builtin = false,
-                sort = dao.nextSort(),
-                updatedAt = clock(),
-            ),
-        )
-        return newId
-    }
-
-    suspend fun deleteCustom(id: String) {
-        dao.deleteCustom(id)
-        // 删掉的正是当前选中项 → 回退到默认，避免下一个新会话拿到空快照
-        if (selected.first() == id) selectPreset(PromptSeeds.DEFAULT_ID)
-    }
-
-    /**
-     * 恢复默认：把「默认」这一条写回官方原文并选中它。
-     * 自定义预设一概不动（02 §12.7 的确认文案承诺了这一点）。
-     */
-    suspend fun restoreDefault() {
-        val seed = PromptSeeds.builtIns.first { it.id == PromptSeeds.DEFAULT_ID }
-        dao.upsert(
-            PromptPresetEntity(
-                id = seed.id,
-                name = seed.name,
-                content = seed.content,
-                mode = seed.mode,
-                builtin = true,
-                sort = seed.sort,
-                updatedAt = clock(),
-            ),
-        )
-        selectPreset(seed.id)
+    suspend fun delete(id: String) {
+        dao.delete(id)
+        // 删掉的正是当前选中项 → 回到「不使用自定义内容」，而不是留一个指向空气的 id
+        if (selected.first() == id) selectPreset(null)
     }
 
     /** 新会话的快照：变量在这里**不求值**，原文入库，发送时再求值（02 §5.6）。 */
     suspend fun snapshotForNewSession(): PromptSnapshot {
-        val row = current()
-        val content = row.content.takeIf { row.mode != PromptMode.CLEAR && it.isNotBlank() }
-        return PromptSnapshot(content = content, mode = row.mode)
-    }
-
-    private fun fallbackDefault(): PromptPresetEntity {
-        val seed = PromptSeeds.builtIns.first { it.id == PromptSeeds.DEFAULT_ID }
-        return PromptPresetEntity(
-            id = seed.id,
-            name = seed.name,
-            content = seed.content,
-            mode = seed.mode,
-            builtin = true,
-            sort = seed.sort,
-            updatedAt = 0,
+        val state = state()
+        return PromptSnapshot(
+            content = PromptComposer.compose(
+                includeOfficial = state.includeOfficial,
+                custom = state.selected?.content.orEmpty(),
+            ),
+            mode = PromptMode.REPLACE,
         )
     }
 
@@ -166,12 +186,20 @@ class PromptPresetStore(
          */
         fun create(
             database: TinyChatDatabase,
-            selected: Flow<String>,
-            selectPreset: suspend (String) -> Unit,
+            selected: Flow<String?>,
+            selectPreset: suspend (String?) -> Unit,
+            includeOfficial: Flow<Boolean>,
+            setIncludeOfficial: suspend (Boolean) -> Unit,
+            migrated: Flow<Boolean>,
+            markMigrated: suspend () -> Unit,
         ): PromptPresetStore = PromptPresetStore(
             dao = database.promptPresetDao(),
             selected = selected,
             selectPreset = selectPreset,
+            includeOfficialSetting = includeOfficial,
+            setIncludeOfficialSetting = setIncludeOfficial,
+            migrated = migrated,
+            markMigrated = markMigrated,
         )
     }
 }

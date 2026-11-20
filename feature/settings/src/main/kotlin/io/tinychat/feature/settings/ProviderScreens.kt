@@ -47,6 +47,7 @@ import io.tinychat.model.ProviderCheck
 import io.tinychat.model.ProviderKind
 import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingMode
+import io.tinychat.ui.TcButton
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcTopBar
 import io.tinychat.designsystem.TcIcons
@@ -134,7 +135,7 @@ fun ProviderListScreen(
                     onDelete(provider)
                 }) { Text("删除", color = palette.danger) }
             },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消", color = TcTheme.palette.labelSecondary) } },
         )
     }
 }
@@ -571,23 +572,12 @@ fun ProviderEditorScreen(
                 Text("取消", color = palette.labelSecondary)
             }
             Spacer(Modifier.weight(1f))
-            Box(
-                Modifier
-                    .height(44.dp)
-                    .fillMaxWidth(0.55f)
-                    .background(
-                        if (canSave) palette.brand else palette.selector,
-                        RoundedCornerShape(10.dp),
-                    )
-                    .clickable(enabled = canSave) { save() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = if (busy) "保存中…" else "保存",
-                    style = TcTypography.bodyMedium,
-                    color = if (canSave) palette.brandOn else palette.labelTertiary,
-                )
-            }
+            TcButton(
+                text = if (busy) "保存中…" else "保存",
+                onClick = { save() },
+                enabled = canSave,
+                modifier = Modifier.fillMaxWidth(0.55f),
+            )
         }
     }
 
@@ -605,7 +595,7 @@ fun ProviderEditorScreen(
                     }
                 }) { Text("清除", color = palette.danger) }
             },
-            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("取消", color = TcTheme.palette.labelSecondary) } },
         )
     }
 }

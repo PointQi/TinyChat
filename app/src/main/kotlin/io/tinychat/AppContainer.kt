@@ -79,11 +79,15 @@ class AppContainer(context: Context) {
     /** 订阅额度（M8-6）：OpenCode Go 的三窗口 usage */
     private val quotaClient = QuotaClient()
 
-    /** 系统提示词预设（M7.5）：播种、选择、给新会话取快照 */
+    /** 系统提示词（决策 45）：开关 + 用户预设，给新会话拼快照 */
     val promptStore = PromptPresetStore.create(
         database = database,
-        selected = userSettings.promptPresetId,
-        selectPreset = { userSettings.setPromptPresetId(it) },
+        selected = userSettings.promptSelectedId,
+        selectPreset = { userSettings.setPromptSelectedId(it) },
+        includeOfficial = userSettings.promptIncludeOfficial,
+        setIncludeOfficial = { userSettings.setPromptIncludeOfficial(it) },
+        migrated = userSettings.promptMigrated,
+        markMigrated = { userSettings.markPromptMigrated() },
     )
 
     /** 服务商配置（M8-6）：列表、增删改、校验状态 */
@@ -128,8 +132,8 @@ class AppContainer(context: Context) {
             }.collect { promptMeta.value = it }
         }
         scope.launch {
-            // 内置预设对齐官方正文；失败不拦启动（表不在也能用代码里的兜底）
-            runCatching { promptStore.ensureSeeded() }
+            // v1 的内置预设与组合方式迁到 v2 的「开关 + 用户预设」；失败不拦启动
+            runCatching { promptStore.migrateIfNeeded() }
         }
         scope.launch {
             // M7-6 的单 Key 迁到 deepseek 名下（M8-6）
