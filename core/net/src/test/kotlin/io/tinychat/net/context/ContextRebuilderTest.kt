@@ -12,6 +12,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -369,5 +370,49 @@ class ContextRebuilderTest {
     fun `没有附件时 userMessage 输出纯文本，报文与 M4 之前一致`() {
         val message = ContextRebuilder.userMessage("普通一句", emptyList())
         assertEquals("普通一句", (message.content as JsonPrimitive).content)
+    }
+
+    // —— 第三方视觉（决策 53）：图片内联成 image_url，文件一律不发 ——
+
+    @Test
+    fun `第三方视觉把图片拼成 image_url 块，图在前文字在后`() {
+        val attachments = listOf(
+            HistoryAttachment(remoteId = null, isImage = true, dataUri = "data:image/jpeg;base64,AAA"),
+        )
+        val message = ContextRebuilder.userMessage("这张图", attachments, ImageFlavor.OPENAI)
+        val content = message.content as JsonArray
+
+        assertEquals(2, content.size)
+        assertEquals("image_url", (content[0] as JsonObject)["type"]!!.jsonPrimitive.content)
+        val url = ((content[0] as JsonObject)["image_url"] as JsonObject)["url"]!!.jsonPrimitive.content
+        assertEquals("data:image/jpeg;base64,AAA", url)
+        assertEquals("text", (content[1] as JsonObject)["type"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `第三方只发图片，文件与没有 data URI 的图片被丢弃`() {
+        val attachments = listOf(
+            HistoryAttachment(remoteId = "file_1", isImage = false),
+            // 官方 Files API 的历史图片：第三方链路没有 data URI，发不出去
+            HistoryAttachment(remoteId = "file_2", isImage = true),
+            HistoryAttachment(remoteId = null, isImage = true, dataUri = "data:image/jpeg;base64,BBB"),
+        )
+        val message = ContextRebuilder.userMessage("看图", attachments, ImageFlavor.OPENAI)
+        val content = message.content as JsonArray
+
+        assertEquals("一张图 + 一段文字", 2, content.size)
+    }
+
+    @Test
+    fun `第三方视角下只有官方附件的轮次整轮丢弃`() {
+        val out = ContextRebuilder.build(
+            listOf(
+                userWithAttachments(1, "", listOf(HistoryAttachment(remoteId = "file_1", isImage = true))),
+                assistant(2, "不该出现"),
+            ),
+            currentReminder = null,
+            flavor = ImageFlavor.OPENAI,
+        )
+        assertTrue(out.isEmpty())
     }
 }

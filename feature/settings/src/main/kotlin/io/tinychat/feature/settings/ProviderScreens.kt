@@ -854,6 +854,7 @@ private fun modelSummary(model: ModelInfo): String = buildList {
     if (model.capabilities.thinking) {
         add(if (model.capabilities.effort) "思考，可调强度" else "思考")
     }
+    if (model.capabilities.imageInput) add("视觉")
 }.joinToString("，")
 
 private fun shortTokens(value: Int): String = when {
@@ -884,6 +885,7 @@ private fun ModelDetailDialog(
     var outputText by remember { mutableStateOf(model.maxOutputTokens.takeIf { it > 0 }?.toString().orEmpty()) }
     var thinking by remember { mutableStateOf(model.capabilities.thinking) }
     var effort by remember { mutableStateOf(model.capabilities.effort) }
+    var vision by remember { mutableStateOf(model.capabilities.imageInput) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -956,6 +958,17 @@ private fun ModelDetailDialog(
                     enabled = thinking,
                     onCheckedChange = { effort = it },
                 )
+                // 视觉只对 OpenAI 兼容链路开放（决策 53）；Anthropic 兼容的图片块还没做，
+                // 不在这里放一个点了也不发货的开关
+                if (protocol == ProviderProtocol.OPENAI_CHAT) {
+                    DialogSwitch(
+                        title = "视觉",
+                        subtitle = "可以发送图片；历史里的图片每轮都会重发一次",
+                        checked = vision,
+                        enabled = true,
+                        onCheckedChange = { vision = it },
+                    )
+                }
             }
         },
         confirmButton = {
@@ -976,6 +989,12 @@ private fun ModelDetailDialog(
                             capabilities = model.capabilities.copy(
                                 thinking = thinking,
                                 effort = effort && thinking,
+                                // 只有 OpenAI 兼容链路真的会发图，别的协议保持原值不动
+                                imageInput = if (protocol == ProviderProtocol.OPENAI_CHAT) {
+                                    vision
+                                } else {
+                                    model.capabilities.imageInput
+                                },
                             ),
                         ),
                     )

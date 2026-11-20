@@ -54,6 +54,12 @@ class AttachmentStore(private val context: Context) {
         /** 缩略图最长边 */
         const val THUMB_MAX_PX = 512
 
+        /** 第三方视觉：压到这个长边再内联（05 §6.4） */
+        const val VISION_MAX_PX = 1568
+
+        /** 第三方视觉的 JPEG 质量 */
+        const val VISION_QUALITY = 85
+
         private const val COPY_BUFFER = 64 * 1024
     }
 
@@ -141,11 +147,14 @@ class AttachmentStore(private val context: Context) {
         return SavedFile(path = target.absolutePath, size = target.length())
     }
 
-    /** 删除某个附件相关的本地文件（原件 + 缩略图），用于草稿移除/消息删除 */
+    /** 删除某个附件相关的本地文件（原件 + 缩略图 + 第三方视觉派生图），用于草稿移除/消息删除 */
     fun delete(attachmentId: String, localPath: String?) {
         runCatching { thumbFile(attachmentId).delete() }
         val file = localPath?.let { File(it) }
-        file?.let { runCatching { it.delete() } }
+        file?.let {
+            runCatching { visionFile(it.absolutePath).delete() }
+            runCatching { it.delete() }
+        }
         // 顺手收敛空目录：一块附件都没有了，`attachments/{messageId}/` 就别留着
         val parent = file?.parentFile
         if (parent != null && parent.isDirectory && parent.listFiles()?.isEmpty() == true) {
@@ -172,6 +181,29 @@ class AttachmentStore(private val context: Context) {
         if (!source.isFile) return null
         return runCatching { writeThumb(id) { source.inputStream() } }.getOrNull()
     }
+
+    /** 第三方视觉的派生图：压在原件旁边，压过一次就复用（决策 53） */
+    fun visionFile(localPath: String): File = File("$localPath.vision.jpg")
+
+    /**
+     * 把本地图片变成可内联的 `data:image/jpeg;base64,…`。
+     *
+     * OpenAI 兼容链路没有服务端文件引用，图片只能整段塞进报文；历史里每一轮都会重发，
+     * 所以只压一次、落盘复用。长边超过 [VISION_MAX_PX] 按比例缩，质量 [VISION_QUALITY]。
+     * 失败返回 null（调用方决定报错还是跳过）。
+     */
+    fun visionDataUri(localPath: String): String? = runCatching {
+        val source = File(localPath)
+        if (!source.isFile || source.length() <= 0) return null
+        val derived = visionFile(localPath)
+        val target = if (derived.isFile && derived.length() > 0) {
+            derived
+        } else {
+            encodeVision(source, derived) ?: return null
+        }
+        "data:image/jpeg;base64," +
+            android.util.Base64.encodeToString(target.readBytes(), android.util.Base64.NO_WRAP)
+    }.getOrNull()
 
     // —— 内部 ——
 
@@ -218,6 +250,36 @@ class AttachmentStore(private val context: Context) {
             Bitmap.CompressFormat.WEBP
         }
         target.outputStream().use { scaled.compress(format, 80, it) }
+        scaled.recycle()
+        return target.takeIf { it.length() > 0 }
+    }
+
+    /** 第三方视觉：按 2 的幂降采样 → 长边 ≤ 1568 → JPEG 85 */
+    private fun encodeVision(source: File, target: File): File? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(source.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= VISION_MAX_PX) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bitmap = BitmapFactory.decodeFile(source.absolutePath, options) ?: return null
+
+        val longest = maxOf(bitmap.width, bitmap.height)
+        val scaled = if (longest > VISION_MAX_PX) {
+            val ratio = VISION_MAX_PX.toFloat() / longest
+            val out = Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * ratio).toInt().coerceAtLeast(1),
+                (bitmap.height * ratio).toInt().coerceAtLeast(1),
+                true,
+            )
+            if (out !== bitmap) bitmap.recycle()
+            out
+        } else {
+            bitmap
+        }
+        target.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, VISION_QUALITY, it) }
         scaled.recycle()
         return target.takeIf { it.length() > 0 }
     }

@@ -5,6 +5,7 @@ import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ThinkingMode
 import io.tinychat.model.ProviderProtocol
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -13,9 +14,11 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 /**
- * OpenAI Chat Completions 协议（M8-1）。
+ * OpenAI Chat Completions 协议（M8-1 / 决策 53 起带图片）。
  *
- * 只发文本：`messages[].content` 一律字符串。图片走 `image_url` 是 v1.1 的事（用户拍板先不做）。
+ * `messages[].content` 通常是字符串；这一轮带图片时变成内容数组
+ * `[{"type":"text"}, {"type":"image_url","image_url":{"url":"data:…"}}]`。
+ * 文件（PDF/Word）仍然只有官方 Files API 支持，第三方链路丢弃。
  *
  * 与官方 Messages 链路的三处差别，都在这里收口：
  * 1. 端点与鉴权（Bearer，而不是 `x-api-key`）；
@@ -67,14 +70,12 @@ object OpenAiChatProtocol {
                     textOf(message).takeIf { it.isNotEmpty() }?.let { pendingReminder = it }
                     return@forEach
                 }
-                val text = textOf(message)
-                if (text.isEmpty()) return@forEach
-                val reminder = pendingReminder
+                val content = contentOf(message, pendingReminder) ?: return@forEach
                 pendingReminder = null
                 add(
                     buildJsonObject {
                         put("role", message.role)
-                        put("content", if (reminder.isNullOrEmpty()) text else "$reminder\n\n$text")
+                        put("content", content)
                     },
                 )
             }
@@ -126,7 +127,7 @@ object OpenAiChatProtocol {
         else -> command.systemPrompt?.takeIf { it.isNotBlank() }
     }
 
-    /** 文本块拼接：字符串直接取，数组只取 `type=text`（附件块在第三方链路不出现）。 */
+    /** 文本块拼接：字符串直接取，数组只取 `type=text`（图片块另行处理）。 */
     private fun textOf(message: WireMessage): String = when (val content = message.content) {
         is JsonPrimitive -> content.contentOrNull.orEmpty()
         is JsonArray -> content.mapNotNull { element ->
@@ -136,6 +137,54 @@ object OpenAiChatProtocol {
             (obj["text"] as? JsonPrimitive)?.contentOrNull
         }.joinToString("")
         else -> ""
+    }
+
+    /**
+     * 一条消息的 `content`（决策 53）：
+     *
+     * - 没有图片 → 字符串（元信息拼在最前面），与改动前的报文逐字节一致；
+     * - 有图片 → 数组：一个 text 元素（同样把元信息拼进去）+ 若干 `image_url`；
+     * - 既没有文字也没有图片 → null（这条消息整个跳过）。
+     */
+    private fun contentOf(message: WireMessage, reminder: String?): JsonElement? {
+        val text = textOf(message)
+        val merged = when {
+            reminder.isNullOrEmpty() -> text
+            text.isEmpty() -> reminder
+            else -> "$reminder\n\n$text"
+        }
+        val images = imageUrls(message)
+        if (images.isEmpty()) return merged.takeIf { it.isNotEmpty() }?.let(::JsonPrimitive)
+        // 顺序与官方链路一致：图片在前、文本在后（03 §6.5）
+        return buildJsonArray {
+            images.forEach { url ->
+                add(
+                    buildJsonObject {
+                        put("type", "image_url")
+                        put("image_url", buildJsonObject { put("url", url) })
+                    },
+                )
+            }
+            if (merged.isNotEmpty()) {
+                add(
+                    buildJsonObject {
+                        put("type", "text")
+                        put("text", merged)
+                    },
+                )
+            }
+        }
+    }
+
+    /** 数组内容里的 `image_url` 块（官方链路的历史图片不会被转成这个形状，自然不会误抓） */
+    private fun imageUrls(message: WireMessage): List<String> {
+        val content = message.content as? JsonArray ?: return emptyList()
+        return content.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            if ((obj["type"] as? JsonPrimitive)?.contentOrNull != "image_url") return@mapNotNull null
+            val url = ((obj["image_url"] as? JsonObject)?.get("url") as? JsonPrimitive)?.contentOrNull
+            url?.takeIf { it.isNotBlank() }
+        }
     }
 
     /** 我们的三档 → OpenAI 的合法枚举（low/medium/high）。 */

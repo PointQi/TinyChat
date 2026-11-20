@@ -8,13 +8,17 @@ import io.tinychat.model.ProviderMeta
 import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ThinkingMode
+import io.tinychat.net.context.ContextRebuilder
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -264,5 +268,70 @@ class OpenAiChatProtocolTest {
             "budget 必须小于 max_tokens",
             body["max_tokens"]!!.jsonPrimitive.int > 4_096,
         )
+    }
+
+    // —— 决策 53：第三方视觉（图片内联，只走 OpenAI 兼容） ——
+
+    @Test
+    fun `带图片的消息用内容数组，纯文本消息仍是字符串`() {
+        val imageUri = "data:image/jpeg;base64,AAA"
+        val messages = listOf(
+            WireMessage.text(WireMessage.ROLE_USER, "看看这张图"),
+            WireMessage.blocks(
+                WireMessage.ROLE_USER,
+                listOf(
+                    ContextRebuilder.openAiImageBlock(imageUri),
+                    buildJsonObject {
+                        put("type", "text")
+                        put("text", "这是什么")
+                    },
+                ),
+            ),
+        )
+        val prepared = OpenAiChatProtocol.build(
+            baseUrl = "https://gateway.example/v1",
+            apiKey = "sk-test",
+            command = command(withReminder = false).copy(messages = messages),
+        )
+        val body = Json.parseToJsonElement(prepared.bodyJson) as JsonObject
+        // 第 0 条是 system，所以按 role 取用户消息
+        val users = body["messages"]!!.jsonArray
+            .filter { it.jsonObject["role"]!!.jsonPrimitive.content == "user" }
+
+        assertTrue("没有图片的那条仍然是字符串", users[0].jsonObject["content"] is JsonPrimitive)
+        val content = users[1].jsonObject["content"]!!.jsonArray
+        assertEquals(2, content.size)
+        assertEquals("image_url", content[0].jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals(
+            imageUri,
+            (content[0].jsonObject["image_url"] as JsonObject)["url"]!!.jsonPrimitive.content,
+        )
+        assertEquals("text", content[1].jsonObject["type"]!!.jsonPrimitive.content)    }
+
+    @Test
+    fun `带图片时元信息拼进 text 元素而不是丢掉`() {
+        val messages = listOf(
+            WireMessage.text(WireMessage.ROLE_REMINDER, "2026-11-17,星期一,浙江,App,中文"),
+            WireMessage.blocks(
+                WireMessage.ROLE_USER,
+                listOf(ContextRebuilder.openAiImageBlock("data:image/jpeg;base64,AAA")),
+            ),
+        )
+        val prepared = OpenAiChatProtocol.build(
+            baseUrl = "https://gateway.example/v1",
+            apiKey = "sk-test",
+            command = command(withReminder = false).copy(messages = messages),
+        )
+        val body = Json.parseToJsonElement(prepared.bodyJson) as JsonObject
+        val content = (body["messages"] as JsonArray)
+            .first { it.jsonObject["role"]!!.jsonPrimitive.content == "user" }
+            .jsonObject["content"]!!
+            .jsonArray
+
+        // 只有图、没有正文：仍要补一个 text 元素把元信息带上（图片在前、文本在后）
+        assertEquals(2, content.size)
+        assertEquals("image_url", content[0].jsonObject["type"]!!.jsonPrimitive.content)
+        val text = content[1].jsonObject["text"]!!.jsonPrimitive.content
+        assertTrue(text.startsWith("2026-11-17"))
     }
 }

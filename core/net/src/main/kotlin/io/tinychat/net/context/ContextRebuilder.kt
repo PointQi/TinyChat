@@ -18,16 +18,30 @@ import kotlinx.serialization.json.contentOrNull
 /**
  * 历史轮次里的一个附件：只带重建请求需要的东西。
  *
- * `remoteId` 为 null = 没上传成功（导入的老数据、或上传失败），**不进请求**；
- * 若该轮正文也为空，整轮会被丢弃（与「孤立 USER」同处理）。
+ * - `remoteId`：官方 Files API 的 file_id，为 null = 没上传成功（导入的老数据、或上传失败），**不进请求**；
+ * - `dataUri`：第三方视觉用的 `data:image/jpeg;base64,…`，由仓库在构建请求前压好；
+ * - 若该轮正文也为空、又没有可用的附件，整轮会被丢弃（与「孤立 USER」同处理）。
  */
 data class HistoryAttachment(
     val remoteId: String?,
     val isImage: Boolean,
+    /** 第三方视觉的内联图片；官方链路不用它 */
+    val dataUri: String? = null,
 ) {
-    /** 能不能进请求 */
-    val usable: Boolean get() = !remoteId.isNullOrBlank()
+    /** 有没有东西能进请求（具体形状由 [ImageFlavor] 决定） */
+    val usable: Boolean get() = !remoteId.isNullOrBlank() || !dataUri.isNullOrBlank()
 }
+
+/**
+ * 图片块的形状（决策 53）。
+ *
+ * - `DEEPSEEK`：官方 Files API，`{"type":"image","source":{"type":"file","file_id":…}}`；
+ * - `OPENAI`：OpenAI 兼容链路，`{"type":"image_url","image_url":{"url":"data:…"}}`，
+ *   历史里的图每一轮都要重发（那边没有服务端文件引用）。
+ *
+ * 文件（PDF/Word）只有官方支持，第三方链路一律丢弃。
+ */
+enum class ImageFlavor { DEEPSEEK, OPENAI }
 
 /** 上下文构建的一段：消息 + 它的碎片（已按 ord 排好）+ 它的附件。 */
 data class ContextTurn(
@@ -59,7 +73,11 @@ data class ContextTurn(
  */
 object ContextRebuilder {
 
-    fun build(branch: List<ContextTurn>, currentReminder: String?): List<WireMessage> {
+    fun build(
+        branch: List<ContextTurn>,
+        currentReminder: String?,
+        flavor: ImageFlavor = ImageFlavor.DEEPSEEK,
+    ): List<WireMessage> {
         val out = ArrayList<WireMessage>(branch.size + 2)
 
         var pendingUser: ContextTurn? = null
@@ -86,7 +104,7 @@ object ContextRebuilder {
                     val assistantText = turn.usableText() ?: continue
 
                     val userText = user.userText().orEmpty()
-                    val attachments = user.usableAttachments()
+                    val attachments = user.usableAttachments(flavor)
                     // 正文和附件都空 = 这一轮没有内容可回传
                     if (userText.isBlank() && attachments.isEmpty()) {
                         pendingUser = null
@@ -95,7 +113,7 @@ object ContextRebuilder {
 
                     // 规则 5：用这条 USER 自己的快照（历史不可改，否则前缀缓存全废）
                     emitReminder(user.message.reminderSnapshot)
-                    out += userMessage(userText, attachments)
+                    out += userMessage(userText, attachments, flavor)
                     out += turn.assistantMessage(assistantText)
                     pendingUser = null
                 }
@@ -109,25 +127,37 @@ object ContextRebuilder {
     }
 
     /**
-     * 规则 6 / 附件：**文件与图片在前、文本在后**（03 §6.5 的示例顺序）。
+     * 规则 6 / 附件：**图片与文件在前、文本在后**（03 §6.5 的示例顺序）。
      *
      * 没有可用附件时退化成纯文本消息，报文与 M4 之前完全一致 —— 老会话不会因为
      * 这次改动多出空 `content` 数组。
      */
-    fun userMessage(text: String, attachments: List<HistoryAttachment>): WireMessage {
+    fun userMessage(
+        text: String,
+        attachments: List<HistoryAttachment>,
+        flavor: ImageFlavor = ImageFlavor.DEEPSEEK,
+    ): WireMessage {
         val usable = attachments.filter { it.usable }
         if (usable.isEmpty()) return WireMessage.text(WireMessage.ROLE_USER, text)
 
         val blocks = buildList {
             usable.forEach { attachment ->
-                val id = attachment.remoteId ?: return@forEach
-                add(
-                    if (attachment.isImage) {
-                        DeepSeekMessagesProtocol.imageBlock(id)
-                    } else {
-                        DeepSeekMessagesProtocol.fileBlock(id)
-                    },
-                )
+                when (flavor) {
+                    ImageFlavor.DEEPSEEK -> {
+                        val id = attachment.remoteId ?: return@forEach
+                        add(
+                            if (attachment.isImage) {
+                                DeepSeekMessagesProtocol.imageBlock(id)
+                            } else {
+                                DeepSeekMessagesProtocol.fileBlock(id)
+                            },
+                        )
+                    }
+                    // 第三方：只发图片，文件不支持；图片内联成 data URI
+                    ImageFlavor.OPENAI -> attachment.dataUri
+                        ?.takeIf { attachment.isImage }
+                        ?.let { add(openAiImageBlock(it)) }
+                }
             }
             if (text.isNotBlank()) {
                 add(
@@ -138,11 +168,27 @@ object ContextRebuilder {
                 )
             }
         }
+        // 附件一个块都拼不出来（例如 encode 失败）：退回纯文本，别发空 content
+        if (blocks.isEmpty()) return WireMessage.text(WireMessage.ROLE_USER, text)
         return WireMessage.blocks(WireMessage.ROLE_USER, blocks)
     }
 
-    private fun ContextTurn.usableAttachments(): List<HistoryAttachment> =
-        attachments.filter { it.usable }
+    /** OpenAI 兼容链路的图片块：`data:` URI 直接内联，历史每轮都要重发 */
+    fun openAiImageBlock(dataUri: String): JsonObject = buildJsonObject {
+        put("type", JsonPrimitive("image_url"))
+        put(
+            "image_url",
+            buildJsonObject { put("url", JsonPrimitive(dataUri)) },
+        )
+    }
+
+    private fun ContextTurn.usableAttachments(flavor: ImageFlavor): List<HistoryAttachment> =
+        attachments.filter {
+            when (flavor) {
+                ImageFlavor.DEEPSEEK -> !it.remoteId.isNullOrBlank()
+                ImageFlavor.OPENAI -> it.isImage && !it.dataUri.isNullOrBlank()
+            }
+        }
 
     /**
      * 规则 4：没有 `read_link` 时就是一条纯文本消息；有时改成块数组

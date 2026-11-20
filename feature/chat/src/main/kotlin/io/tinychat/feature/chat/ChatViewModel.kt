@@ -302,9 +302,15 @@ data class ChatUiState(
     private val currentModel: ModelInfo?
         get() = currentProvider?.model(modelId)
 
-    /** 当前模型能不能收图片（v4-pro 不支持，M4-6） */
+    /**
+     * 当前模型能不能收图片（v4-pro 不支持，M4-6）。
+     *
+     * Anthropic 兼容链路还没有图片块实现（决策 53 只做了 OpenAI 兼容），
+     * 所以那里即使能力位为真也不露附件入口——不给自己造一个点了不发货的按钮。
+     */
     val canAttachImage: Boolean
-        get() = currentModel?.capabilities?.imageInput == true
+        get() = currentModel?.capabilities?.imageInput == true &&
+            currentProvider?.protocol != io.tinychat.model.ProviderProtocol.ANTHROPIC_MESSAGES
 
     /** 圆环分子：当前分支最后一条带 usage 的回答（决策 26，不做预估） */
     val contextUsed: Int
@@ -701,6 +707,17 @@ class ChatViewModel(
         }
         if (!state.hasApiKey) {
             state = state.copy(error = "尚未配置当前服务商的 API Key", errorKind = ErrorKind.HTTP_401)
+            return
+        }
+        // 附件能力跟着当前模型走：从带视觉的模型切到不带的，草稿里的图片不能悄悄发出去
+        val unsupported = drafts.firstOrNull { draft ->
+            if (draft.isImage) !state.canAttachImage else !state.canAttachFile
+        }
+        if (unsupported != null) {
+            state = state.copy(
+                error = if (unsupported.isImage) "当前模型不支持图片输入" else "当前模型不支持文件",
+                errorKind = null,
+            )
             return
         }
 

@@ -1804,6 +1804,7 @@ private fun InputCard(
     if (attachSheet) {
         AttachmentSheet(
             showCamera = canTakePhoto,
+            showFiles = state.canAttachFile,
             onDismiss = { attachSheet = false },
             onImages = {
                 attachSheet = false
@@ -1865,7 +1866,13 @@ private fun ModelEffortPill(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = if (currentModel?.capabilities?.effort == true) "$label ${effort.displayName}" else label,
+            // 强度只在「这一轮真的会带思考参数」时显示。关掉思考、或模型本来就不支持强度，
+            // 都只是「没有参数」，不该拿一个 Off 冒充第四档（决策 50）。
+            text = if (thinkingEnabled && currentModel?.capabilities?.effort == true) {
+                "$label ${effort.displayName}"
+            } else {
+                label
+            },
             style = TcTypography.bodySmall,
             color = palette.brand,
             fontWeight = FontWeight.Medium,
@@ -2339,11 +2346,12 @@ private fun DraftChip(draft: DraftAttachment, onRemove: () -> Unit, onOpen: () -
     }
 }
 
-/** 附件来源面板（相册 / 拍照 / 文件） */
+/** 附件来源面板（相册 / 拍照 / 文件）。第三方视觉只收图片，所以不显示「选择文件」 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AttachmentSheet(
     showCamera: Boolean,
+    showFiles: Boolean,
     onDismiss: () -> Unit,
     onImages: () -> Unit,
     onCamera: () -> Unit,
@@ -2364,7 +2372,7 @@ private fun AttachmentSheet(
         ) {
             SheetAction(TcIcons.Photo, "从相册选择", onImages)
             if (showCamera) SheetAction(TcIcons.Camera, "拍照", onCamera)
-            SheetAction(TcIcons.Folder, "选择文件", onFiles)
+            if (showFiles) SheetAction(TcIcons.Folder, "选择文件", onFiles)
         }
     }
 }

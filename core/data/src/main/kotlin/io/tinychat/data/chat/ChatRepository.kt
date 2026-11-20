@@ -21,6 +21,7 @@ import io.tinychat.model.MessageStatus
 import io.tinychat.model.MessageStatus.FINISHED
 import io.tinychat.model.ModelInfo
 import io.tinychat.model.Provider
+import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.pickVersion
 import io.tinychat.model.PromptMode
 import io.tinychat.model.RequestPayload
@@ -42,6 +43,7 @@ import io.tinychat.model.buildSearchHit
 import io.tinychat.net.context.ContextRebuilder
 import io.tinychat.net.context.ContextTurn
 import io.tinychat.net.context.HistoryAttachment
+import io.tinychat.net.context.ImageFlavor
 import io.tinychat.net.context.ReminderBuilder
 import io.tinychat.net.protocol.ChatCommand
 import io.tinychat.net.protocol.ChatProtocols
@@ -385,7 +387,7 @@ class ChatRepository(
             .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
             .joinToString("")
         // 只发了图片/文件、没写文字的那一轮也可以重新生成
-        if (userText.isBlank() && attachmentsOf(userMessageId).none { it.usable }) {
+        if (userText.isBlank() && db.attachmentDao().byMessage(userMessageId).isEmpty()) {
             error("这条回答对应的提问内容为空，无法重新生成")
         }
 
@@ -456,7 +458,8 @@ class ChatRepository(
         }
         val modelInfo = requireModel(provider, session)
         val key = requireKey(provider)
-        val history = chainTurns(sessionId, question.parentId)
+        // 继续生成只有 Messages 协议支持（预填充），所以图片仍走官方 Files API 那条形状
+        val history = chainTurns(sessionId, question.parentId, ImageFlavor.DEEPSEEK)
         val reminder = question.reminderSnapshot ?: currentReminder()
 
         val command = ChatCommand(
@@ -470,8 +473,12 @@ class ChatRepository(
             maxOutputTokens = modelInfo.maxOutputTokens,
             searchEnabled = false,
             includeTitle = false,
-            messages = ContextRebuilder.build(history, reminder) +
-                ContextRebuilder.userMessage(userText, attachmentsOf(question.id)) +
+            messages = ContextRebuilder.build(history, reminder, ImageFlavor.DEEPSEEK) +
+                ContextRebuilder.userMessage(
+                    userText,
+                    attachmentsOf(question.id, ImageFlavor.DEEPSEEK),
+                    ImageFlavor.DEEPSEEK,
+                ) +
                 WireMessage.text(WireMessage.ROLE_ASSISTANT, partial),
         )
 
@@ -622,11 +629,45 @@ class ChatRepository(
         )
     }
 
-    /** 本轮提问的附件（只带重建请求需要的 remoteId / isImage） */
-    private suspend fun attachmentsOf(messageId: Long): List<HistoryAttachment> =
-        db.attachmentDao().byMessage(messageId).map {
-            HistoryAttachment(remoteId = it.remoteId, isImage = it.isImage)
+    /**
+     * 这一轮图片走哪种形状（决策 53）：只有 OpenAI 兼容 + 模型声明了图片输入才内联 base64；
+     * 官方仍走 Files API；Anthropic 兼容与不支持视觉的模型一律不带图（历史里的图会被丢弃）。
+     */
+    private fun imageFlavor(provider: Provider, model: ModelInfo): ImageFlavor =
+        if (provider.protocol == ProviderProtocol.OPENAI_CHAT && model.capabilities.imageInput) {
+            ImageFlavor.OPENAI
+        } else {
+            ImageFlavor.DEEPSEEK
         }
+
+    /**
+     * 本轮提问的附件。
+     *
+     * 官方链路只带 `remoteId`（Files API 的 file_id）；第三方视觉把本地原件压成 data URI。
+     * 压缩失败时给 null —— 当前这一轮会退化成纯文字，而不是悄悄发一张空图。
+     */
+    private suspend fun attachmentsOf(
+        messageId: Long,
+        flavor: ImageFlavor,
+    ): List<HistoryAttachment> =
+        db.attachmentDao().byMessage(messageId).map { row ->
+            val dataUri = if (flavor == ImageFlavor.OPENAI && row.isImage) visionDataUri(row) else null
+            // 本轮刚落盘的图片压不出来：明确报错，别让这一轮悄悄发成纯文字
+            if (flavor == ImageFlavor.OPENAI && row.isImage && dataUri == null) {
+                throw ChatException(ErrorKind.UPLOAD, message = "图片处理失败，请重新选择这张图")
+            }
+            HistoryAttachment(
+                remoteId = row.remoteId,
+                isImage = row.isImage,
+                dataUri = dataUri,
+            )
+        }
+
+    /** 本地图片 → `data:image/jpeg;base64,…`；文件不存在或解码失败返回 null */
+    private fun visionDataUri(row: AttachmentEntity): String? =
+        row.localPath
+            ?.takeIf { attachmentStore.exists(it) }
+            ?.let { attachmentStore.visionDataUri(it) }
 
     /**
      * 在一条**已存在的**提问下流式生成回答：发送与重新生成共用这一段。
@@ -677,7 +718,8 @@ class ChatRepository(
 
         // 上下文只取**当前分支**：到这条提问的父节点为止，再追加本次提问
         val question = db.messageDao().byId(userMessageId)
-        val history = chainTurns(sessionId, question?.parentId)
+        val flavor = imageFlavor(provider, modelInfo)
+        val history = chainTurns(sessionId, question?.parentId, flavor)
 
         // 这家服务商之前拒绝过思考参数：记住后不再发（模型声明还留着，用户改协议再说）
         val effortDisabled = provider.meta[ProviderMeta.NO_EFFORT] == "1"
@@ -693,8 +735,8 @@ class ChatRepository(
             searchEnabled = session.searchEnabled,
             // 服务端标题只有官方支持；第三方不可能有，开着也只是白填字段
             includeTitle = session.title == null && modelInfo.capabilities.serverSideTitle,
-            messages = ContextRebuilder.build(history, reminder) +
-                ContextRebuilder.userMessage(userText, attachmentsOf(userMessageId)),
+            messages = ContextRebuilder.build(history, reminder, flavor) +
+                ContextRebuilder.userMessage(userText, attachmentsOf(userMessageId, flavor), flavor),
         )
 
         val request = ChatProtocols.build(
@@ -809,7 +851,11 @@ class ChatRepository(
     }
 
     /** 从 leaf 往上回溯成 root → leaf 的顺序 */
-    private suspend fun chainTurns(sessionId: String, leafId: Long?): List<ContextTurn> {
+    private suspend fun chainTurns(
+        sessionId: String,
+        leafId: Long?,
+        flavor: ImageFlavor,
+    ): List<ContextTurn> {
         if (leafId == null) return emptyList()
         val all = db.messageDao().withFragments(sessionId).associateBy { it.message.id }
         val path = ArrayDeque<MessageWithFragments>()
@@ -824,8 +870,17 @@ class ChatRepository(
             ContextTurn(
                 message = entry.message.toDomain(),
                 fragments = entry.orderedFragments.map { it.toDomain() },
-                attachments = entry.attachments.map {
-                    HistoryAttachment(remoteId = it.remoteId, isImage = it.isImage)
+                attachments = entry.attachments.map { row ->
+                    HistoryAttachment(
+                        remoteId = row.remoteId,
+                        isImage = row.isImage,
+                        // 第三方视觉：历史里的图每一轮都要重发，这里顺带把 data URI 压好
+                        dataUri = if (flavor == ImageFlavor.OPENAI && row.isImage) {
+                            visionDataUri(row)
+                        } else {
+                            null
+                        },
+                    )
                 },
             )
         }
