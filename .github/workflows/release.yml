@@ -23,6 +23,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 同 ci.yml：默认的 "tools" 包已经不存在，必须显式指定，否则这一步直接挂
+          packages: platform-tools
 
       - name: Install SDK platform
         run: |
