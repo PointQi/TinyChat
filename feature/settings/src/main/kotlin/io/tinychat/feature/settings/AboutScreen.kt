@@ -166,7 +166,7 @@ private val ApacheComponents = listOf(
 private val MitComponents = listOf(
     "KaTeX（含随包分发的字体）" to "数学公式渲染",
     "Mermaid" to "流程图渲染",
-    "deepseek-ai/chat-demo" to "图标与界面参考",
+    "deepseek-ai/chat-demo" to "图标与界面参考，Copyright (c) DeepSeek",
 )
 
 private val TestComponents = listOf(

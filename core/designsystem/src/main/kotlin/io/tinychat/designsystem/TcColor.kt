@@ -23,6 +23,8 @@ data class TcSyntaxColors(
 /**
  * 色板（M0-3）。取值来自 chat-demo `src/app/theme.css`（MIT），见 docs/02 §10.2。
  * 浅色/深色成对维护，**不要在业务代码里写死颜色**。
+ *
+ * Derived from deepseek-ai/chat-demo (MIT). Copyright (c) DeepSeek.
  */
 data class TcPalette(
     val brand: Color,

@@ -1,0 +1,78 @@
+TinyChat
+Copyright (c) 2026 Takeoff0518
+
+TinyChat 以 MIT 许可证发布，全文见仓库根目录的 LICENSE。
+
+本文件列出这个应用里用到的第三方作品：哪些代码和素材是移植或参考来的，随安装包
+分发了哪些组件，各自按什么许可证授权。完整清单在应用内「设置 → 关于 → 开源许可」
+里也能看到。
+
+
+一、参考与移植的项目
+
+deepseek-ai/chat-demo
+    https://github.com/deepseek-ai/chat-demo
+    许可证：MIT，Copyright (c) DeepSeek
+
+    本项目的界面并非逐行移植，但下列部分直接来自它或按它的做法实现：
+
+    - 图标路径：core/designsystem 下的 ChatDemoIcons.kt，SVG path 数据原样搬运，
+      只为 Compose 重写了封装；TcIcons.kt 里注明哪些图标来自它、哪些是自绘。
+    - 配色：TcColor.kt 的色值取自它的 theme.css。
+    - 交互与排版：气泡、输入区、抽屉、工具行等处的尺寸与动效节奏参考了它。
+    - 流式响应解析的若干边界处理（keep-alive 注释行、无 stop_reason 的提前断开等）
+      沿用它的做法。
+
+    MIT 许可证的全文见上方链接所在仓库。
+
+
+二、随安装包分发的第三方资源
+
+KaTeX（含随包的 woff2 字体）
+    https://github.com/KaTeX/KaTeX
+    许可证：MIT
+    用途：数学公式渲染。文件位于 core/markdown/src/main/assets/katex/。
+
+Mermaid
+    https://github.com/mermaid-js/mermaid
+    许可证：MIT
+    用途：流程图渲染。文件位于 core/markdown/src/main/assets/mermaid/。
+
+
+三、运行时依赖（随安装包分发）
+
+下列组件均以 Apache License 2.0 授权，版权归各自的作者所有：
+
+    - Kotlin 标准库（JetBrains）
+    - kotlinx.coroutines、kotlinx.serialization（JetBrains）
+    - AndroidX：core-ktx、core-splashscreen、activity-compose、
+      lifecycle-viewmodel-compose、lifecycle-runtime-compose、navigation-compose、
+      room、datastore-preferences（Google）
+    - Jetpack Compose：ui、ui-graphics、foundation、material3（Google）
+    - OkHttp（Square）
+    - Coil（Coil 项目）
+    - multiplatform-markdown-renderer（Mike Penz）
+
+
+四、仅构建与测试期使用（不随安装包分发）
+
+    - JUnit 4（Eclipse Public License 1.0）
+    - Robolectric（MIT）
+    - kotlinx-coroutines-test（Apache License 2.0）
+    - androidx.test:core（Apache License 2.0）
+    - Android Gradle Plugin、Kotlin 编译器、KSP（均 Apache License 2.0）
+
+
+五、应用图标与品牌图
+
+    app 的启动图标、核心界面里的角色图，以及文档与 README 使用的同一张图
+    （core/designsystem/src/main/res/drawable-nodpi/tc_logo.png、docs/assets/logo.png），
+    为本项目专用素材。
+
+
+六、关于许可证文本
+
+    MIT 与本项目自身的许可证全文见仓库根目录的 LICENSE，以及各上游项目仓库。
+    Apache License 2.0 的全文见 https://www.apache.org/licenses/LICENSE-2.0。
+    上述 Apache 组件在分发时未附带各自的 NOTICE 文件，本项目在此统一致谢，
+    并在应用内「设置 → 关于 → 开源许可」中按许可证分组列出组件名称。

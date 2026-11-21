@@ -1,4 +1,4 @@
-﻿package io.tinychat.designsystem
+package io.tinychat.designsystem
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
@@ -12,6 +12,8 @@ import androidx.compose.ui.unit.dp
 /**
  * chat-demo 的全套图标（MIT），**机械移植**自 `src/components/base/icons.tsx`，
  * 路径数据一字未改，没有手绘近似。
+ *
+ * Derived from deepseek-ai/chat-demo (MIT). Copyright (c) DeepSeek.
  *
  * ⚠️ 这个文件由脚本生成，不要手改；要加新图标就重新生成。
  * 颜色由 `Icon(tint = ...)` 决定，这里的黑色只是占位。
