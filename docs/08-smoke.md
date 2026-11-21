@@ -9,13 +9,13 @@
 
 | 项 | 值 |
 | --- | --- |
-| 日期 | （执行时填） |
-| 执行人 | |
-| 机型 / 系统 | |
-| APK | `app/build/outputs/apk/release/app-release.apk` |
-| SHA-256 | （执行时填，`Get-FileHash`） |
-| 签名 | `apksigner verify --print-certs`，应见 `CN=TinyChat` |
-| 对应提交 | （执行时填 `git rev-parse --short HEAD`） |
+| 日期 | 2026-11-21 |
+| 执行人 | agent（真机操作为主，语音与拍照需用户配合） |
+| 机型 / 系统 | HUAWEI FIN-AL60 / Android 12（API 31）/ 1084×2412 |
+| APK | `app/build/outputs/apk/release/app-release.apk`，4,019,342 B |
+| SHA-256 | `80915CCE7C3A7D82828439BEB6ACF313A48F75F019002656D88290E19F0299A2` |
+| 签名 | `CN=TinyChat, OU=Android, O=TinyChat, C=CN`，v2，证书 SHA-256 `9eccb46d…fd89` |
+| 对应提交 | `0080037` |
 
 **记法**：结果只有三种——`通过`、`失败（现象 / 证据 / 处置）`、`本次跳过（原因）`。
 证据优先用文字与数值（`dumpsys`、文件大小、`am start -W`），需要看画面时才截图。
@@ -52,7 +52,7 @@
 | 干净安装（先卸载再装正式包） | 能装上，首次打开不崩，引导正常 | |
 | 覆盖安装（旧版本 → 本版本） | 数据都在，会话可读，Key 不用重填 | |
 | `versionCode` 递增 | 旧版本上能直接覆盖，不提示签名冲突 | |
-| 签名校验 | `CN=TinyChat`，v2 方案为 true | |
+| 签名校验 | `CN=TinyChat`，v2 方案为 true | 通过（`CN=TinyChat, OU=Android, O=TinyChat, C=CN`，V2 Signer，证书 `9eccb46d…fd89`） |
 | 冷启动耗时 | 与 M9-1 基线（774ms）相差不超过 20% | |
 | 热启动耗时 | 与基线（142ms）相差不超过 20% | |
 | 关于页版本号 | 与 APK 的 `versionName` 一致 | |
