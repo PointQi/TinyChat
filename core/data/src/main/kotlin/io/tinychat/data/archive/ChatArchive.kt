@@ -23,7 +23,7 @@ class ChatArchive(
     suspend fun import(uri: Uri): ImportReport {
         val report = withContext(Dispatchers.IO) {
             val input = context.contentResolver.openInputStream(uri)
-                ?: throw ArchiveException("打不开这个文件")
+                ?: throw ArchiveException("无法打开该文件，请重新选择")
             val staged = File(context.cacheDir, "import-${java.util.UUID.randomUUID()}.zip")
             try {
                 input.use { source -> staged.outputStream().use { sink -> source.copyTo(sink) } }
@@ -43,7 +43,7 @@ class ChatArchive(
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
     ): ExportReport = withContext(Dispatchers.IO) {
         val output = context.contentResolver.openOutputStream(uri, "wt")
-            ?: throw ArchiveException("打不开这个位置，无法写入")
+            ?: throw ArchiveException("无法写入该路径，请更换保存位置后重试")
         output.use { V3Exporter(db, clock).export(it, onProgress) }
     }
 

@@ -181,7 +181,7 @@ class FilesClient(
         val response = try {
             client.newCall(request).execute()
         } catch (e: IOException) {
-            throw ChatException(ErrorKind.NETWORK, message = e.message ?: "上传失败", cause = e)
+            throw ChatException(ErrorKind.NETWORK, message = e.message ?: "文件上传失败，请重试", cause = e)
         }
 
         response.use { resp ->

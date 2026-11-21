@@ -380,7 +380,7 @@ class ChatRepository(
     ): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val original = db.messageDao().byId(assistantMessageId) ?: error("消息不存在：$assistantMessageId")
-        val userMessageId = original.parentId ?: error("这条回答没有对应的提问，无法重新生成")
+        val userMessageId = original.parentId ?: error("未找到对应的提问，无法重新生成")
         val question = db.messageDao().byId(userMessageId) ?: error("找不到对应的提问：$userMessageId")
 
         val userText = db.fragmentDao().byMessage(userMessageId)
@@ -388,7 +388,7 @@ class ChatRepository(
             .joinToString("")
         // 只发了图片/文件、没写文字的那一轮也可以重新生成
         if (userText.isBlank() && db.attachmentDao().byMessage(userMessageId).isEmpty()) {
-            error("这条回答对应的提问内容为空，无法重新生成")
+            error("对应的提问为空，无法重新生成")
         }
 
         return streamAssistant(
@@ -433,20 +433,20 @@ class ChatRepository(
     ): RunOutcome {
         val session = db.sessionDao().byId(sessionId) ?: error("会话不存在：$sessionId")
         val target = db.messageDao().byId(assistantMessageId) ?: error("消息不存在：$assistantMessageId")
-        require(target.status == MessageStatus.INCOMPLETE) { "这条回答已经完整，不需要继续" }
+        require(target.status == MessageStatus.INCOMPLETE) { "这条回答已完整，无需继续生成" }
 
-        val userMessageId = target.parentId ?: error("这条回答没有对应的提问，无法继续生成")
+        val userMessageId = target.parentId ?: error("未找到对应的提问，无法继续生成")
         val question = db.messageDao().byId(userMessageId) ?: error("找不到对应的提问：$userMessageId")
         val fragments = db.fragmentDao().byMessage(assistantMessageId)
 
-        require(fragments.none { it.type.startsWith("TOOL_") }) { "这一轮用过联网工具，不能继续生成" }
-        require(fragments.none { it.type == "TEMPLATE_RESPONSE" }) { "这一轮是模板回复，不能继续生成" }
+        require(fragments.none { it.type.startsWith("TOOL_") }) { "联网搜索结果不支持继续生成" }
+        require(fragments.none { it.type == "TEMPLATE_RESPONSE" }) { "预设模板回复不支持继续生成" }
 
         val partial = fragments
             .filter { it.type == "RESPONSE" }
             .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? ResponsePayload)?.content }
             .joinToString("")
-        require(partial.isNotBlank()) { "没有可继续的内容" }
+        require(partial.isNotBlank()) { "当前没有可继续生成的内容" }
 
         val userText = db.fragmentDao().byMessage(userMessageId)
             .mapNotNull { (FragmentPayloadCodec.decode(it.payload) as? RequestPayload)?.content }
@@ -595,7 +595,7 @@ class ChatRepository(
             val path = row.localPath
             if (path == null || !attachmentStore.exists(path)) {
                 db.attachmentDao().setState(row.id, AttachmentState.FAILED)
-                throw ChatException(ErrorKind.UPLOAD, message = "附件文件不见了")
+                throw ChatException(ErrorKind.UPLOAD, message = "附件文件已丢失或被移动，请重新上传")
             }
             db.attachmentDao().setState(row.id, AttachmentState.UPLOADING)
             try {
@@ -702,7 +702,7 @@ class ChatRepository(
 
         // 离线预检：没网就别等连接超时了，立刻落失败（界面显示橘色重试圆钮）
         if (!isOnline()) {
-            val offline = ChatException(ErrorKind.NETWORK, message = "当前无网络连接")
+            val offline = ChatException(ErrorKind.NETWORK, message = "当前无网络连接，请检查网络后重试")
             db.messageDao().setStatus(assistantId, MessageStatus.FAILED)
             db.messageDao().setError(assistantId, offline.kind, offline.message)
             db.sessionDao().touch(sessionId, clock())
@@ -826,7 +826,7 @@ class ChatRepository(
     private fun requireModel(provider: Provider, session: SessionEntity): ModelInfo =
         provider.model(session.model)
             ?: provider.defaultModel
-            ?: error("服务商「${provider.displayName}」还没有可用模型")
+            ?: error("服务商「${provider.displayName}」暂无可用模型")
 
     private suspend fun requireKey(provider: Provider): String =
         apiKeyFor(provider.id)?.takeIf { it.isNotBlank() }
@@ -894,7 +894,7 @@ class ChatRepository(
 
 /** 会话指向的服务商已被删除：历史可读，但不能继续对话（M8-6）。 */
 class ProviderMissingException(val providerId: String) :
-    IllegalStateException("此会话的服务商已被移除")
+    IllegalStateException("当前会话使用的服务商已被移除")
 
 /** 该服务商还没填 Key（UI 在发送前就该拦住，这里是最后一道防线）。 */
 class MissingKeyException(val providerName: String) :

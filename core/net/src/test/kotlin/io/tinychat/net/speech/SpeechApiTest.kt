@@ -71,9 +71,10 @@ class SpeechApiTest {
     fun `失败码映射到可读文案`() {
         // TTS 的 400 有三种含义，其中"没得读"要归到 NO_AUDIO
         assertEquals(SpeechFailure.NO_AUDIO, failureOf(SpeechFailure.NO_AUDIO))
-        assertEquals("这条回答暂时无法朗读", SpeechFailure.NO_AUDIO.userMessage)
-        assertEquals("逐字文案", "账户余额不足，请充值", SpeechFailure.INSUFFICIENT_BALANCE.userMessage)
-        assertEquals("interrupted", "朗读失败，请稍后再试", SpeechFailure.INTERRUPTED.userMessage)
+        assertEquals("这条回答暂不支持朗读", SpeechFailure.NO_AUDIO.userMessage)
+        assertEquals("逐字文案", "账户余额不足，充值后即可继续", SpeechFailure.INSUFFICIENT_BALANCE.userMessage)
+        assertEquals("interrupted", "朗读已中断，请重新点朗读", SpeechFailure.INTERRUPTED.userMessage)
+        assertEquals("没拿到音频通道", "无法占用音频通道，请关闭其他正在播放的音视频后重试", SpeechFailure.NO_FOCUS.userMessage)
     }
 
     private fun failureOf(value: SpeechFailure) = value

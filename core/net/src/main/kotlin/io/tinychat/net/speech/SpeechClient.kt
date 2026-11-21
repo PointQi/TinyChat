@@ -30,20 +30,24 @@ enum class SpeechFailure {
 
     /** 读到一半断了（官方文档：提前结束一律视为失败） */
     INTERRUPTED,
+
+    /** 拿不到音频通道：有别的应用在放东西 */
+    NO_FOCUS,
     UNKNOWN,
     ;
 
     val userMessage: String
         get() = when (this) {
-            NO_AUDIO -> "这条回答暂时无法朗读"
-            INVALID_AUDIO -> "录音文件无效，请重试"
-            TOO_LARGE -> "录音过长，请缩短后重试"
-            UNAUTHORIZED -> "API Key 无效或已删除"
-            INSUFFICIENT_BALANCE -> "账户余额不足，请充值"
-            RATE_LIMITED -> "请求过于频繁，请稍后再试"
-            BUSY -> "服务器繁忙，请稍后重试"
-            NETWORK -> "网络异常，请检查网络后重试"
-            INTERRUPTED -> "朗读失败，请稍后再试"
+            NO_AUDIO -> "这条回答暂不支持朗读"
+            INVALID_AUDIO -> "录音文件无法识别，请重新录制"
+            TOO_LARGE -> "录音时长超出限制，请缩短后重试"
+            UNAUTHORIZED -> "API Key 无效，请在设置中更新"
+            INSUFFICIENT_BALANCE -> "账户余额不足，充值后即可继续"
+            RATE_LIMITED -> "操作太频繁，稍后再试"
+            BUSY -> "服务繁忙，稍后再试"
+            NETWORK -> "网络连接失败，请检查网络后重试"
+            INTERRUPTED -> "朗读已中断，请重新点朗读"
+            NO_FOCUS -> "无法占用音频通道，请关闭其他正在播放的音视频后重试"
             UNKNOWN -> "朗读失败，请稍后再试"
         }
 }
@@ -85,7 +89,7 @@ class SpeechClient(
         } catch (error: SpeechException) {
             throw error
         } catch (error: IOException) {
-            throw SpeechException(SpeechFailure.NETWORK, error.message ?: "网络请求失败", error)
+            throw SpeechException(SpeechFailure.NETWORK, error.message ?: "网络连接失败", error)
         }
     }
 
@@ -136,7 +140,7 @@ class SpeechClient(
             throw error
         } catch (error: IOException) {
             if (!coroutineContext[Job].isActiveOrNull()) throw CancellationException()
-            throw SpeechException(SpeechFailure.INTERRUPTED, error.message ?: "朗读中断", error)
+            throw SpeechException(SpeechFailure.INTERRUPTED, error.message ?: "朗读已中断", error)
         } finally {
             cancelHandle?.dispose()
         }

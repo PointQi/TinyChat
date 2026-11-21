@@ -82,14 +82,14 @@ class AccountClient(
                 when {
                     response.isSuccessful -> KeyCheck.Ok
                     response.code == 401 || response.code == 403 -> KeyCheck.Invalid
-                    response.code == 402 -> KeyCheck.Failed("账户余额不足")
-                    response.code == 429 -> KeyCheck.Failed("请求过于频繁，请稍后再试")
-                    response.code >= 500 -> KeyCheck.Failed("服务端异常，请稍后再试")
-                    else -> KeyCheck.Failed("校验失败（HTTP ${response.code}）")
+                    response.code == 402 -> KeyCheck.Failed("账户余额不足，充值后即可继续")
+                    response.code == 429 -> KeyCheck.Failed("操作太频繁，稍后再试")
+                    response.code >= 500 -> KeyCheck.Failed("服务异常，请稍后再试")
+                    else -> KeyCheck.Failed("连接失败（${response.code}）")
                 }
             }
         } catch (e: IOException) {
-            KeyCheck.Failed("网络不通，请检查网络后重试")
+            KeyCheck.Failed("无法连接网络，请检查网络设置后重试")
         }
     }
 
@@ -99,14 +99,14 @@ class AccountClient(
                 when {
                     response.isSuccessful -> KeyCheck.Ok
                     response.code == 401 || response.code == 403 -> KeyCheck.Invalid
-                    response.code == 402 -> KeyCheck.Failed("账户余额不足")
-                    response.code == 429 -> KeyCheck.Failed("请求过于频繁，请稍后再试")
-                    response.code >= 500 -> KeyCheck.Failed("服务端异常，请稍后再试")
-                    else -> KeyCheck.Failed("校验失败（HTTP ${response.code}）")
+                    response.code == 402 -> KeyCheck.Failed("账户余额不足，充值后即可继续")
+                    response.code == 429 -> KeyCheck.Failed("操作太频繁，稍后再试")
+                    response.code >= 500 -> KeyCheck.Failed("服务异常，请稍后再试")
+                    else -> KeyCheck.Failed("连接失败（${response.code}）")
                 }
             }
         } catch (e: IOException) {
-            KeyCheck.Failed("网络不通，请检查网络后重试")
+            KeyCheck.Failed("无法连接网络，请检查网络设置后重试")
         }
     }
 
@@ -124,16 +124,16 @@ class AccountClient(
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val message = when (response.code) {
-                        401, 403 -> "Key 无效"
-                        404 -> "该地址没有模型列表，请手动添加"
-                        else -> "获取模型失败（HTTP ${response.code}）"
+                        401, 403 -> "API Key 无效，请检查后重试"
+                        404 -> "未获取到模型列表，可手动添加"
+                        else -> "获取模型列表失败（${response.code}）"
                     }
                     throw AccountException(message, response.code)
                 }
                 parseModelIds(response.body?.string().orEmpty())
             }
         } catch (e: IOException) {
-            throw AccountException("网络不通", null)
+            throw AccountException("无法连接网络，请检查网络设置后重试", null)
         }
     }
 
@@ -142,12 +142,12 @@ class AccountClient(
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    throw AccountException("余额查询失败（HTTP ${response.code}）", response.code)
+                    throw AccountException("查询余额失败（${response.code}）", response.code)
                 }
                 parseBalance(response.body?.string().orEmpty())
             }
         } catch (e: IOException) {
-            throw AccountException("网络不通", null)
+            throw AccountException("无法连接网络，请检查网络设置后重试", null)
         }
     }
 
@@ -185,7 +185,7 @@ class AccountClient(
             val root = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
                 ?: throw AccountException("模型列表格式无法解析")
             val array = root["data"]?.jsonArray ?: root["models"]?.jsonArray
-                ?: throw AccountException("该地址没有返回模型列表")
+                ?: throw AccountException("当前接口地址未返回可用模型列表")
             return array.mapNotNull { (it as? JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull }
                 .filter { it.isNotBlank() }
                 .distinct()

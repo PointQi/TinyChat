@@ -74,10 +74,10 @@ class VoiceController(
         track.onNoisy = { events.tryEmit(VoiceEvent.PlaybackNoisy) }
 
         val segments = TtsTextChunker.split(text)
-        if (segments.isEmpty()) throw SpeechException(SpeechFailure.NO_AUDIO, "没有可朗读的文本")
+        if (segments.isEmpty()) throw SpeechException(SpeechFailure.NO_AUDIO, "当前没有可朗读的内容")
 
         try {
-            if (!track.start()) throw SpeechException(SpeechFailure.UNKNOWN, "拿不到音频焦点")
+            if (!track.start()) throw SpeechException(SpeechFailure.NO_FOCUS, "无法占用音频通道")
             for (segment in segments) {
                 // 已经按播放速度限速了：write 会阻塞到缓冲有空位
                 speech.synthesize(apiKey, segment, voice) { chunk -> track.write(chunk) }

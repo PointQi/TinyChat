@@ -97,7 +97,7 @@ class V3ArchiveReader {
         val zip = try {
             java.util.zip.ZipFile(zipFile)
         } catch (e: Exception) {
-            throw ArchiveException("不是有效的 ZIP：${e.message}", e)
+            throw ArchiveException("无效的备份文件", e)
         }
         zip.use {
             val entries = zip.entries().toList()
@@ -113,7 +113,7 @@ class V3ArchiveReader {
                 zip.readEntry(first).decodeToString(),
             ).version
             if (version != V3Format.VERSION) {
-                throw ArchiveException("导出格式版本不支持：$version（只支持 ${V3Format.VERSION}）")
+                throw ArchiveException("备份版本过高，请先升级 App")
             }
 
             // 2) 逐条目

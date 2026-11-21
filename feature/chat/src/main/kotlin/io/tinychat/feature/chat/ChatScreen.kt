@@ -639,7 +639,7 @@ private fun MessageRow(
             if (message.hasFailedAttachment) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "附件上传失败，点击重试",
+                    text = "文件上传失败，点击重试",
                     style = TcTypography.bodySmall,
                     color = palette.warning,
                     modifier = Modifier
@@ -2288,7 +2288,7 @@ private fun AttachmentThumb(attachment: ChatAttachment, size: Dp, onClick: () ->
             ) {
                 Icon(
                     imageVector = TcIcons.Regenerate,
-                    contentDescription = "附件上传失败",
+                    contentDescription = "文件上传失败",
                     tint = Color.White,
                     modifier = Modifier.size(20.dp),
                 )

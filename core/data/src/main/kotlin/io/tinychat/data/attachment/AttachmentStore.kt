@@ -134,7 +134,7 @@ class AttachmentStore(private val context: Context) {
         dir.mkdirs()
         val target = File(dir, "${picked.id}_${picked.fileName.safeName()}")
         val input = context.contentResolver.openInputStream(picked.uri)
-            ?: throw ChatException(ErrorKind.UPLOAD, message = "打不开这个文件")
+            ?: throw ChatException(ErrorKind.UPLOAD, message = "无法打开该文件，请重新选择")
         input.use { source ->
             target.outputStream().use { sink ->
                 val copied = copyLimited(source, sink)
@@ -292,7 +292,7 @@ class AttachmentStore(private val context: Context) {
             val read = try {
                 source.read(buffer)
             } catch (e: IOException) {
-                throw ChatException(ErrorKind.UPLOAD, message = e.message ?: "读取附件失败", cause = e)
+                throw ChatException(ErrorKind.UPLOAD, message = e.message ?: "无法读取附件，请检查文件是否完整", cause = e)
             }
             if (read <= 0) break
             total += read

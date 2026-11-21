@@ -26,7 +26,7 @@ class AttachmentUploader(
     ): String {
         val file = File(localPath)
         if (!file.isFile) {
-            throw ChatException(ErrorKind.UPLOAD, message = "附件文件不见了")
+            throw ChatException(ErrorKind.UPLOAD, message = "附件文件已丢失或被移动，请重新上传")
         }
         val purpose = AttachmentPurpose.of(fileName, isImage)
         return files.upload(

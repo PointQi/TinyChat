@@ -26,16 +26,24 @@ class ErrorKindTest {
 
     @Test
     fun `文案与 02 号文档一致`() {
-        assertEquals("网络异常，请检查网络后重试", ErrorKind.NETWORK.userMessage)
-        assertEquals("API Key 无效或已删除", ErrorKind.HTTP_401.userMessage)
-        assertEquals("账户余额不足，请充值", ErrorKind.HTTP_402.userMessage)
-        assertEquals("请求参数有误", ErrorKind.HTTP_422.userMessage)
-        assertEquals("请求过于频繁，请稍后再试", ErrorKind.HTTP_429.userMessage)
-        assertEquals("服务器繁忙，请稍后重试", ErrorKind.HTTP_5XX.userMessage)
-        assertEquals("生成被中断", ErrorKind.INTERRUPTED.userMessage)
-        assertEquals("这条回答无法提供", ErrorKind.REFUSAL.userMessage)
-        assertEquals("附件上传失败", ErrorKind.UPLOAD.userMessage)
+        assertEquals("网络连接失败", ErrorKind.NETWORK.userMessage)
+        assertEquals("API Key 无效，请在设置中更新", ErrorKind.HTTP_401.userMessage)
+        assertEquals("账户余额不足，充值后即可继续", ErrorKind.HTTP_402.userMessage)
+        assertEquals("请求异常（内部错误）", ErrorKind.HTTP_422.userMessage)
+        assertEquals("操作太频繁，稍后再试", ErrorKind.HTTP_429.userMessage)
+        assertEquals("服务繁忙，稍后再试", ErrorKind.HTTP_5XX.userMessage)
+        assertEquals("已停止生成", ErrorKind.INTERRUPTED.userMessage)
+        assertEquals("暂时无法回答，换个说法试试", ErrorKind.REFUSAL.userMessage)
+        assertEquals("上传失败，点击重试", ErrorKind.UPLOAD.userMessage)
         assertEquals("附件已失效，请重新上传", ErrorKind.FILE_INVALID.userMessage)
+    }
+
+    @Test
+    fun `服务繁忙点名服务商，拿不到名字时退回通用文案`() {
+        assertEquals("DeepSeek 服务繁忙，稍后再试", ErrorKind.HTTP_5XX.userMessage("DeepSeek"))
+        assertEquals("服务繁忙，稍后再试", ErrorKind.HTTP_5XX.userMessage("  "))
+        // 其余类型不受服务商名影响
+        assertEquals("网络连接失败", ErrorKind.NETWORK.userMessage("DeepSeek"))
     }
 
     @Test

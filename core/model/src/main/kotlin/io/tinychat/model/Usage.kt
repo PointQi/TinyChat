@@ -76,32 +76,41 @@ enum class ErrorKind(val wire: String) {
         }
 
     /**
-     * 给用户看的一句话（02 §4.5 表格逐条对齐）。
+     * 给用户看的一句话（02 §4.5 表格逐条对齐；2026-11-21 文案评审定稿）。
      *
      * 文案只描述**发生了什么、下一步怎么办**，不暴露 HTTP 码与技术细节。
      */
     val userMessage: String
-        get() = when (this) {
-            NETWORK -> "网络异常，请检查网络后重试"
-            HTTP_401 -> "API Key 无效或已删除"
-            HTTP_402 -> "账户余额不足，请充值"
-            HTTP_422 -> "请求参数有误"
-            CONTEXT_LIMIT -> "当前对话已达上限，请开启新对话继续。"
-            HTTP_429 -> "请求过于频繁，请稍后再试"
-            HTTP_5XX -> "服务器繁忙，请稍后重试"
-            STREAM -> "生成出错"
-            INTERRUPTED -> "生成被中断"
-            REFUSAL -> "这条回答无法提供"
-            UPLOAD -> "附件上传失败"
-            FILE_INVALID -> "附件已失效，请重新上传"
-        }
+        get() = userMessage(null)
+
+    /**
+     * 同上，但「服务繁忙」要带上服务商名——不点名的话，用户会以为是 App 自己坏了。
+     * 拿不到名字（比如后台任务、通知）时退回不带名字的版本。
+     */
+    fun userMessage(providerName: String? = null): String = when (this) {
+        NETWORK -> "网络连接失败"
+        HTTP_401 -> "API Key 无效，请在设置中更新"
+        HTTP_402 -> "账户余额不足，充值后即可继续"
+        HTTP_422 -> "请求异常（内部错误）"
+        CONTEXT_LIMIT -> "当前对话已达上限，请开启新对话继续。"
+        HTTP_429 -> "操作太频繁，稍后再试"
+        HTTP_5XX -> providerName?.takeIf { it.isNotBlank() }
+            ?.let { "$it 服务繁忙，稍后再试" }
+            ?: "服务繁忙，稍后再试"
+
+        STREAM -> "生成意外中断"
+        INTERRUPTED -> "已停止生成"
+        REFUSAL -> "暂时无法回答，换个说法试试"
+        UPLOAD -> "上传失败，点击重试"
+        FILE_INVALID -> "附件已失效，请重新上传"
+    }
 
     /** 行内重试提示（贴在消息下方右侧的灰字）；官方文案是「请检查网络后重试」 */
     val retryHint: String
         get() = when (this) {
             NETWORK -> "请检查网络后重试"
-            HTTP_429 -> "请求过于频繁，请稍后重试"
-            HTTP_5XX -> "服务器繁忙，请稍后重试"
+            HTTP_429 -> "操作太频繁，稍后再试"
+            HTTP_5XX -> "服务繁忙，稍后再试"
             else -> userMessage
         }
 

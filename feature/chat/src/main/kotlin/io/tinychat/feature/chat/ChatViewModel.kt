@@ -643,9 +643,9 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
+                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
             } catch (e: Exception) {
-                state = state.copy(error = "附件上传失败，请重试", errorKind = null)
+                state = state.copy(error = "文件上传失败，请重试", errorKind = null)
             } finally {
                 state = state.copy(isStreaming = false)
             }
@@ -676,7 +676,7 @@ class ChatViewModel(
         // 只有附件没有文字也能发（真实 App 就是这样）
         if ((text.isEmpty() && drafts.isEmpty()) || state.isStreaming) return
         if (state.providerMissing) {
-            state = state.copy(error = "此会话的服务商已被移除，请新建会话", errorKind = null)
+            state = state.copy(error = "当前会话使用的服务商已被移除，请新建会话", errorKind = null)
             return
         }
         if (!state.hasApiKey) {
@@ -764,7 +764,7 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
+                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
@@ -807,7 +807,7 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
+                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
@@ -831,7 +831,7 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
+                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
@@ -952,7 +952,7 @@ class ChatViewModel(
     private fun ChatUiState.withOutcomeError(outcome: RunOutcome): ChatUiState {
         val error = outcome.error ?: return this
         if (error.kind.retryable) return this
-        return copy(error = error.kind.userMessage, errorKind = error.kind)
+        return copy(error = error.kind.userMessage(currentProvider?.displayName), errorKind = error.kind)
     }
 
     /** 点橙色圆钮：把失败的那一轮重发一次（不新建用户消息，不消耗修改次数） */
@@ -970,7 +970,7 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage, errorKind = e.kind)
+                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
             } catch (e: Exception) {
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
             } finally {
