@@ -58,8 +58,9 @@ jobs:
       - name: Verify signature
         run: |
           apksigner=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner | sort -r | head -1)
-          chmod +x "$apksigner"
-          "$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
+          # 别 chmod：runner 上的 SDK 目录是只读的（Operation not permitted），
+          # 直接用 bash 跑这个脚本即可，不需要可执行位
+          bash "$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
 
       - name: Upload APK
         env:
