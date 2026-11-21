@@ -718,7 +718,7 @@ fun resolveSystem(session): String? = when (session.systemPromptMode) {
 | ID | 任务 | 估时 | 依赖 | 验收 |
 |---|---|---|---|---|
 | M9-1 | 性能专项：长会话/大图/导入/冷启动 | 2d | 全部 | 1 万条消息滚动 ≥55fps |
-| M9-2 | 崩溃兜底、错误文案统一 | 1d | 全部 | 无英文堆栈外露 |
+| M9-2 | 崩溃兜底、错误文案统一（**2026-11-21 主体已落地**：`:crash` 独立进程崩溃页 + `filesDir/crashes` 诊断信息 + 循环断路器 + 两段式清理，真机四项全验；**未做**诊断信息页与剩余 62 行文案替换，见 03 决策 66） | 1d | 全部 | 无英文堆栈外露 |
 | M9-3 | README / LICENSE(MIT) / NOTICE（致谢 chat-demo） | 0.5d | — | 授权完整 |
 | M9-4 | 签名 APK + GitHub Release 流程（**2026-11-21 已落地**：release 签名 + R8 + `1.0.0` + tag 触发的 `release.yml`，步骤见 `07-release.md`） | 0.5d | — | 可安装、可升级 |
 | M9-5 | 发版前冒烟清单 | 0.5d | — | 清单 100% |

@@ -103,11 +103,32 @@ object CrashGuard {
         exitProcess(10)
     }
 
-    /** 异常签名：类名 + 第一条自己代码里的栈帧，用来区分「同一个毛病」和「又坏了」 */
+    /**
+     * 异常签名：根因的类名 + 第一条自己代码里的栈帧。
+     *
+     * 用**根因**而不是最外层异常：系统常把 Receiver/线程里的异常包一层
+     * `RuntimeException: Unable to start receiver ...`，拿外层类型当签名会让完全不同的
+     * 毛病挤成一个签名，循环判定就会误伤。
+     */
     private fun signatureOf(error: Throwable): String {
-        val frame = error.stackTrace.firstOrNull { it.className.startsWith("io.tinychat") }
+        var root = error
+        val seen = HashSet<Throwable>()
+        while (true) {
+            if (!seen.add(root)) break
+            root = root.cause ?: break
+        }
+        val frame = run {
+            var current: Throwable? = error
+            var guard = 0
+            while (current != null && guard++ < 8) {
+                val hit = current.stackTrace.firstOrNull { it.className.startsWith("io.tinychat") }
+                if (hit != null) return@run hit
+                current = current.cause
+            }
+            null
+        }
         val where = frame?.let { "${it.className.substringAfterLast('.')}.${it.methodName}" } ?: ""
-        return "${error.javaClass.simpleName}@$where".take(64)
+        return "${root.javaClass.simpleName}@$where".take(64)
     }
 
     private fun buildReport(app: Application, thread: Thread, error: Throwable, now: Long): String {
