@@ -28,6 +28,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.tinychat.crash.CrashGuard
+import io.tinychat.crash.CrashReporter
 import io.tinychat.data.db.PromptPresetEntity
 import io.tinychat.designsystem.LocalTcFontScale
 import io.tinychat.designsystem.TcMotion
@@ -39,6 +40,8 @@ import io.tinychat.feature.chat.usageDrawerWidth
 import io.tinychat.feature.sessions.SessionsDrawerContent
 import io.tinychat.feature.sessions.SessionsDrawerWidth
 import io.tinychat.feature.settings.AboutScreen
+import io.tinychat.feature.settings.DiagnosticsItem
+import io.tinychat.feature.settings.DiagnosticsScreen
 import io.tinychat.feature.settings.DataManagementScreen
 import io.tinychat.feature.settings.LicenseScreen
 import io.tinychat.feature.settings.PromptEditorScreen
@@ -50,6 +53,10 @@ import io.tinychat.ui.SidePanel
 import io.tinychat.ui.TcSideSheet
 import io.tinychat.ui.panelTargetOpen
 import io.tinychat.ui.swipeToOpenPanel
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 object Routes {
@@ -60,6 +67,7 @@ object Routes {
     const val DATA = "settings/data"
     const val ABOUT = "settings/about"
     const val LICENSE = "settings/about/licenses"
+    const val DIAGNOSTICS = "settings/about/diagnostics"
     const val PROMPT = "settings/prompt"
     const val PROMPT_EDIT = "settings/prompt/edit"
 }
@@ -453,10 +461,34 @@ fun TinyChatApp() {
                         versionName = versionName,
                         onBack = { navController.popBackStack() },
                         onOpenLicenses = { navController.navigate(Routes.LICENSE) },
+                        onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
                     )
                 }
                 composable(Routes.LICENSE) {
                     LicenseScreen(onBack = { navController.popBackStack() })
+                }
+                composable(Routes.DIAGNOSTICS) {
+                    // 报告的读写都在 app 侧（CrashReporter），页面只接数据与回调
+                    val crashDir = remember { CrashGuard.crashDir(context) }
+                    val stamp = remember { SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA) }
+                    var diagnostics by remember { mutableStateOf(emptyList<DiagnosticsItem>()) }
+                    val reload: () -> Unit = {
+                        diagnostics = CrashReporter.list(crashDir).map { file ->
+                            DiagnosticsItem(
+                                id = file.name,
+                                time = stamp.format(Date(file.lastModified())),
+                                scene = CrashReporter.sceneOf(file) ?: "应用崩溃",
+                            )
+                        }
+                    }
+                    DiagnosticsScreen(
+                        items = diagnostics,
+                        onBack = { navController.popBackStack() },
+                        onRefresh = reload,
+                        onRead = { id -> CrashReporter.read(File(crashDir, id)) },
+                        onDelete = { id -> CrashReporter.delete(File(crashDir, id)) },
+                        onClearAll = { CrashReporter.clear(crashDir) },
+                    )
                 }
                 }
             }

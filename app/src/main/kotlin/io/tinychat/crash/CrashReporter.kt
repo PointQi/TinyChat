@@ -45,6 +45,19 @@ object CrashReporter {
         runCatching { file.delete() }
     }
 
+    /** 读一份报告全文；读不出来给空串（详情页不用消化异常）。 */
+    fun read(file: File): String = runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("")
+
+    /** 报告里的「现场」一行（崩溃时所在页面），取不到返回 null。 */
+    fun sceneOf(file: File): String? = runCatching {
+        file.readLines(Charsets.UTF_8)
+            .firstOrNull { it.startsWith("现场:") }
+            ?.removePrefix("现场:")
+            ?.substringBefore("·")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }.getOrNull()
+
     fun clear(dir: File) {
         runCatching { dir.listFiles()?.forEach { it.delete() } }
     }

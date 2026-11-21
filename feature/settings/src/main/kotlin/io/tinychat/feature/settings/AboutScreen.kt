@@ -43,6 +43,7 @@ fun AboutScreen(
     versionName: String,
     onBack: () -> Unit,
     onOpenLicenses: () -> Unit,
+    onOpenDiagnostics: () -> Unit = {},
 ) {
     val palette = TcTheme.palette
     val context = LocalContext.current
@@ -89,6 +90,19 @@ fun AboutScreen(
             TcListRow(
                 title = "开源许可",
                 onClick = onOpenLicenses,
+                trailing = {
+                    Icon(
+                        imageVector = TcIcons.ChevronRight,
+                        contentDescription = null,
+                        tint = palette.labelTertiary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+            )
+            // 崩溃兜底写下来的诊断信息（M9-2）：不放这个入口，报告就只躺在沙盒里
+            TcListRow(
+                title = "诊断信息",
+                onClick = onOpenDiagnostics,
                 trailing = {
                     Icon(
                         imageVector = TcIcons.ChevronRight,
