@@ -57,6 +57,11 @@ versionName = "1.0.0"  // 用户看到的版本
 
 `versionCode` 减了或者不变，系统就不让覆盖安装，用户必须卸载——所以要改，而且只能往上改。
 
+另外两处跟着版本走，别忘：
+
+- **tag 名与 `versionName` 保持一致**，写成 `v1.0.0` 这种形式。README 顶部的 Release 徽章（`img.shields.io/github/v/release/...`）直接读最新 tag，tag 打对了它自己就会变，不用手改文档。
+- **README 里「安装包体积仅约 4 MB」这句要核对**：体积随依赖与 R8 规则变，发版时看一眼 `app-release.apk` 的实际大小，差得多就改掉。
+
 ### 2.2 全量测试与本机出包
 
 ```powershell
