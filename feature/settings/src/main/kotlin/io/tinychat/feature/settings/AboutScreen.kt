@@ -142,7 +142,7 @@ fun LicenseScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(16.dp))
             Text(
-                text = "以上组件按各自许可证分发，版权归各项目作者所有。",
+                text = "以上组件按各自的许可证分发，版权属于各自作者。",
                 style = TcTypography.bodySmall,
                 color = palette.labelTertiary,
                 modifier = Modifier.padding(horizontal = 16.dp),

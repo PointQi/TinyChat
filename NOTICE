@@ -41,7 +41,7 @@ Mermaid
 
 三、运行时依赖（随安装包分发）
 
-下列组件均以 Apache License 2.0 授权，版权归各自的作者所有：
+下列组件均以 Apache License 2.0 授权，版权属于各自的作者：
 
     - Kotlin 标准库（JetBrains）
     - kotlinx.coroutines、kotlinx.serialization（JetBrains）
