@@ -1,4 +1,4 @@
-﻿# 采集 TinyChat 的体验基线（P 阶段，见 docs/06-polish-stage.md §8）
+# 采集 TinyChat 的体验基线（P 阶段，见 docs/06-polish-stage.md §8）
 #
 # 为什么是引导式的：截图靠坐标点击会在改版后整份失效，而这里只要求按回车，
 # 界面怎么变都不影响脚本。录屏同理——动效必须由人真的去做那个动作。
@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Package = 'io.tinychat'
+$Package = 'top.tbpdt.tinychat'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 if (-not $OutDir) {

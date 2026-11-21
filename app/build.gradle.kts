@@ -19,7 +19,10 @@ android {
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "io.tinychat"
+        // 对外身份（2026-11-21 定）：装机、商店、升级都看它，一旦发出去就改不动。
+        // 代码里的命名空间仍是 io.tinychat（namespace 那行），两者本来就可以不同：
+        // 改命名空间要把所有模块的 package/import 全重排，收益只是好看，不做。
+        applicationId = "top.tbpdt.tinychat"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         // 第一个正式版（M9-4）：1.0.0。以后每发一版 versionCode 必须 +1 —— 它只增不减，
