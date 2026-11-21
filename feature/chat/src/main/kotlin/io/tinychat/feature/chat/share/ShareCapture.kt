@@ -1,5 +1,6 @@
 package io.tinychat.feature.chat.share
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -77,6 +78,10 @@ object ShareCapture {
      * @param markdown 正文，用于**预热公式**（见 [MathPrewarm]）
      * @param card 卡片内容；参数是**卡片宽度**（dp），保证输出正好 1080px 宽。
      */
+    // 这一屏必须整段在主线程：View 的 draw 只能在 UI 线程跑，截图也是一段一段接着画的。
+    // 落盘（PNG 压缩）夹在中间，页数只有 1–3 张、每张一条 1080px 的条带，实测不卡；
+    // 想让 lint 闭嘴只能把压缩挪到别的线程，那样就得把 bitmap 跨线程传，收益不值这个复杂度。
+    @SuppressLint("ThreadConstraint")
     suspend fun render(
         context: Context,
         dir: File,

@@ -1,5 +1,6 @@
 package io.tinychat.audio
 
+import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -172,6 +173,10 @@ class VoiceRecorder(
         dataBytes += count * 2
     }
 
+    // 录音权限由调用方（VoiceController）在进语音模式前申请；这里再兜一层 try/catch，
+    // 被拒时 build() 抛 SecurityException 会落到下面的 lastError —— lint 看不到这条链路，
+    // 所以显式压掉 MissingPermission，别让它淹掉真正的问题。
+    @SuppressLint("MissingPermission")
     private fun createRecord(): AudioRecord {
         val minBuffer = AudioRecord.getMinBufferSize(
             sampleRate,

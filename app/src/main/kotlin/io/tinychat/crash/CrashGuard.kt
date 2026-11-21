@@ -161,8 +161,15 @@ object CrashGuard {
     }.getOrDefault("")
 
     private fun versionCode(app: Application): Long = runCatching {
-        @Suppress("DEPRECATION")
-        app.packageManager.getPackageInfo(app.packageName, 0).longVersionCode
+        val info = app.packageManager.getPackageInfo(app.packageName, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            // API 26/27 没有 longVersionCode，只能读旧的 versionCode（lint: NewApi 要求这样分支）
+            @Suppress("DEPRECATION")
+            val legacy = info.versionCode
+            legacy.toLong()
+        }
     }.getOrDefault(0L)
 
     /** API 28 起有现成的；26/27 读 `/proc/self/cmdline`。 */

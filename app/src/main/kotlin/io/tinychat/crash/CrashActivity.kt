@@ -1,12 +1,13 @@
 package io.tinychat.crash
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Process
 import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import io.tinychat.MainActivity
 import io.tinychat.R
 
@@ -20,7 +21,7 @@ import io.tinychat.R
  * 主进程在崩的那一刻已经被 [CrashGuard] 杀掉了，所以这一屏没有「返回上一页」可去，
  * 按返回键等同于点第二个按钮（不重启，直接结束这个进程）。
  */
-class CrashActivity : Activity() {
+class CrashActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_LOOP = "loop"
@@ -30,6 +31,15 @@ class CrashActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_crash)
+
+        // 返回键等同「不重启」：以前覆盖 onBackPressed，targetSdk 35 起返回手势不再走它，
+        // 改成挂 OnBackPressedDispatcher（lint: GestureBackNavigation）
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() = quit()
+            },
+        )
 
         val loop = intent.getBooleanExtra(EXTRA_LOOP, false)
         val streaming = intent.getBooleanExtra(EXTRA_STREAMING, false)
@@ -59,11 +69,6 @@ class CrashActivity : Activity() {
             primary.setOnClickListener { restart() }
             secondary.setOnClickListener { quit() }
         }
-    }
-
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() {
-        quit()
     }
 
     private fun restart() {
