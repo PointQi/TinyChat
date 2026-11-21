@@ -1,0 +1,40 @@
+﻿11-21 23:23:50.114  1824  7337 I SWAP_Scene: Entering notifySceneData notifySceneData. EventType:FREEZE pkg:com.tencent.mobileqq uid:10317 pid:0 proc: activity:null
+11-21 23:23:50.115  1824  2484 I DisplayPowerController[0]: mPowerState.mScreenChangedReason: 0 mPendingRequestLocked.mScreenChangeReason 0
+11-21 23:23:50.115  1824  2484 I DisplayPowerController[0]: Animating brightness: target=0.27058825,rate=0.23529412,brightnessTargetReal=69,targetReal=0.27058825,sdrTarget=0.27058825,AutoBrightness=true
+11-21 23:23:50.201  3405  5777 D HwCommBoosterService: reportBoosterPara enter
+11-21 23:23:50.201  3405  5777 D HwCommBoosterManager: reportBoosterPara enter
+11-21 23:23:50.201  3405  5777 D HwCommBoosterManager: pluginId: 2
+11-21 23:23:50.201  3405  3794 D HwCommBoosterManager: handleBoosterMessageSendModuleDataToPlugin enter
+11-21 23:23:50.782  3405  3794 E Booster_BroadcastProxy: [isDebugModemEnabled]get package info fail.
+11-21 23:23:51.202  3405  5777 D HwCommBoosterService: reportBoosterPara enter
+11-21 23:23:51.202  3405  5777 D HwCommBoosterManager: reportBoosterPara enter
+11-21 23:23:51.203  3405  5777 D HwCommBoosterManager: pluginId: 2
+11-21 23:23:51.203  3405  3794 D HwCommBoosterManager: handleBoosterMessageSendModuleDataToPlugin enter
+11-21 23:23:51.794  3405  3794 E Booster_BroadcastProxy: [isDebugModemEnabled]get package info fail.
+11-21 23:23:52.090  1824  3471 I [SPMN]  : insert SECURE -- name = selected_input_method_subtype, package = android, user = 0, value = -1
+11-21 23:23:52.090  1824  3471 I [SPMN]  : insert SECURE -- name = default_input_method, package = android, user = 0, value = com.huawei.ohos.inputmethod/com.android.inputmethod.latin.LatinIME
+11-21 23:23:52.091  1824  2263 I WindowManager: Deferring rotation, rotation not changed, rotation=0
+11-21 23:23:52.092  1824  2376 I HwActivityTaskManagerServiceEx: onChange mDefaultInputMethod: com.huawei.ohos.inputmethod/com.android.inputmethod.latin.LatinIME
+11-21 23:23:52.093  1824  7337 I HwInputMethodManagerService: startInputOrWindowGainedFocus windowToken:android.os.BinderProxy@c02973f mInputShown:false
+11-21 23:23:52.093  1824  7337 I HwOcrImeController: updateMultiWindow focus window = top.tbpdt.tinychat/io.tinychat.MainActivity mIsInMultiScreen = false
+11-21 23:23:52.093  1824  7337 I HwOcrImeController: updateUser userId = 0 mIsOwnerUser = true
+11-21 23:23:52.093  1824  7337 I HwOcrImeController: setOcrImeSupportProp mIsOcrImeValid = true mIsHardKeyboardAvailable = false mIsInMultiScreen = false mIsOwnerUser = true
+11-21 23:23:52.093  1824  7337 I HwOcrImeController: setOcrImeSupportProp mIsOcrImeValid = true mIsHardKeyboardAvailable = false mIsInMultiScreen = false mIsOwnerUser = true
+11-21 23:23:52.093  1824  7337 I InputMethodShowDelayTask: clearTask
+11-21 23:23:52.095  1824  3471 W DevicePolicyManager: Unknown user type: UserInfo{129:分身应用:4000410}
+11-21 23:23:52.095  1824  1824 W InputMethodManagerService: Illegal subtype state: old subtype = null, new subtype = android.view.inputmethod.InputMethodSubtype@c9194f98
+11-21 23:23:52.095  1824  3471 W DevicePolicyManager: Unknown user type: UserInfo{129:分身应用:4000410}
+11-21 23:23:52.095  1824 11661 W DevicePolicyManager: Unknown user type: UserInfo{129:分身应用:4000410}
+11-21 23:23:52.097  1824 11661 W DevicePolicyManager: Unknown user type: UserInfo{129:分身应用:4000410}
+11-21 23:23:52.097  1824 11661 W DevicePolicyManager: Unknown user type: UserInfo{129:分身应用:4000410}
+11-21 23:23:52.097  1824  7337 I SecInputMethodManagerService: ime focus result=0
+11-21 23:23:52.097  1824  7337 I SecInputMethodManagerService: Client requesting input be hidden, uid=1000
+11-21 23:23:52.097  1824  7337 I SecInputMethodManagerService: hideCurrentInputLocked inputShown:false, imeWindowVis:0
+11-21 23:23:52.097  1824  7337 I HwInputMethodManagerService: windowfocus: hide secureIME isNeedWaitShow:false
+11-21 23:23:52.097  1824  7337 E SecInputMethodManagerService: InputBindResult is @NonNull. startInputReason=Unknown=10000 windowFlags=#81810100 editorInfo=android.view.inputmethod.EditorInfo@e808762
+11-21 23:23:52.098  1824  2400 I HwDFRServicesFactory: getZrHungServicesFactory
+11-21 23:23:52.098  1824  2400 I ZrHungServicesFactoryImpl: getZRHungService
+11-21 23:23:52.099  1824  2400 I DropBoxManagerService: add tag=system_server_wtf isTagEnabled=true flags=0x2
+11-21 23:23:52.101  1824  2400 I ActivityManager: before write dropbox time 1795274632099 eventType is wtf dataFile is false
+11-21 23:23:52.112  1824  7337 I InputMethodManagerService: isSecMethodUsing set false
+11-21 23:23:52.113  1824  7337 I InputMethodManagerService: startInputOrWindowGainedFocus didStart: isTextEditor=false sameWindowFocused=true doAutoShow=true softInputMode=STATE_UNSPECIFIED|ADJUST_RESIZE
