@@ -18,6 +18,7 @@
     </queries>
 
     <application
+        android:name=".TinyChatApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
@@ -47,6 +48,19 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+          崩溃页（M9-2）：必须独立进程。主进程的主线程已经死了，同一个进程里再起 Activity
+          也画不出东西；独立进程才能把这一屏显示出来。
+        -->
+        <activity
+            android:name=".crash.CrashActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:process=":crash"
+            android:theme="@style/Theme.TinyChat.Crash"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|fontScale" />
     </application>
 
 </manifest>

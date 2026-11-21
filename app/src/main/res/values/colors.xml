@@ -4,4 +4,16 @@
     <color name="tc_window_bg">#FFFFFFFF</color>
     <!-- 自适应图标的背景色：与图标画面底色（#020101）一致；前景满幅，正常看不到 -->
     <color name="tc_icon_bg">#FF020101</color>
+
+    <!--
+      崩溃页（M9-2）单独一套颜色，不引用 Compose 的 TcPalette：
+      那一套要经 TcTheme 才拿得到，而崩溃页刻意不走 Compose。
+      取值与 LightPalette 对齐：bg #FFFFFF / labelPrimary #0F1115 / labelSecondary #61666B / brand #3964FE / danger #EC1313
+    -->
+    <color name="tc_crash_bg">#FFFFFFFF</color>
+    <color name="tc_crash_title">#FF0F1115</color>
+    <color name="tc_crash_body">#FF61666B</color>
+    <color name="tc_crash_brand">#FF3964FE</color>
+    <color name="tc_crash_on_brand">#FFFFFFFF</color>
+    <color name="tc_crash_danger">#FFEC1313</color>
 </resources>

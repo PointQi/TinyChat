@@ -20,4 +20,15 @@
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="postSplashScreenTheme">@style/Theme.TinyChat</item>
     </style>
+
+    <!--
+      崩溃页（M9-2）跑在独立的 :crash 进程里，刻意不用 Compose、不引 Material 组件，
+      只给一个最朴素的深色底窗口——它存在的唯一目的是「一定画得出来」。
+    -->
+    <style name="Theme.TinyChat.Crash" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/tc_crash_bg</item>
+        <item name="android:statusBarColor">@color/tc_crash_bg</item>
+        <item name="android:navigationBarColor">@color/tc_crash_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
 </resources>

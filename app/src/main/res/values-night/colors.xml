@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="tc_window_bg">#FF151517</color>
+
+    <!-- 崩溃页的暗色取值，与 DarkPalette 对齐 -->
+    <color name="tc_crash_bg">#FF151517</color>
+    <color name="tc_crash_title">#FFF9FAFB</color>
+    <color name="tc_crash_body">#FFCFD3D6</color>
+    <color name="tc_crash_brand">#FF5686FE</color>
+    <color name="tc_crash_on_brand">#FFFFFFFF</color>
+    <color name="tc_crash_danger">#FFF25A5A</color>
 </resources>

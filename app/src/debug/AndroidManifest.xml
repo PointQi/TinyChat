@@ -18,5 +18,14 @@
             android:name="io.tinychat.debug.CodeLabActivity"
             android:exported="true"
             android:label="代码着色验收" />
+
+        <!-- 崩溃兜底的验收开关（M9-2）：用 adb 广播 io.tinychat.debug.CRASH 触发，kind 取 main/bg/stream -->
+        <receiver
+            android:name="io.tinychat.debug.CrashLabReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.tinychat.debug.CRASH" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

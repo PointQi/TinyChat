@@ -118,4 +118,8 @@ dependencies {
 
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.compose.ui.tooling.preview)
+
+    // 崩溃兜底里的两段纯逻辑（脱敏、循环计数、保留份数）用普通 JUnit 就能测，
+    // 不需要 Robolectric —— 它们刻意不碰 Context，见 CrashReporter / CrashLoop 的类注释。
+    testImplementation(libs.junit)
 }

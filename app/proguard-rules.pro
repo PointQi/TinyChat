@@ -47,3 +47,8 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+
+# ---------------------------------------------------------------- 崩溃诊断信息（M9-2）
+# 诊断信息只留在用户自己的手机上，没有服务端帮忙还原类名，混淆成 a.b.c 就等于没写。
+# 用 -keepnames 只保类名与成员名，不阻止裁剪；体积代价实测见 docs/03 决策 67。
+-keepnames class io.tinychat.**

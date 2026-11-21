@@ -27,6 +27,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import io.tinychat.crash.CrashGuard
 import io.tinychat.data.db.PromptPresetEntity
 import io.tinychat.designsystem.LocalTcFontScale
 import io.tinychat.designsystem.TcMotion
@@ -186,6 +187,22 @@ fun TinyChatApp() {
     }
     // 手势只挂在会话页：设置那几页也有整块内容，不该一滑就出面板
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+
+    // 崩溃兜底（M9-2）要知道「崩在哪、是不是正在生成」：只有正在生成时，
+    // 崩溃页才说「当前正在生成的内容可能未保存」。
+    LaunchedEffect(currentRoute) {
+        CrashGuard.stage = when (currentRoute) {
+            Routes.SETTINGS -> "设置"
+            Routes.PROVIDER, Routes.PROVIDER_EDIT -> "服务商"
+            Routes.DATA -> "数据管理"
+            Routes.ABOUT, Routes.LICENSE -> "关于"
+            Routes.PROMPT, Routes.PROMPT_EDIT -> "系统提示词"
+            else -> "会话页"
+        }
+    }
+    LaunchedEffect(chatViewModel.state.isStreaming) {
+        CrashGuard.streaming = chatViewModel.state.isStreaming
+    }
 
     // 系统提示词（决策 45）：开关 + 用户预设。进入页面时读库，改完后就地刷新
     var promptPresets by remember { mutableStateOf<List<PromptPresetEntity>>(emptyList()) }

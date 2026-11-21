@@ -13,4 +13,12 @@
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="postSplashScreenTheme">@style/Theme.TinyChat</item>
     </style>
+
+    <!-- 崩溃页（M9-2）：暗色下状态栏文字用白 -->
+    <style name="Theme.TinyChat.Crash" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/tc_crash_bg</item>
+        <item name="android:statusBarColor">@color/tc_crash_bg</item>
+        <item name="android:navigationBarColor">@color/tc_crash_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>
