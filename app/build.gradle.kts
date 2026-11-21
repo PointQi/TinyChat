@@ -1,7 +1,18 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+// 正式发布签名（M9-4）：密钥与口令都在 .local/keystore.properties，而整个 .local/ 已被 gitignore，
+// 所以仓库里没有密钥；CI 上靠 secret 还原同一份配置。文件不存在时（别人的 clone、临时环境）
+// release 保持未签名，debug / benchmark 照旧能用，不会因为缺密钥就把构建卡死。
+val keystorePropsFile = rootProject.file(".local/keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.isFile) keystorePropsFile.inputStream().use { load(it) }
+}
+val hasReleaseKey = keystoreProps.getProperty("storeFile") != null
 
 android {
     namespace = "io.tinychat"
@@ -11,8 +22,23 @@ android {
         applicationId = "io.tinychat"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
+        // 第一个正式版（M9-4）：1.0.0。以后每发一版 versionCode 必须 +1 —— 它只增不减，
+        // 减了系统就不让覆盖安装，只能卸载重装（数据一起没）。
         versionCode = 1
-        versionName = "0.1.0-m0"
+        versionName = "1.0.0"
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+                // 签名方案交给 AGP 默认：minSdk 26 只需要 v2（实测产物即 v1=false / v2=true），
+                // 不用手写 enableV1Signing —— 手写的值与 AGP 的判断打架时反而会漏签。
+            }
+        }
     }
 
     buildFeatures {
@@ -39,11 +65,17 @@ android {
             buildConfigField("String", "DEV_API_KEY", "\"$devApiKey\"")
         }
         release {
-            isMinifyEnabled = false
+            // 正式包**不注入**开发 Key（字段必须有，但发出去的包里恒为空串）
+            buildConfigField("String", "DEV_API_KEY", "\"\"")
+            // M9-4：第一个正式版起开 R8（体积 + 启动都靠它）。
+            // 规则只写反射/约定那几类，见 app/proguard-rules.pro 的头注释。
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasReleaseKey) signingConfig = signingConfigs.getByName("release")
         }
-        // 性能对照专用：release 的编译/运行语义（isDebuggable=false，走 ART 优化路径），
-        // 但挂 debug 签名并注入开发 Key，这样能直接装到测试机上量帧率。
+        // 性能对照专用：release 的编译/运行语义（isDebuggable=false，走 ART 优化路径）+ 同一套 R8，
+        // 但挂 debug 签名并注入开发 Key，这样能直接装到测试机上覆盖安装、量帧率。
         // ⚠️ 判断「卡不卡」必须用它，拿 debug 包量出来的是假的（实测 debug 50th 18ms、release 6ms）。
         create("benchmark") {
             initWith(getByName("release"))

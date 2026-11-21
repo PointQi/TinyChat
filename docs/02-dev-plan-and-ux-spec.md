@@ -720,7 +720,7 @@ fun resolveSystem(session): String? = when (session.systemPromptMode) {
 | M9-1 | 性能专项：长会话/大图/导入/冷启动 | 2d | 全部 | 1 万条消息滚动 ≥55fps |
 | M9-2 | 崩溃兜底、错误文案统一 | 1d | 全部 | 无英文堆栈外露 |
 | M9-3 | README / LICENSE(MIT) / NOTICE（致谢 chat-demo） | 0.5d | — | 授权完整 |
-| M9-4 | 签名 APK + GitHub Release 流程 | 0.5d | — | 可安装、可升级 |
+| M9-4 | 签名 APK + GitHub Release 流程（**2026-11-21 已落地**：release 签名 + R8 + `1.0.0` + tag 触发的 `release.yml`，步骤见 `07-release.md`） | 0.5d | — | 可安装、可升级 |
 | M9-5 | 发版前冒烟清单 | 0.5d | — | 清单 100% |
 
 ### P 阶段 体验打磨（无固定期限，2026-11-20 立项）
@@ -1101,7 +1101,7 @@ Android 12+ 由系统强制绘制 **SplashScreen**（应用图标 + 窗口背景
 语音
   朗读音色         海星（女）  →
 关于
-  关于              0.1.0-m0   →
+  关于              1.0.0   →
 ```
 
 - 两个新开关用**右侧 Switch**（不给 `›`、不弹二级页），切换即落库；
