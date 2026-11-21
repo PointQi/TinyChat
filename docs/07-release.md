@@ -116,7 +116,15 @@ git push origin v1.0.0
 
 CI 会出包并把 APK 挂到 GitHub Releases。也可以不发 CI，直接手动在 Releases 页面传 `app-release.apk`。
 
-### 2.6 发版说明里必须写的一句
+### 2.6 首次发布踩到的三个坑（2026-11-22，v1.0.0）
+
+1. `android-actions/setup-android@v3` 默认会装 `tools` 包，而新版 SDK 仓库里已经没有它，CI 直接挂在 **Set up Android SDK**。两个工作流现在都显式写 `packages: platform-tools`。
+2. Windows 上提交的 `gradlew` 丢了可执行位，Linux runner 上就是 `./gradlew: Permission denied`。已用 `git update-index --chmod=+x gradlew` 修好；以后换机器首次提交要留意这个位。
+3. release 里原来写 `chmod +x "$apksigner"`，runner 上的 SDK 目录是只读的，会 `Operation not permitted`。改成 `bash "$apksigner"` 即可，脚本不需要可执行位。
+
+四个 Secrets 已经设进仓库（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`），密钥只存在 Secrets 里。**tag 打错时**可以先 `git push -f origin <tag>` 把 tag 挪到修好的提交——只要 Release 还没发布出去，这样做是安全的。
+
+### 2.7 发版说明里必须写的一句
 
 > 正式包的签名与之前测试版不同，安装前需要先卸载旧版本，**本地会话与 API Key 会一起清除**，请先导出数据。
 
