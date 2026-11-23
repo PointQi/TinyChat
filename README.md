@@ -17,8 +17,6 @@
 
 TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官方接口，以及其他兼容 OpenAI 或 Anthropic 接口的大模型。它的界面贴近官方客户端的操作习惯，轻巧纯净，且**所有数据都只保存在你的手机本地**。
 
-> **目前已知 bug：第三方联网搜索无法使用，OpenCode Go 因超时无法使用，字体大小无法修改，软件中英文无法切换。**
-
 > **关于这个仓库**：这里是 [Takeoff0518/TinyChat](https://github.com/Takeoff0518/TinyChat) 的 fork，应用名「TinyChat 工作版」，包名 `io.github.pointqi.tinychat`，可以和上游原版同时安装、互不影响。在上游基础上补了附件发送与专家模式；多服务商联网搜索（Tavily / AnySearch）仍在打通中，目前联网搜索只支持 DeepSeek 原生。签名与校验方式见[文末](#签名与校验)。
 
 > **免责声明**：本应用为独立开发的第三方客户端，与深度求索（DeepSeek）官方没有任何关联，也未获得其授权或背书。「DeepSeek」等相关名称与商标归其各自权利人所有。
