@@ -866,17 +866,22 @@ class ChatRepository(
         if (query.isBlank()) return userText
 
         val results = try {
+            var failure: String? = null
             val hits = try {
                 webSearch(provider, query)
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // 原因要落到载荷里：只写 FAILED 的话，界面上永远只有「联网搜索暂不可用」，
+                // 分不清是没配 Key、401、还是根本没连上。
+                failure = e.message?.takeIf { it.isNotBlank() } ?: e::class.simpleName
                 null
             }
             val payload = ToolSearchPayload(
                 status = if (hits == null) "FAILED" else "FINISHED",
                 queries = listOf(query),
                 results = hits.orEmpty(),
+                reason = failure?.take(120),
             )
             db.fragmentDao().insert(Fragment(messageId = assistantId, ord = 0, payload = payload).toEntity())
             hits

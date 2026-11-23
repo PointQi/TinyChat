@@ -138,7 +138,9 @@ internal fun buildTimeline(fragments: List<TimelineFragment>): List<TimelineItem
                     ToolStep(
                         kind = ToolKind.SEARCH,
                         title = when {
-                            failed -> "联网搜索暂不可用"
+                            failed -> payload.reason?.takeIf { it.isNotBlank() }
+                                ?.let { "联网搜索暂不可用：$it" }
+                                ?: "联网搜索暂不可用"
                             entries.isEmpty() -> "未搜索到合适内容"
                             else -> "搜索到 ${entries.size} 个网页"
                         },

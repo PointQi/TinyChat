@@ -1407,7 +1407,7 @@ class ChatViewModel(
                                 versionIndex = index,
                                 versionCount = count,
                                 retryTargetId = failed?.message?.id,
-                                retryHint = failed?.message?.errorKind?.retryHint,
+                                retryHint = failed?.message?.let { it.errorKind?.retryHint(it.errorMessage) },
                             )
                         },
                         title = session?.title,

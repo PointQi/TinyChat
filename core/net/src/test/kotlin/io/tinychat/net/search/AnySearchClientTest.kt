@@ -53,6 +53,20 @@ class AnySearchClientTest {
     }
 
     @Test
+    fun `works without a key because the public endpoint needs no auth`() = runBlocking {
+        lateinit var request: Request
+        val client = clientReturning(
+            200,
+            """{"code":0,"data":{"results":[{"url":"https://example.com/x","title":"X"}]}}""",
+        ) { request = it }
+
+        val hits = AnySearchClient(client).search(null, "今日新闻")
+
+        assertEquals(null, request.header("Authorization"))
+        assertEquals(listOf("X"), hits.map { it.title })
+    }
+
+    @Test
     fun `HTTP quota errors omit server text that could contain credentials`() {
         val client = clientReturning(402, """{"code":-1,"message":"api_key=example-private-key"}""")
         val error = assertThrows(IOException::class.java) {

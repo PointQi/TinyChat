@@ -56,7 +56,18 @@ class OkHttpChatTransport(
 
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                close(ChatException(ErrorKind.NETWORK, message = e.message ?: "网络请求失败", cause = e))
+                // 超时和「连不上」得说清楚：以前两种都只透出 OkHttp 的英文 "timeout"，
+                // 用户只能猜是网络问题还是服务端不吐字。
+                val message = when (e) {
+                    is java.net.SocketTimeoutException ->
+                        "请求超时：超过 ${READ_TIMEOUT_SECONDS} 秒没有收到数据"
+                    is java.net.UnknownHostException ->
+                        "域名解析失败，请检查网络或接口地址"
+                    is java.net.ConnectException ->
+                        "无法连接到服务器，请检查网络或接口地址"
+                    else -> e.message ?: "网络请求失败"
+                }
+                close(ChatException(ErrorKind.NETWORK, message = message, cause = e))
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -124,9 +135,12 @@ class OkHttpChatTransport(
     companion object {
         private val JSON = "application/json".toMediaType()
 
+        /** 读超时（秒）。超时报错文案直接引用它，改了这里文案跟着变。 */
+        private const val READ_TIMEOUT_SECONDS = 120L
+
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
             .build()
     }

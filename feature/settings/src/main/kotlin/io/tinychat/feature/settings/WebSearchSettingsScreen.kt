@@ -58,7 +58,7 @@ fun WebSearchSettingsScreen(
                 val description = when (option) {
                     WebSearchProvider.DEEPSEEK -> "可复用官方 DeepSeek 密钥，支持第三方聊天模型"
                     WebSearchProvider.TAVILY -> "使用独立密钥，支持第三方聊天模型"
-                    WebSearchProvider.ANYSEARCH -> "使用独立密钥，支持第三方聊天模型"
+                    WebSearchProvider.ANYSEARCH -> "公开接口免密钥即可使用，支持第三方聊天模型"
                 }
                 TcListRow(
                     title = option.label,
@@ -79,6 +79,7 @@ fun WebSearchSettingsScreen(
                     placeholder = when {
                         keySaved && !clearKey -> "留空使用已保存的密钥"
                         picked == WebSearchProvider.DEEPSEEK && credentials.canReuseDeepSeekKey -> "留空复用官方 DeepSeek 密钥"
+                        !picked.needsOwnKey -> "可留空（公开接口免密钥）"
                         else -> "输入 ${picked.label} API Key"
                     },
                     onValueChange = { input ->
@@ -140,7 +141,7 @@ fun WebSearchSettingsScreen(
                     }
                 }
             },
-            enabled = !saving && changed && (picked == WebSearchProvider.DEEPSEEK || hasEffectiveKey),
+            enabled = !saving && changed && (!picked.needsOwnKey || hasEffectiveKey),
             fillWidth = true,
             modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 16.dp),
         )

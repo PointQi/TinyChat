@@ -29,17 +29,21 @@ class AnySearchClient(
         .retryOnConnectionFailure(false)
         .build(),
 ) {
-    suspend fun search(apiKey: String, query: String): List<SearchResult> {
-        require(apiKey.isNotBlank()) { "尚未配置 AnySearch API Key" }
+    /**
+     * AnySearch 的公开接口不要求鉴权（官方示例只有一个 `query`），所以 [apiKey] 可以为空：
+     * 有 Key 就带上（配额与优先级归账号），没有就走游客额度，不该因为"没填 Key"整条搜索不可用。
+     */
+    suspend fun search(apiKey: String?, query: String): List<SearchResult> {
         require(query.isNotBlank()) { "搜索内容不能为空" }
         val body = buildJsonObject {
             put("query", query)
             put("max_results", MAX_RESULTS)
         }
-        val request = Request.Builder()
+        val builder = Request.Builder()
             .url("https://api.anysearch.com/v1/search")
-            .header("Authorization", "Bearer $apiKey")
             .header("Accept", "application/json")
+        apiKey?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
+        val request = builder
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
