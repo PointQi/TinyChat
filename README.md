@@ -5,7 +5,6 @@
 # TinyChat
 
 轻巧纯净的 Android AI 聊天客户端，支持 DeepSeek 官方与 OpenAI / Anthropic 兼容接口。
-(我fork还没改完qwq）
 
 <p>
   <a href="https://github.com/Takeoff0518/TinyChat/blob/master/LICENSE"><img src="https://img.shields.io/github/license/Takeoff0518/TinyChat" alt="License"></a>
@@ -18,6 +17,8 @@
 
 TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官方接口，以及其他兼容 OpenAI 或 Anthropic 接口的大模型。它的界面贴近官方客户端的操作习惯，轻巧纯净，且**所有数据都只保存在你的手机本地**。
 
+> **关于这个仓库**：这里是 [Takeoff0518/TinyChat](https://github.com/Takeoff0518/TinyChat) 的 fork，应用名「TinyChat 工作版」，包名 `io.github.pointqi.tinychat`，可以和上游原版同时安装、互不影响。在上游基础上补了多服务商联网搜索、附件发送与专家模式，其余功能与上游保持一致。签名与校验方式见[文末](#签名与校验)。
+
 > **免责声明**：本应用为独立开发的第三方客户端，与深度求索（DeepSeek）官方没有任何关联，也未获得其授权或背书。「DeepSeek」等相关名称与商标归其各自权利人所有。
 
 ---
@@ -26,7 +27,8 @@ TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官�
 
 - **流畅的实时对话**：支持多轮连续对话与流式输出，回答边生成边显示，无需干等整段写完。
 - **查看思考过程**：支持一键展开深度思考模型的推理过程。
-- **联网搜索**：让模型实时检索网页信息解答问题（仅支持 DeepSeek 官方接口）。
+- **专家模式**：在模型面板里打开后，本轮改用 DeepSeek Harness 的 Agent 系统提示词，让它像编码助手那样带着工具思维回话；关掉即恢复会话原本的提示词。
+- **联网搜索**：在「设置 → 联网搜索」选择 DeepSeek、Tavily 或 AnySearch，搜索服务可与聊天服务商搭配使用。DeepSeek 可复用已有的官方 API Key。
 - **发送图片与文件**：支持上传图片或文档让模型识别分析（具体支持哪些格式取决于你所选的模型）。
 - **语音交互**：不想打字时可以直接语音输入，也可以让模型把回答朗读出来（仅支持 DeepSeek 官方接口）。
 - **会话管理**：支持历史对话搜索、置顶、重命名以及批量删除。
@@ -66,9 +68,9 @@ TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官�
 | 功能特性 | DeepSeek 官方接口 | 第三方（OpenAI 兼容接口） | 第三方（Anthropic 兼容接口） |
 | --- | --- | --- | --- |
 | **基础对话、流式输出、思考过程** | ✅ 支持 | ✅ 支持（具体效果取决于对方接口） | ✅ 支持（具体效果取决于对方接口） |
-| **联网搜索** | ✅ 支持 | ❌ 不支持 | ❌ 不支持 |
-| **发送图片** | ✅ 支持（视具体模型而定） | 视对方模型能力而定 | ❌ 暂不支持 |
-| **发送文件** | ✅ 支持 | ❌ 不支持 | ❌ 不支持 |
+| **联网搜索** | ✅ DeepSeek、Tavily 或 AnySearch | ✅ DeepSeek、Tavily 或 AnySearch | ✅ DeepSeek、Tavily 或 AnySearch |
+| **发送图片** | ✅ 支持（视具体模型而定） | ✅ 启用模型的视觉能力后使用 | ✅ 启用模型的视觉能力后使用 |
+| **发送文件** | ✅ 支持 | ✅ 纯文本。PDF 需启用模型文件输入且接口支持 | ✅ 纯文本。PDF 需启用模型文件输入且接口支持 |
 | **语音输入、语音朗读** | ✅ 支持 | ❌ 不支持 | ❌ 不支持 |
 | **余额与花费统计** | ✅ 显示实时余额与每轮花费 | 仅统计字数/用量，不估算金额 | 仅统计字数/用量，不估算金额 |
 
@@ -80,7 +82,7 @@ TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官�
 
 ## 隐私与数据安全
 
-* **纯本地存储**：你的所有聊天记录、附件和应用设置都只保存在当前手机中。除了你主动向大模型发送的对话请求外，应用不会向任何第三方服务器上传数据。
+* **纯本地存储**：聊天记录、附件和应用设置保存在当前手机中。发送消息时，聊天服务商会收到对话请求。使用独立搜索时，所选搜索服务会收到用于检索的本轮问题。
 * **系统级密钥加密**：你的 API Key 会通过 Android 系统原生的加密库（Android Keystore）安全存储，绝不会写入运行日志，也不会包含在导出的备份文件中。
 * **本地崩溃日志**：万一应用发生崩溃，系统会在本地生成一份诊断报告。你可以在 **「设置 → 关于 → 诊断信息」** 中随时查看、复制（用于向开发者反馈）或彻底删除，它绝不会在后台自动上传。
 * **彻底清除**：卸载应用或清除应用数据后，本地保存的所有对话记录与 API Key 都会被一并删除。
@@ -123,6 +125,36 @@ TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官�
 
 ---
 
+## 签名与校验
+
+本仓库（TinyChat 工作版）的安装包用一把**独立的发布密钥**签名，和上游 TinyChat 不是同一把，因此两者互不覆盖、可以并存在同一台手机上。当前安装包的签名信息如下：
+
+| 项目 | 值 |
+| --- | --- |
+| 包名（applicationId） | `io.github.pointqi.tinychat` |
+| 版本 | `1.0.2`（versionCode 3） |
+| 签名方案 | APK Signature Scheme v2（RSA 3072） |
+| 证书主体 | `CN=TinyChat Work Fork, O=PointQi` |
+| 证书 SHA-256 | `8E:7F:17:9C:41:59:6E:86:81:A7:4E:06:F7:56:5B:09:77:8C:10:AE:B3:5D:53:E5:BC:16:50:E3:84:6C:60:DB` |
+| 证书 SHA-1 | `40:FC:80:A5:58:41:1D:DE:BA:BD:9E:B1:40:A3:D0:EE:FC:B4:22:0C` |
+| 证书 MD5 | `77:F2:92:AF:B0:C0:64:5C:74:10:74:1A:C5:48:FA:20` |
+
+装之前想确认手里这个包是不是本仓库发的，用下面任意一条核对即可：
+
+```bash
+# 方式一：Android SDK 的 apksigner，看输出的 certificate SHA-256 digest
+apksigner verify --print-certs TinyChat-Work-v1.0.2.apk
+
+# 方式二：只用 JDK，不用装 Android SDK
+keytool -printcert -jarfile TinyChat-Work-v1.0.2.apk
+```
+
+指纹和上表对不上，就说明这个包不是从本仓库构建的（可能被二次打包），请不要安装。
+
+> 这里公开的是**证书指纹**，不是私钥。签名密钥和口令只存在本地 `.local/`（已被 `.gitignore` 排除）和仓库的 Actions Secrets 里，从不进入版本库——把私钥公开，等于把「以本应用名义发布任意更新」的能力交给所有人。
+
+---
+
 ## 常见问题（FAQ）
 
 **Q：API Key 要去哪里获取？**
@@ -149,4 +181,5 @@ A：完全不会。除了你主动发送给大模型的对话内容外，TinyCha
 
 * 本项目基于 **MIT 许可证** 开源，版权归 `Copyright (c) 2026 Takeoff0518` 所有。
 * 界面排版、配色方案与交互逻辑参考了官方开源项目 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo)（MIT 许可证），在此表示诚挚感谢。
+* 「专家模式」的系统提示词移植自 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT 许可证），许可证原文随安装包一起分发。
 * 完整的第三方开源组件及许可证清单，请参阅仓库根目录下的 `NOTICE` 文件，或在应用内前往 **「设置 → 关于 → 开源许可」** 查看。

@@ -4,6 +4,14 @@ import io.tinychat.model.PromptMode
 import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ThinkingMode
+import io.tinychat.net.context.HistoryAttachment
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
 
 /**
  * 通用 Anthropic Messages 协议（第三方 `/v1/messages`）。
@@ -11,13 +19,15 @@ import io.tinychat.model.ThinkingMode
  * 与官方 Messages 的差别：
  * - 路径是 `/v1/messages`（官方是 `/anthropic/v1/messages`）；
  * - 除 `x-api-key` 外要带 `anthropic-version`；
- * - **不发** `tools` / `safety_check` / `title` / `thinking` / `output_config`：这些是官方扩展，
- *   第三方拒收或语义不同；
+ * - 不发 DeepSeek 扩展 `tools` / `safety_check` / `title` / `output_config`；
  * - `APPEND` 模式不拼官方那句「该助手为 DeepSeek」——第三方服务商不该被冒名。
  */
 object AnthropicMessagesProtocol {
 
     const val VERSION = "2023-06-01"
+    private const val BASE64_MARKER = ";base64,"
+    private const val PDF_TYPE = "application/pdf"
+    private val imageMediaTypes = setOf("image/jpeg", "image/png", "image/gif", "image/webp")
 
     fun endpoint(baseUrl: String): String {
         val base = baseUrl.trim().trimEnd('/')
@@ -45,7 +55,7 @@ object AnthropicMessagesProtocol {
             tools = null,
             safetyCheck = null,
             title = null,
-            messages = command.messages,
+            messages = withReminders(command.messages),
             stream = true,
         )
         return PreparedRequest(
@@ -59,6 +69,70 @@ object AnthropicMessagesProtocol {
             bodyJson = DeepSeekMessagesProtocol.bodyJson.encodeToString(MessagesRequest.serializer(), request),
             protocol = ProviderProtocol.ANTHROPIC_MESSAGES,
         )
+    }
+
+    internal fun acceptsAttachment(attachment: HistoryAttachment): Boolean =
+        attachment.dataUri?.let { inlineMediaType(it, attachment.isImage) } != null ||
+            (!attachment.isImage && !attachment.text.isNullOrBlank())
+
+    internal fun attachmentBlock(attachment: HistoryAttachment): JsonObject? {
+        val uri = attachment.dataUri
+        val mediaType = uri?.let { inlineMediaType(it, attachment.isImage) }
+        val source = when {
+            uri != null && mediaType != null -> buildJsonObject {
+                put("type", "base64")
+                put("media_type", mediaType)
+                put("data", uri.substringAfter(BASE64_MARKER))
+            }
+            !attachment.isImage && !attachment.text.isNullOrBlank() -> buildJsonObject {
+                put("type", "text")
+                put("media_type", "text/plain")
+                put("data", attachment.text)
+            }
+            else -> return null
+        }
+        return buildJsonObject {
+            put("type", if (attachment.isImage) "image" else "document")
+            put("source", source)
+            if (!attachment.isImage) attachment.fileName?.takeIf(String::isNotBlank)?.let { put("title", it) }
+        }
+    }
+
+    private fun inlineMediaType(uri: String, isImage: Boolean): String? {
+        if (!uri.startsWith("data:")) return null
+        val marker = uri.indexOf(BASE64_MARKER)
+        if (marker < 5 || marker + BASE64_MARKER.length >= uri.length) return null
+        val type = uri.substring(5, marker)
+        return type.takeIf { if (isImage) it in imageMediaTypes else it == PDF_TYPE }
+    }
+
+    /** Anthropic 只接受 user 和 assistant 角色：元信息并入接下来的用户消息。 */
+    private fun withReminders(messages: List<WireMessage>): List<WireMessage> = buildList {
+        var reminder: String? = null
+        messages.forEach { message ->
+            if (message.role == WireMessage.ROLE_REMINDER) {
+                reminder = (message.content as? JsonPrimitive)?.contentOrNull
+            } else {
+                val prefix = reminder
+                add(if (prefix.isNullOrBlank()) message else message.copy(content = withReminder(message.content, prefix)))
+                reminder = null
+            }
+        }
+    }
+
+    private fun withReminder(content: JsonElement, reminder: String): JsonElement = when (content) {
+        is JsonPrimitive -> JsonPrimitive(listOfNotNull(reminder, content.contentOrNull).joinToString("\n\n"))
+        is JsonArray -> {
+            val last = content.lastOrNull() as? JsonObject
+            val lastIsText = (last?.get("type") as? JsonPrimitive)?.contentOrNull == "text"
+            val text = (last?.get("text") as? JsonPrimitive)?.contentOrNull
+            val reminderBlock = buildJsonObject {
+                put("type", "text")
+                put("text", if (lastIsText && !text.isNullOrBlank()) "$reminder\n\n$text" else reminder)
+            }
+            JsonArray((if (lastIsText) content.dropLast(1) else content) + reminderBlock)
+        }
+        else -> content
     }
 
     private fun resolveSystem(command: ChatCommand): String? {

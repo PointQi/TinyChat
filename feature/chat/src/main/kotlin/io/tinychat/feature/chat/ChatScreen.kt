@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,6 +18,8 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -50,7 +53,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -59,6 +61,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -79,6 +84,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberUpdatedState
@@ -90,6 +96,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -98,9 +105,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -110,6 +119,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -152,6 +162,7 @@ import io.tinychat.model.ErrorKind
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.Provider
+import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ThinkingMode
 import io.tinychat.ui.MenuAnchor
@@ -177,13 +188,15 @@ import java.time.LocalTime
  */
 @Composable
 fun ChatScreen(
+    sessionId: String?,
     state: ChatUiState,
     hasApiKey: Boolean,
     autoSpeak: Boolean,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    onToggleThinking: () -> Unit,
+    onSetThinking: (Boolean, ThinkingEffort) -> Unit,
+    onSetExpertMode: (Boolean) -> Unit,
     onToggleSearch: () -> Unit,
     onSelectModel: (String, String, ThinkingEffort) -> Unit,
     onOpenDrawer: () -> Unit,
@@ -220,6 +233,14 @@ fun ChatScreen(
 ) {
     val palette = TcTheme.palette
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    var attachmentDrawerOpen by remember(sessionId, state.providerId, state.modelId) { mutableStateOf(false) }
+    val onBlankTap by rememberUpdatedState({
+        attachmentDrawerOpen = false
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+    })
 
     // —— 附件选择器（M4-1/2）——
     // 选图有三个落点，优先"能进系统相册"的那个（详见 ImagePick 的注释）：
@@ -292,10 +313,29 @@ fun ChatScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(palette.bg),
+            .background(palette.bg)
+            .pointerInput(Unit) {
+                // 只观察未被子控件处理的点击，保留文字选择、列表拖动和边缘手势。
+                awaitEachGesture {
+                    val down = awaitFirstDown(pass = PointerEventPass.Final)
+                    while (true) {
+                        val change = awaitPointerEvent(PointerEventPass.Final).changes.singleOrNull() ?: break
+                        if (change.isConsumed || (change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
+                        if (change.changedToUp()) {
+                            onBlankTap()
+                            break
+                        }
+                    }
+                }
+            },
     ) {
         TcTopBar(
-            leading = { TcIconButton(TcIcons.Menu, "会话列表", onOpenDrawer) },
+            leading = {
+                TcIconButton(TcIcons.Menu, "会话列表", onClick = {
+                    attachmentDrawerOpen = false
+                    onOpenDrawer()
+                })
+            },
             title = state.title,
             trailing = {
                 // 顶栏播音键 = **自动朗读开关**；语音只有官方端点，第三方不显示
@@ -315,6 +355,7 @@ fun ChatScreen(
             Greeting(modifier = Modifier.weight(1f))
         } else {
             MessageList(
+                sessionId = sessionId,
                 state = state,
                 showUsage = state.showUsage,
                 modifier = Modifier.weight(1f),
@@ -355,14 +396,18 @@ fun ChatScreen(
 
         InputCard(
             state = state,
+            attachmentDrawerOpen = attachmentDrawerOpen,
+            onAttachmentDrawerChange = { attachmentDrawerOpen = it },
             onInputChange = onInputChange,
             onSend = onSend,
             onStop = onStop,
-            onToggleThinking = onToggleThinking,
+            onSetThinking = onSetThinking,
+            onSetExpertMode = onSetExpertMode,
             onToggleSearch = onToggleSearch,
             onSelectModel = onSelectModel,
             onCancelEdit = onCancelEdit,
             onRemoveAttachment = onRemoveAttachment,
+            onPickRecentPhoto = { onAddAttachments(listOf(it)) },
             // 选图/拍照/选文件交给系统选择器，回调统一走 onAddAttachments
             onPickImages = {
                 runCatching {
@@ -441,6 +486,7 @@ private fun Greeting(modifier: Modifier = Modifier) {
 
 @Composable
 private fun MessageList(
+    sessionId: String?,
     state: ChatUiState,
     /** 每轮统计条（M7-3，设置里可关） */
     showUsage: Boolean,
@@ -458,6 +504,8 @@ private fun MessageList(
     val clipboard = LocalClipboardManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
+    // 同一对话内滚动保留手动展开的条目，切换对话时清空选择。
+    var expandedThinkingIds by rememberSaveable(sessionId) { mutableStateOf(longArrayOf()) }
 
     // 用户自己拖离底部就停止跟随，别把人拽回去；拖回底部后恢复。
     val following = rememberFollowLatest(listState)
@@ -492,12 +540,10 @@ private fun MessageList(
     Box(modifier = modifier.fillMaxWidth()) {
         LazyColumn(
             state = listState,
-            // 四边留白用 Modifier.padding 而不是 contentPadding：后者属于滚动内容，
-            // 滚到底之后还剩 12dp 要再滚一次 —— 动画会分两段，末尾那一下看着像瞬移。
-            // 放在外面，留白照旧，滚到底就是一段顺到底的位移。
+            // 视口底部与输入框相接，滚动时不会提前裁掉文字。
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(state.messages, key = { it.id }) { message ->
@@ -505,6 +551,14 @@ private fun MessageList(
                 MessageRow(
                     message = message,
                     showUsage = showUsage,
+                    thinkingExpanded = message.id in expandedThinkingIds,
+                    onToggleThinking = {
+                        expandedThinkingIds = if (message.id in expandedThinkingIds) {
+                            expandedThinkingIds.filterNot { it == message.id }.toLongArray()
+                        } else {
+                            expandedThinkingIds + message.id
+                        }
+                    },
                     onTap = { onEditMessage(message) },
                     onCopyMessage = { clipboard.setText(AnnotatedString(message.text)) },
                     onSwitchVersion = { delta -> onSwitchVersion(message.id, delta) },
@@ -516,6 +570,8 @@ private fun MessageList(
                     canReadAloud = state.supportsVoice,
                     onReadAloud = { onReadAloud(message) },
                 )
+                // 留白跟末条消息一起滚到底，避免另滚一段才到达底部。
+                if (isLatest) Spacer(Modifier.height(12.dp))
             }
         }
 
@@ -559,6 +615,8 @@ private fun MessageList(
 private fun MessageRow(
     message: ChatMessage,
     showUsage: Boolean,
+    thinkingExpanded: Boolean,
+    onToggleThinking: () -> Unit,
     onTap: () -> Unit,
     onCopyMessage: () -> Unit,
     onSwitchVersion: (Int) -> Unit,
@@ -722,17 +780,20 @@ private fun MessageRow(
                         timeline = message.timeline,
                         seconds = message.thinkingSeconds,
                         inProgress = message.isThinking,
+                        expanded = thinkingExpanded,
+                        onToggle = onToggleThinking,
                         stopped = message.status == MessageStatus.INCOMPLETE && message.text.isBlank(),
                         onOpenTool = { toolSheet = it },
                     )
                     Spacer(Modifier.height(8.dp))
                 }
 
-                if (message.text.isNotBlank()) {
-                    // 正文走 Markdown（M2-1/2/3）：流式期间按渲染耗时节流出帧，禁止整篇重解析
+                if (message.text.isNotBlank() || message.status == MessageStatus.WIP) {
+                    // 先挂载正文，短回复在第一批正文和完成状态同时到来时也能逐步显示。
+                    val isStreaming = message.status == MessageStatus.WIP
                     TcMarkdown(
                         content = message.text,
-                        streaming = message.status == MessageStatus.WIP,
+                        streaming = isStreaming,
                         citations = message.anchors.map { CitationAnchor(it.anchor, it.index) },
                         onCitationClick = { sourcesOpen = true },
                     )
@@ -1438,13 +1499,12 @@ private fun ThinkingBlock(
     timeline: List<TimelineItem>,
     seconds: Double?,
     inProgress: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit,
     stopped: Boolean,
     onOpenTool: (ToolStep) -> Unit,
 ) {
     val palette = TcTheme.palette
-    var expanded by remember { mutableStateOf(false) }
-
-    LaunchedEffect(inProgress) { expanded = inProgress }
 
     val label = when {
         inProgress -> "正在思考"
@@ -1460,7 +1520,7 @@ private fun ThinkingBlock(
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
-                .clickable { expanded = !expanded }
+                .clickable(onClick = onToggle)
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1653,14 +1713,18 @@ private fun InputCard(
     contextPercent: Float,
     onOpenUsage: () -> Unit,
     state: ChatUiState,
+    attachmentDrawerOpen: Boolean,
+    onAttachmentDrawerChange: (Boolean) -> Unit,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    onToggleThinking: () -> Unit,
+    onSetThinking: (Boolean, ThinkingEffort) -> Unit,
+    onSetExpertMode: (Boolean) -> Unit,
     onToggleSearch: () -> Unit,
     onSelectModel: (String, String, ThinkingEffort) -> Unit,
     onCancelEdit: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
+    onPickRecentPhoto: (Uri) -> Unit,
     onPickImages: () -> Unit,
     onPickFiles: () -> Unit,
     canTakePhoto: Boolean,
@@ -1683,7 +1747,13 @@ private fun InputCard(
     val inputFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    var attachSheet by remember { mutableStateOf(false) }
+    val showAttachments = attachmentDrawerOpen && state.canAttach && state.editingMessageId == null
+    val attachmentsTransition = updateTransition(showAttachments, label = "attachments")
+    val attachmentProgress = attachmentsTransition.animateFloat(
+        transitionSpec = { spring(dampingRatio = 0.80f, stiffness = 580f) },
+        label = "drawer and paperclip",
+    ) { if (it) 1f else 0f }
+    BackHandler(enabled = showAttachments) { onAttachmentDrawerChange(false) }
     var previewImage by remember { mutableStateOf<DraftAttachment?>(null) }
 
     /** 取消编辑：清空由 ViewModel 做，这里负责「失焦 + 收起输入法」 */
@@ -1779,7 +1849,10 @@ private fun InputCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 ImageQuickPrompts.forEach { prompt ->
-                    QuickPromptChip(text = prompt, onClick = { onQuickSend(prompt) })
+                    QuickPromptChip(text = prompt, onClick = {
+                        onAttachmentDrawerChange(false)
+                        onQuickSend(prompt)
+                    })
                 }
             }
         }
@@ -1825,6 +1898,7 @@ private fun InputCard(
                     cursorBrush = SolidColor(palette.brand),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onFocusChanged { if (it.isFocused) onAttachmentDrawerChange(false) }
                         .focusRequester(inputFocus),
                     maxLines = 8,
                 )
@@ -1850,7 +1924,9 @@ private fun InputCard(
                     modelId = state.modelId,
                     effort = state.effort,
                     thinkingEnabled = state.thinkingEnabled,
-                    onToggleThinking = onToggleThinking,
+                    expertMode = state.expertMode,
+                    onSetThinking = onSetThinking,
+                    onSetExpertMode = onSetExpertMode,
                     onSelect = onSelectModel,
                     modifier = Modifier.weight(1f, fill = false),
                 )
@@ -1863,7 +1939,18 @@ private fun InputCard(
             Spacer(Modifier.width(2.dp))
             // 编辑态不给加附件（编辑只改文字；进入编辑时草稿已清空）
             if (state.editingMessageId == null && state.canAttach) {
-                CircleIcon(TcIcons.Attach, "附件", palette.labelSecondary) { attachSheet = true }
+                CircleIcon(
+                    TcIcons.Attach,
+                    if (showAttachments) "关闭附件" else "附件",
+                    palette.labelSecondary,
+                    iconModifier = Modifier.graphicsLayer { rotationZ = attachmentProgress.value * 45f },
+                ) {
+                    if (!showAttachments) {
+                        focusManager.clearFocus(force = true)
+                        keyboard?.hide()
+                    }
+                    onAttachmentDrawerChange(!showAttachments)
+                }
                 Spacer(Modifier.width(4.dp))
             }
             when {
@@ -1880,7 +1967,10 @@ private fun InputCard(
                     else -> CircleIcon(TcIcons.Keyboard, "切换到键盘输入", palette.labelSecondary, onClick = onMicClick)
                 }
                 state.input.isNotBlank() || state.attachments.isNotEmpty() ->
-                    CircleIcon(TcIcons.Send, "发送", palette.brand, filled = true, onClick = onSend)
+                    CircleIcon(TcIcons.Send, "发送", palette.brand, filled = true) {
+                        onAttachmentDrawerChange(false)
+                        onSend()
+                    }
                 else -> if (state.supportsVoice) {
                     CircleIcon(TcIcons.Mic, "语音输入", palette.labelSecondary, onClick = onMicClick)
                 }
@@ -1888,22 +1978,33 @@ private fun InputCard(
         }
     }
 
-    // 附件来源选择（M4-1/2）：相册 / 拍照 / 文件
-    if (attachSheet) {
-        AttachmentSheet(
-            showCamera = canTakePhoto,
-            showFiles = state.canAttachFile,
-            onDismiss = { attachSheet = false },
-            onImages = {
-                attachSheet = false
+    if (attachmentsTransition.currentState || attachmentsTransition.targetState || attachmentsTransition.isRunning) {
+        AttachmentPickerDrawer(
+            progress = { attachmentProgress.value },
+            photosEnabled = state.canAttachImage,
+            cameraEnabled = canTakePhoto && state.canAttachImage,
+            filesLabel = if (state.canAttachFile) {
+                when {
+                    state.currentProvider?.protocol == ProviderProtocol.DEEPSEEK_MESSAGES -> "文件"
+                    state.canAttachPdf -> "文件（PDF 或文本）"
+                    else -> "文件（文本）"
+                }
+            } else null,
+            drafts = state.attachments,
+            onTogglePhoto = { uri ->
+                val draft = state.attachments.firstOrNull { it.uri == uri }
+                if (draft == null) onPickRecentPhoto(uri) else onRemoveAttachment(draft.id)
+            },
+            onOpenGallery = {
+                onAttachmentDrawerChange(false)
                 onPickImages()
             },
-            onCamera = {
-                attachSheet = false
+            onTakePhoto = {
+                onAttachmentDrawerChange(false)
                 onTakePhoto()
             },
-            onFiles = {
-                attachSheet = false
+            onPickFiles = {
+                onAttachmentDrawerChange(false)
                 onPickFiles()
             },
         )
@@ -1932,7 +2033,9 @@ private fun ModelEffortPill(
     modelId: String,
     effort: ThinkingEffort,
     thinkingEnabled: Boolean,
-    onToggleThinking: () -> Unit,
+    expertMode: Boolean,
+    onSetThinking: (Boolean, ThinkingEffort) -> Unit,
+    onSetExpertMode: (Boolean) -> Unit,
     onSelect: (String, String, ThinkingEffort) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1940,6 +2043,9 @@ private fun ModelEffortPill(
     var sheetOpen by remember { mutableStateOf(false) }
     val current = providers.firstOrNull { it.id == providerId }
     val currentModel = current?.model(modelId)
+    val supportsThinking = currentModel != null &&
+        (currentModel.capabilities.thinking || currentModel.thinking != ThinkingMode.NONE)
+    val supportsEffort = currentModel?.capabilities?.effort == true
     val label = when {
         current == null -> "已移除"
         else -> currentModel?.let { it.displayName.ifBlank { it.id } }?.shortName() ?: current.displayName
@@ -1955,9 +2061,7 @@ private fun ModelEffortPill(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            // 强度只在「这一轮真的会带思考参数」时显示。关掉思考、或模型本来就不支持强度，
-            // 都只是「没有参数」，不该拿一个 Off 冒充第四档（决策 50）。
-            text = if (thinkingEnabled && currentModel?.capabilities?.effort == true) {
+            text = if (thinkingEnabled && supportsEffort) {
                 "$label ${effort.displayName}"
             } else {
                 label
@@ -2032,50 +2136,56 @@ private fun ModelEffortPill(
                     }
                 }
 
-                // 思考开关（决策 50）：以前这个动作在界面上没有入口，`onToggleThinking` 是个没人调用的死参数。
-                // 判据不是「模型声明了支持思考」，而是「模型确实会发思考参数或返回思考」——
-                // 老配置里有 `thinking=EFFORT` 但能力位 `thinking=false` 的模型，也要能关。
-                if (currentModel != null &&
-                    (currentModel.capabilities.thinking || currentModel.thinking != ThinkingMode.NONE)
-                ) {
-                    Spacer(Modifier.height(14.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("思考", style = TcTypography.bodyMedium, color = palette.labelPrimary)
-                            Text(
-                                text = if (thinkingEnabled) "回答前先想一遍" else "直接回答，不产生思考过程",
-                                style = TcTypography.labelMedium,
-                                color = palette.labelTertiary,
-                            )
-                        }
-                        Switch(
-                            checked = thinkingEnabled,
-                            onCheckedChange = { onToggleThinking() },
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = palette.brand,
-                                checkedThumbColor = palette.brandOn,
-                            ),
-                        )
-                    }
-                }
-
-                if (currentModel?.capabilities?.effort == true && thinkingEnabled) {
+                if (supportsThinking || supportsEffort) {
                     Spacer(Modifier.height(14.dp))
                     Text("思考强度", style = TcTypography.labelMedium, color = palette.labelSecondary)
                     Spacer(Modifier.height(8.dp))
-                    Row {
-                        ThinkingEffort.entries.forEach { option ->
+                    Row(
+                        modifier = Modifier.selectableGroup(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        EffortChip(text = "关闭", selected = !thinkingEnabled) {
+                            onSetThinking(false, effort)
+                        }
+                        if (supportsEffort) {
+                            ThinkingEffort.entries.forEach { option ->
+                                EffortChip(
+                                    text = option.displayName,
+                                    selected = thinkingEnabled && option == effort,
+                                    onClick = { onSetThinking(true, option) },
+                                )
+                            }
+                        } else {
                             EffortChip(
-                                text = option.displayName,
-                                selected = option == effort,
-                                onClick = {
-                                    sheetOpen = false
-                                    onSelect(providerId, modelId, option)
-                                },
+                                text = "开启",
+                                selected = thinkingEnabled,
+                                onClick = { onSetThinking(true, effort) },
                             )
-                            Spacer(Modifier.width(6.dp))
                         }
                     }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .toggleable(value = expertMode, role = Role.Switch, onValueChange = onSetExpertMode),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "专家模式",
+                        style = TcTypography.bodyMedium,
+                        color = palette.labelPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = expertMode,
+                        onCheckedChange = null,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = palette.brand,
+                            checkedThumbColor = palette.brandOn,
+                        ),
+                    )
                 }
                 Spacer(Modifier.height(16.dp))
             }
@@ -2098,7 +2208,7 @@ private fun EffortChip(text: String, selected: Boolean, onClick: () -> Unit) {
             .height(30.dp)
             .clip(RoundedCornerShape(100.dp))
             .background(if (selected) palette.brand else palette.bubble)
-            .clickable(onClick = onClick)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -2137,6 +2247,7 @@ private fun CircleIcon(
     contentDescription: String,
     tint: Color,
     filled: Boolean = false,
+    iconModifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val palette = TcTheme.palette
@@ -2152,7 +2263,7 @@ private fun CircleIcon(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = if (filled) palette.brandOn else tint,
-            modifier = Modifier.size(if (filled) 18.dp else 22.dp),
+            modifier = iconModifier.size(if (filled) 18.dp else 22.dp),
         )
     }
 }
@@ -2432,54 +2543,6 @@ private fun DraftChip(draft: DraftAttachment, onRemove: () -> Unit, onOpen: () -
                 modifier = Modifier.size(10.dp),
             )
         }
-    }
-}
-
-/** 附件来源面板（相册 / 拍照 / 文件）。第三方视觉只收图片，所以不显示「选择文件」 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AttachmentSheet(
-    showCamera: Boolean,
-    showFiles: Boolean,
-    onDismiss: () -> Unit,
-    onImages: () -> Unit,
-    onCamera: () -> Unit,
-    onFiles: () -> Unit,
-) {
-    val palette = TcTheme.palette
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = palette.bg,
-    ) {
-        Column(
-            modifier = Modifier
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            SheetAction(TcIcons.Photo, "从相册选择", onImages)
-            if (showCamera) SheetAction(TcIcons.Camera, "拍照", onCamera)
-            if (showFiles) SheetAction(TcIcons.Folder, "选择文件", onFiles)
-        }
-    }
-}
-
-@Composable
-private fun SheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
-    val palette = TcTheme.palette
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, tint = palette.labelSecondary, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(14.dp))
-        Text(text = label, style = TcTypography.bodyLarge, color = palette.labelPrimary)
     }
 }
 

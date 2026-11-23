@@ -9,11 +9,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.tinychat.data.attachment.AttachmentStore
+import io.tinychat.data.attachment.InlineDocumentType
 import io.tinychat.data.attachment.PickedFile
 import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.chat.RunOutcome
 import io.tinychat.data.db.FragmentEntity
 import io.tinychat.data.db.MessageWithFragments
+import io.tinychat.data.settings.ChatDefaults
 import io.tinychat.data.settings.UserSettings
 import io.tinychat.audio.PlaybackStopped
 import io.tinychat.feature.chat.voice.VoiceController
@@ -26,6 +28,7 @@ import io.tinychat.model.FilePayload
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.ModelInfo
 import io.tinychat.model.Provider
+import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ProviderKind
 import io.tinychat.model.QuotaSnapshot
 import io.tinychat.net.account.AccountClient
@@ -45,6 +48,8 @@ import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ToolOpenPayload
 import io.tinychat.model.ToolSearchPayload
 import io.tinychat.model.TtsVoice
+import io.tinychat.model.WebSearchCredentials
+import io.tinychat.model.WebSearchProvider
 import io.tinychat.model.versionPointer
 import io.tinychat.net.speech.SpeechException
 import io.tinychat.net.transport.ChatException
@@ -54,10 +59,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -230,7 +239,10 @@ data class ChatUiState(
      */
     val effort: ThinkingEffort = ThinkingEffort.LOW,
     val thinkingEnabled: Boolean = true,
+    val expertMode: Boolean = false,
     val searchEnabled: Boolean = false,
+    val webSearchProvider: WebSearchProvider = WebSearchProvider.DEEPSEEK,
+    val webSearchCredentials: WebSearchCredentials = WebSearchCredentials(),
     /** 非空 = 正在编辑这条用户消息 */
     val editingMessageId: Long? = null,
 
@@ -276,15 +288,9 @@ data class ChatUiState(
     private val currentModel: ModelInfo?
         get() = currentProvider?.model(modelId)
 
-    /**
-     * 当前模型能不能收图片（v4-pro 不支持，M4-6）。
-     *
-     * Anthropic 兼容链路还没有图片块实现（决策 53 只做了 OpenAI 兼容），
-     * 所以那里即使能力位为真也不露附件入口——不给自己造一个点了不发货的按钮。
-     */
+    /** 图片由模型能力决定。 */
     val canAttachImage: Boolean
-        get() = currentModel?.capabilities?.imageInput == true &&
-            currentProvider?.protocol != io.tinychat.model.ProviderProtocol.ANTHROPIC_MESSAGES
+        get() = currentModel?.capabilities?.imageInput == true
 
     /** 圆环分子：当前分支最后一条带 usage 的回答（决策 26，不做预估） */
     val contextUsed: Int
@@ -306,15 +312,25 @@ data class ChatUiState(
     val contextFull: Boolean
         get() = isContextFull(contextUsed, contextWindow)
 
-    /** 能不能带文件 */
+    /** 兼容协议把可读文本作为消息发出，PDF 需要服务商和模型支持。 */
     val canAttachFile: Boolean
+        get() = when (currentProvider?.protocol) {
+            null -> false
+            ProviderProtocol.DEEPSEEK_MESSAGES -> canAttachPdf
+            ProviderProtocol.OPENAI_CHAT, ProviderProtocol.ANTHROPIC_MESSAGES -> currentModel != null
+        }
+
+    val canAttachPdf: Boolean
         get() = currentModel?.capabilities?.fileUpload == true
 
     val canAttach: Boolean get() = canAttachImage || canAttachFile
 
-    /** 当前模型支不支持服务端联网（第三方一律不支持） */
     val supportsSearch: Boolean
-        get() = currentModel?.capabilities?.webSearch == true
+        get() {
+            val model = currentModel ?: return false
+            return webSearchProvider.usesBuiltInSearch(currentProvider?.protocol, model.capabilities.webSearch) ||
+                webSearchCredentials.hasKey(webSearchProvider)
+        }
 
     /** 语音（ASR/TTS）只有官方端点：第三方不显示麦克风与朗读 */
     val supportsVoice: Boolean
@@ -341,8 +357,6 @@ class ChatViewModel(
     private val providers: StateFlow<List<Provider>>,
     private val keyedProviders: StateFlow<Set<String>>,
     private val activeProviderId: StateFlow<String>,
-    /** 该服务商上次用的模型；新会话默认用它 */
-    private val lastModelFor: suspend (String) -> String,
     /** 附件落盘（M4）：选完文件后先读元信息 + 生成缩略图 */
     private val attachmentStore: AttachmentStore,
     /** 语音（M5）：录音、频谱、ASR、TTS 播放 */
@@ -355,6 +369,8 @@ class ChatViewModel(
     private val quotaFor: suspend (Provider) -> QuotaSnapshot?,
     /** 按服务商取 Key（决策 48）：官方可以有多个实例，语音与余额要用会话自己那一家 */
     private val providerKeyFor: suspend (String) -> String? = { null },
+    private val webSearchProvider: StateFlow<WebSearchProvider> = MutableStateFlow(WebSearchProvider.DEEPSEEK),
+    private val webSearchCredentials: StateFlow<WebSearchCredentials> = MutableStateFlow(WebSearchCredentials()),
 ) : ViewModel() {
 
     var state by mutableStateOf(ChatUiState())
@@ -377,6 +393,8 @@ class ChatViewModel(
     private var usageJob: Job? = null
     private var balanceJob: Job? = null
     private var balanceAt = 0L
+    private var chatDefaults: ChatDefaults? = null
+    private val chatSettingsMutex = Mutex()
 
     /** 本轮生成结束后要不要自动朗读（开关是全局的，但只在"自己发起的这一轮"才读）。 */
     private var autoSpeakPending = false
@@ -397,9 +415,26 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch {
+            val saved = settings.loadChatDefaults {
+                repository.latestSession()?.let { session ->
+                    ChatDefaults(
+                        providerId = session.providerId,
+                        modelId = session.model,
+                        effort = session.effort ?: ThinkingEffort.LOW,
+                        thinkingEnabled = session.thinkingEnabled,
+                        searchEnabled = session.searchEnabled,
+                    )
+                }
+            }
+            val expertMode = settings.expertMode.first()
+            if (chatDefaults == null) {
+                state = state.copy(expertMode = expertMode)
+                chatDefaults = saved
+                applyChatDefaults()
+            }
+        }
+        viewModelScope.launch {
             repository.recoverInterrupted()
-            // 冷启动**不**恢复上次会话（2026-11-18 定）：直接停在空白新对话，
-            // 历史都在抽屉里。之前读 updated_at 最大的那条自动进去，用户明确不要。
         }
         viewModelScope.launch {
             repository.observeSessions().collect { rows ->
@@ -412,16 +447,26 @@ class ChatViewModel(
             providers.collect { list ->
                 state = state.copy(
                     providers = list,
-                    hasApiKey = state.providerId in state.keyedProviders,
+                    hasApiKey = hasChatKey(state.providerId, state.keyedProviders),
                 )
+                applyChatDefaults()
             }
         }
         viewModelScope.launch {
             keyedProviders.collect { keyed ->
                 state = state.copy(
                     keyedProviders = keyed,
-                    hasApiKey = state.providerId in keyed,
+                    hasApiKey = hasChatKey(state.providerId, keyed),
                 )
+                applyChatDefaults()
+            }
+        }
+        viewModelScope.launch {
+            activeProviderId.collect { applyChatDefaults() }
+        }
+        viewModelScope.launch {
+            combine(webSearchProvider, webSearchCredentials, ::Pair).collect { (provider, credentials) ->
+                state = state.copy(webSearchProvider = provider, webSearchCredentials = credentials)
             }
         }
         viewModelScope.launch {
@@ -442,6 +487,11 @@ class ChatViewModel(
         viewModelScope.launch {
             settings.reminderEnabled.distinctUntilChanged().collect { enabled ->
                 state = state.copy(reminderEnabled = enabled)
+            }
+        }
+        viewModelScope.launch {
+            settings.expertMode.distinctUntilChanged().collect { enabled ->
+                state = state.copy(expertMode = enabled)
             }
         }
         viewModelScope.launch {
@@ -472,19 +522,22 @@ class ChatViewModel(
     fun openSession(id: String) {
         if (id == sessionId) return
         job?.cancel()
+        observing?.cancel()
         stopSpeaking()
         autoSpeakPending = false
         sessionId = id
         state = state.copy(
+            messages = emptyList(),
             isStreaming = false,
+            hasApiKey = false,
             error = null,
             editingMessageId = null,
             input = "",
         )
-        observe(id)
         // 会话保存了自己的模型/强度/开关，切过来要跟着变（一次性读，不跟本地切换打架）
         viewModelScope.launch {
             val row = repository.session(id) ?: return@launch
+            if (sessionId != id) return@launch
             state = state.copy(
                 providerId = row.providerId,
                 modelId = row.model,
@@ -497,6 +550,7 @@ class ChatViewModel(
                 balanceText = null,
                 quota = null,
             )
+            observe(id)
         }
     }
 
@@ -593,7 +647,7 @@ class ChatViewModel(
     fun addAttachments(uris: List<Uri>) {
         if (uris.isEmpty()) return
         val existing = state.attachments.map { it.uri }.toSet()
-        val fresh = uris.filterNot { it in existing }
+        val fresh = uris.distinct().filterNot { it in existing }
         if (fresh.isEmpty()) return
         viewModelScope.launch {
             val picked = withContext(Dispatchers.IO) {
@@ -605,11 +659,28 @@ class ChatViewModel(
                 state = state.copy(error = "打不开选中的文件")
                 return@launch
             }
-            val oversized = picked.filter { it.size > AttachmentStore.MAX_BYTES }
-            val accepted = picked - oversized.toSet()
+            val accepted = mutableListOf<DraftAttachment>()
+            val currentUris = state.attachments.mapTo(mutableSetOf()) { it.uri }
+            var firstIssue: String? = null
+            for (file in picked) {
+                val draft = file.toDraft()
+                if (draft.uri in currentUris) {
+                    attachmentStore.delete(file.id, null)
+                    continue
+                }
+                val issue = attachmentIssue(draft)
+                if (issue == null) {
+                    accepted += draft
+                    currentUris.add(draft.uri)
+                } else {
+                    if (firstIssue == null) firstIssue = issue
+                    attachmentStore.delete(file.id, null)
+                }
+            }
             state = state.copy(
-                attachments = state.attachments + accepted.map { it.toDraft() },
-                error = if (oversized.isNotEmpty()) "附件超过 100MiB，已跳过" else state.error,
+                attachments = state.attachments + accepted,
+                error = firstIssue ?: state.error,
+                errorKind = if (firstIssue != null) ErrorKind.UPLOAD else state.errorKind,
             )
         }
     }
@@ -632,18 +703,34 @@ class ChatViewModel(
         thumbPath = thumbPath,
     )
 
+    private fun attachmentIssue(draft: DraftAttachment): String? {
+        val name = draft.fileName
+        if (draft.size > AttachmentStore.MAX_BYTES) return "附件「$name」超过 100 MiB"
+        if (draft.isImage) return if (state.canAttachImage) null else "当前模型不支持图片输入"
+        if (!state.canAttachFile) return "当前模型不支持文件输入"
+        if (state.currentProvider?.protocol == ProviderProtocol.DEEPSEEK_MESSAGES) return null
+
+        val type = AttachmentStore.inlineDocumentType(name, draft.mime)
+            ?: return "附件「$name」：仅支持 PDF 和纯文本文件"
+        if (type == InlineDocumentType.PDF && !state.canAttachPdf) return "请在模型设置中启用 PDF 文件输入"
+        return if (draft.size > type.maxBytes) "附件「$name」超过 ${type.limit}" else null
+    }
+
     /** 附件上传失败后点「重试」：重传这一轮的附件再重新请求，不新建提问 */
     fun retryAttachment(message: ChatMessage) {
         val id = sessionId ?: return
         if (state.isStreaming) return
+        val defaults = rememberChatDefaults()
+        val expertMode = state.expertMode
         state = state.copy(isStreaming = true, error = null, errorKind = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.retryTurn(id, message.id))
+                persistChatSettings(id, defaults)
+                state = state.withOutcomeError(repository.retryTurn(id, message.id, expertMode))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
+                state = state.withRequestError(e)
             } catch (e: Exception) {
                 state = state.copy(error = "文件上传失败，请重试", errorKind = null)
             } finally {
@@ -684,14 +771,9 @@ class ChatViewModel(
             return
         }
         // 附件能力跟着当前模型走：从带视觉的模型切到不带的，草稿里的图片不能悄悄发出去
-        val unsupported = drafts.firstOrNull { draft ->
-            if (draft.isImage) !state.canAttachImage else !state.canAttachFile
-        }
-        if (unsupported != null) {
-            state = state.copy(
-                error = if (unsupported.isImage) "当前模型不支持图片输入" else "当前模型不支持文件",
-                errorKind = null,
-            )
+        val issue = drafts.firstNotNullOfOrNull(::attachmentIssue)
+        if (issue != null) {
+            state = state.copy(error = issue, errorKind = ErrorKind.UPLOAD)
             return
         }
 
@@ -711,6 +793,9 @@ class ChatViewModel(
         }
 
         val sendingAttachments = drafts
+        val previousSessionId = sessionId
+        val sendingDefaults = rememberChatDefaults()
+        val expertMode = state.expertMode
         // 新问题开始 = 停止正在读的上一条（chat-demo 同款行为）
         stopSpeaking()
         autoSpeakPending = state.autoSpeak
@@ -724,25 +809,26 @@ class ChatViewModel(
         )
         job = viewModelScope.launch {
             try {
-                val id = sessionId ?: repository.createSession(
-                    providerId = state.providerId,
-                    model = state.modelId,
-                    thinkingEnabled = state.thinkingEnabled,
-                    searchEnabled = state.searchEnabled,
-                    effort = state.effort,
+                persistChatSettings(previousSessionId, sendingDefaults)
+                val id = previousSessionId ?: repository.createSession(
+                    providerId = sendingDefaults.providerId,
+                    model = sendingDefaults.modelId,
+                    thinkingEnabled = sendingDefaults.thinkingEnabled,
+                    searchEnabled = sendingDefaults.searchEnabled,
+                    effort = sendingDefaults.effort,
                 ).also {
                     sessionId = it
                     observe(it)
                 }
 
-                persistSettings(id)
                 val outcome = if (editingId != null) {
                     // 编辑重发：在新分支上跑，旧分支留库
-                    repository.editMessage(id, editingId, text)
+                    repository.editMessage(id, editingId, text, expertMode)
                 } else {
                     repository.send(
                         sessionId = id,
                         text = text,
+                        expertMode = expertMode,
                         attachments = sendingAttachments.map {
                             PickedFile(
                                 id = it.id,
@@ -764,7 +850,7 @@ class ChatViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
+                state = state.withRequestError(e)
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
@@ -798,16 +884,19 @@ class ChatViewModel(
         val id = sessionId ?: return
         if (state.isStreaming || message.isUser) return
 
+        val defaults = rememberChatDefaults()
+        val expertMode = state.expertMode
         stopSpeaking()
         autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.regenerate(id, message.id))
+                persistChatSettings(id, defaults)
+                state = state.withOutcomeError(repository.regenerate(id, message.id, expertMode))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
+                state = state.withRequestError(e)
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
@@ -822,16 +911,19 @@ class ChatViewModel(
         val id = sessionId ?: return
         if (state.isStreaming || message.isUser || !message.canContinue) return
 
+        val defaults = rememberChatDefaults()
+        val expertMode = state.expertMode
         stopSpeaking()
         autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.continueGeneration(id, message.id))
+                persistChatSettings(id, defaults)
+                state = state.withOutcomeError(repository.continueGeneration(id, message.id, expertMode))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
+                state = state.withRequestError(e)
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
@@ -863,21 +955,16 @@ class ChatViewModel(
         sessionId = null
         // 草稿附件的缩略图要跟着清掉，别在磁盘上留垃圾
         state.attachments.forEach { runCatching { attachmentStore.delete(it.id, null) } }
-        // 新对话回到「当前服务商 + 该家上次用的模型」：用户上次的选择要延续，
-        // 但不能把上一会话的模型带到一个没有它的服务商下
-        val providerId = activeProviderId.value
-        val provider = state.providers.firstOrNull { it.id == providerId }
         state = ChatUiState(
-            providerId = providerId,
-            modelId = provider?.defaultModel?.id ?: state.modelId,
-            effort = state.effort,
-            thinkingEnabled = state.thinkingEnabled,
-            searchEnabled = state.searchEnabled && provider?.defaultModel?.capabilities?.webSearch == true,
+            providerId = state.providerId,
+            modelId = state.modelId,
+            expertMode = state.expertMode,
+            webSearchProvider = state.webSearchProvider,
+            webSearchCredentials = state.webSearchCredentials,
             // 这些都是全局状态，开新对话不能跟着重置（尤其是 hasApiKey：
             // 之前漏了它，开新对话后顶部会误报「尚未配置服务商」）
             autoSpeak = state.autoSpeak,
             ttsVoice = state.ttsVoice,
-            hasApiKey = providerId in state.keyedProviders,
             keyedProviders = state.keyedProviders,
             providers = state.providers,
             showUsage = state.showUsage,
@@ -885,27 +972,21 @@ class ChatViewModel(
             balanceText = state.balanceText,
             quota = state.quota,
         )
-        viewModelScope.launch {
-            val last = lastModelFor(providerId).takeIf { it.isNotBlank() }
-            val model = provider?.model(last ?: "") ?: return@launch
-            state = state.copy(
-                modelId = model.id,
-                effort = state.effort,
-                searchEnabled = state.searchEnabled && model.capabilities.webSearch,
-                hasApiKey = providerId in state.keyedProviders,
-            )
-        }
+        applyChatDefaults()
     }
 
-    fun toggleThinking() {
-        state = state.copy(thinkingEnabled = !state.thinkingEnabled)
+    fun setThinking(enabled: Boolean, effort: ThinkingEffort) {
+        state = state.copy(thinkingEnabled = enabled, effort = effort)
         persistStandalone()
     }
 
+    fun setExpertMode(enabled: Boolean) {
+        viewModelScope.launch { settings.setExpertMode(enabled) }
+    }
+
     fun toggleSearch() {
-        // 打开搜索前先看能力位：第三方服务商没有服务端联网，不要假装能开
         if (!state.searchEnabled && !state.supportsSearch) {
-            state = state.copy(hint = "当前模型不支持服务端联网搜索")
+            state = state.copy(hint = "请在设置的「联网搜索」中配置可用的搜索服务")
             return
         }
         state = state.copy(searchEnabled = !state.searchEnabled)
@@ -917,32 +998,24 @@ class ChatViewModel(
      *
      * 决策 51：**会话中途也能换服务商**。原先拦着是怕思考签名与缓存串味，
      * 但历史思考本来就不回传，签名只用于「继续生成」，拦整个换家属于过度保守。
-     * 换家时唯一的真实损失是历史里的图片与文件（各家的块形状不同，第三方链路只发文本），
-     * 所以有附件历史时给一句一次性说明。
+     * 支持的历史附件会按新协议重建，切换时提示附件也会随对话发送。
      */
     fun selectModel(providerId: String, modelId: String, effort: ThinkingEffort) {
         val switchingProvider = providerId != state.providerId
-        val capabilities = state.providers.firstOrNull { it.id == providerId }?.model(modelId)?.capabilities
-        val search = state.searchEnabled && (capabilities?.webSearch == true)
         val lostAttachments = switchingProvider && state.messages.any { it.attachments.isNotEmpty() }
         val providerName = state.providers.firstOrNull { it.id == providerId }?.displayName
         state = state.copy(
             providerId = providerId,
             modelId = modelId,
             effort = effort,
-            searchEnabled = search,
             hasApiKey = providerId in state.keyedProviders,
             hint = if (lostAttachments) {
-                "已换到 ${providerName ?: "新的服务商"}；历史里的图片与文件不会发给它"
+                "已换到 ${providerName ?: "新的服务商"}，支持的历史附件会随对话发送"
             } else {
                 state.hint
             },
         )
         persistStandalone()
-        viewModelScope.launch {
-            settings.setActiveProviderId(providerId)
-            settings.setLastModel(providerId, modelId)
-        }
     }
 
     /**
@@ -952,8 +1025,13 @@ class ChatViewModel(
     private fun ChatUiState.withOutcomeError(outcome: RunOutcome): ChatUiState {
         val error = outcome.error ?: return this
         if (error.kind.retryable) return this
-        return copy(error = error.kind.userMessage(currentProvider?.displayName), errorKind = error.kind)
+        return withRequestError(error)
     }
+
+    private fun ChatUiState.withRequestError(error: ChatException): ChatUiState = copy(
+        error = if (error.kind == ErrorKind.UPLOAD) error.message else error.kind.userMessage(currentProvider?.displayName),
+        errorKind = error.kind,
+    )
 
     /** 点橙色圆钮：把失败的那一轮重发一次（不新建用户消息，不消耗修改次数） */
     fun retryFailed(message: ChatMessage) {
@@ -961,16 +1039,19 @@ class ChatViewModel(
         val id = sessionId ?: return
         if (state.isStreaming) return
 
+        val defaults = rememberChatDefaults()
+        val expertMode = state.expertMode
         stopSpeaking()
         autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null, errorKind = null)
         job = viewModelScope.launch {
             try {
-                state = state.withOutcomeError(repository.regenerate(id, targetId))
+                persistChatSettings(id, defaults)
+                state = state.withOutcomeError(repository.regenerate(id, targetId, expertMode))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ChatException) {
-                state = state.copy(error = e.kind.userMessage(state.currentProvider?.displayName), errorKind = e.kind)
+                state = state.withRequestError(e)
             } catch (e: Exception) {
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
             } finally {
@@ -984,21 +1065,57 @@ class ChatViewModel(
     }
 
     private fun persistStandalone() {
-        val id = sessionId ?: return
-        viewModelScope.launch { persistSettings(id) }
+        val id = sessionId
+        val defaults = rememberChatDefaults()
+        viewModelScope.launch { persistChatSettings(id, defaults) }
     }
 
-    private suspend fun persistSettings(id: String) {
+    private fun rememberChatDefaults(): ChatDefaults = ChatDefaults(
+        providerId = state.providerId,
+        modelId = state.modelId,
+        effort = state.effort,
+        thinkingEnabled = state.thinkingEnabled,
+        searchEnabled = state.searchEnabled,
+    ).also { chatDefaults = it }
+
+    private fun hasChatKey(providerId: String, keyed: Set<String>): Boolean =
+        (chatDefaults != null || sessionId != null) && providerId in keyed
+
+    private fun applyChatDefaults() {
+        val defaults = chatDefaults ?: return
+        if (sessionId != null || state.isStreaming) return
+
+        val candidates = state.providers.filter { it.defaultModel != null }
+        val provider = candidates.firstOrNull { it.id == defaults.providerId }
+            ?: candidates.firstOrNull { it.id == activeProviderId.value }
+            ?: candidates.firstOrNull { it.id in state.keyedProviders }
+            ?: candidates.firstOrNull()
+        val providerId = provider?.id ?: defaults.providerId
+        val modelId = provider?.takeIf { it.id == defaults.providerId }?.model(defaults.modelId)?.id
+            ?: provider?.defaultModel?.id ?: defaults.modelId
+        state = state.copy(
+            providerId = providerId,
+            modelId = modelId,
+            effort = defaults.effort,
+            thinkingEnabled = defaults.thinkingEnabled,
+            searchEnabled = defaults.searchEnabled,
+            hasApiKey = providerId in state.keyedProviders,
+            balanceText = state.balanceText.takeIf { providerId == state.providerId },
+            quota = state.quota.takeIf { providerId == state.providerId },
+        )
+    }
+
+    private suspend fun persistChatSettings(id: String?, defaults: ChatDefaults) = chatSettingsMutex.withLock {
+        settings.setChatDefaults(defaults)
+        if (id == null) return@withLock
         repository.updateSettings(
             sessionId = id,
-            providerId = state.providerId,
-            thinkingEnabled = state.thinkingEnabled,
-            searchEnabled = state.searchEnabled,
-            effort = state.effort,
-            model = state.modelId,
+            providerId = defaults.providerId,
+            thinkingEnabled = defaults.thinkingEnabled,
+            searchEnabled = defaults.searchEnabled,
+            effort = defaults.effort,
+            model = defaults.modelId,
         )
-        settings.setActiveProviderId(state.providerId)
-        settings.setLastModel(state.providerId, state.modelId)
     }
 
     // ---------------- 语音输入（M5） ----------------
@@ -1542,13 +1659,14 @@ private fun StringBuilder.trimmedEnd(): Int {
             providers: StateFlow<List<Provider>>,
             keyedProviders: StateFlow<Set<String>>,
             activeProviderId: StateFlow<String>,
-            lastModelFor: suspend (String) -> String,
             attachmentStore: AttachmentStore,
             voice: VoiceController,
             settings: UserSettings,
             account: AccountClient,
             quotaFor: suspend (Provider) -> QuotaSnapshot?,
             providerKeyFor: suspend (String) -> String? = { null },
+            webSearchProvider: StateFlow<WebSearchProvider> = MutableStateFlow(WebSearchProvider.DEEPSEEK),
+            webSearchCredentials: StateFlow<WebSearchCredentials> = MutableStateFlow(WebSearchCredentials()),
         ) = viewModelFactory {
             initializer {
                 ChatViewModel(
@@ -1557,13 +1675,14 @@ private fun StringBuilder.trimmedEnd(): Int {
                     providers = providers,
                     keyedProviders = keyedProviders,
                     activeProviderId = activeProviderId,
-                    lastModelFor = lastModelFor,
                     attachmentStore = attachmentStore,
                     voice = voice,
                     settings = settings,
                     account = account,
                     quotaFor = quotaFor,
                     providerKeyFor = providerKeyFor,
+                    webSearchProvider = webSearchProvider,
+                    webSearchCredentials = webSearchCredentials,
                 )
             }
         }

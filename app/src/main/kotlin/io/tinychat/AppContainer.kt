@@ -11,29 +11,42 @@ import io.tinychat.data.db.DatabaseFactory
 import io.tinychat.data.prompt.PromptPresetStore
 import io.tinychat.data.provider.ProviderStore
 import io.tinychat.data.settings.KeystoreSecretStore
-import io.tinychat.data.settings.SecretStore
 import io.tinychat.data.settings.UserSettings
 import io.tinychat.feature.chat.voice.VoiceController
 import io.tinychat.model.Provider
 import io.tinychat.model.ProviderCheck
 import io.tinychat.model.ProviderKind
 import io.tinychat.model.ProviderMeta
+import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.QuotaSnapshot
+import io.tinychat.model.SearchResult
+import io.tinychat.model.WebSearchCredentials
+import io.tinychat.model.WebSearchProvider
 import io.tinychat.model.prompt.PromptMeta
 import io.tinychat.net.account.AccountClient
 import io.tinychat.net.account.KeyCheck
 import io.tinychat.net.account.QuotaClient
 import io.tinychat.net.protocol.ProviderModels
+import io.tinychat.net.search.AnySearchClient
+import io.tinychat.net.search.DeepSeekWebSearchClient
+import io.tinychat.net.search.TavilySearchClient
 import io.tinychat.net.transport.OkHttpChatTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.net.URI
 
 /**
  * 手写依赖容器（决策 21）。
@@ -52,6 +65,9 @@ class AppContainer(context: Context) {
     private val database = DatabaseFactory.create(app)
 
     private val transport = OkHttpChatTransport()
+    private val tavily = TavilySearchClient()
+    private val anySearch = AnySearchClient()
+    private val deepSeekSearch = DeepSeekWebSearchClient()
 
     /** 发请求前的连通性预检：离线直接判失败，不用等连接超时 */
     private val isOnline: () -> Boolean = {
@@ -120,7 +136,24 @@ class AppContainer(context: Context) {
     val activeProviderId: StateFlow<String> = _activeProviderId.asStateFlow()
 
     /** Keystore 加密存储（M7-6）；按服务商 id 读写。 */
-    val secrets: SecretStore = KeystoreSecretStore(app)
+    private val secrets = KeystoreSecretStore(app)
+
+    private val webSearchSettingsLock = Mutex()
+    val webSearchProvider = userSettings.webSearchProvider
+        .stateIn(scope, SharingStarted.Eagerly, WebSearchProvider.DEEPSEEK)
+
+    private val savedWebSearchKeys = combine(WebSearchProvider.entries.map { provider ->
+        secrets.observeHas(provider.secretId)
+            .catch { emit(false) }
+            .map { present -> provider.takeIf { present } }
+    }) { entries -> entries.filterNotNull().toSet() }
+
+    val webSearchCredentials = combine(savedWebSearchKeys, providers, keyedProviders) { keys, catalog, keyed ->
+        WebSearchCredentials(
+            savedKeys = keys,
+            canReuseDeepSeekKey = catalog.any { it.id in keyed && it.usesOfficialDeepSeekEndpoint() },
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, WebSearchCredentials())
 
     init {
         scope.launch {
@@ -195,6 +228,34 @@ class AppContainer(context: Context) {
         refreshCredentials()
     }
 
+    suspend fun saveWebSearchSettings(provider: WebSearchProvider, keyChanges: Map<WebSearchProvider, String>) {
+        webSearchSettingsLock.withLock {
+            if (provider != WebSearchProvider.DEEPSEEK) {
+                val hasKey = keyChanges[provider]?.isNotBlank() ?: secrets.has(provider.secretId)
+                require(hasKey) { "需要配置 ${provider.label} API Key" }
+            }
+            keyChanges.filterValues { it.isNotBlank() }.forEach { (option, key) ->
+                secrets.write(option.secretId, key.trim())
+            }
+            userSettings.setWebSearchProvider(provider)
+            keyChanges.filterValues { it.isBlank() }.keys.forEach { secrets.clear(it.secretId) }
+        }
+    }
+
+    private suspend fun searchWeb(provider: WebSearchProvider, query: String): List<SearchResult> {
+        val key = secrets.read(provider.secretId) ?: if (provider == WebSearchProvider.DEEPSEEK) {
+            providers.value.firstNotNullOfOrNull { candidate ->
+                if (candidate.usesOfficialDeepSeekEndpoint()) apiKeyFor(candidate.id) else null
+            }
+        } else null
+        check(!key.isNullOrBlank()) { "尚未配置 ${provider.label} API Key" }
+        return when (provider) {
+            WebSearchProvider.DEEPSEEK -> deepSeekSearch.search(key, query)
+            WebSearchProvider.TAVILY -> tavily.search(key, query)
+            WebSearchProvider.ANYSEARCH -> anySearch.search(key, query)
+        }
+    }
+
     /** 保存服务商配置与（可选的）新 Key；`newKey == null` 表示沿用已存密钥。 */
     suspend fun saveProvider(provider: Provider, newKey: String?) {
         if (newKey != null) saveProviderKey(provider.id, newKey)
@@ -207,10 +268,6 @@ class AppContainer(context: Context) {
         secrets.clear(providerId)
         refreshCredentials()
     }
-
-    /** 该服务商上次用的模型；没有就空串（由上层回落到目录第一个） */
-    suspend fun lastModelFor(providerId: String): String =
-        userSettings.lastModel(providerId).first()
 
     /**
      * 校验某个服务商：优先用传入的候选 Key（还没保存时），否则用已存的。
@@ -268,9 +325,20 @@ class AppContainer(context: Context) {
         promptMeta = { promptMeta.value },
         providerStore = providerStore,
         apiKeyFor = { id -> apiKeyFor(id) },
+        webSearchProvider = { userSettings.webSearchProvider.first() },
+        webSearch = ::searchWeb,
     )
 
     private companion object {
         const val DEEPSEEK_ID = "deepseek"
     }
+}
+
+private val WebSearchProvider.secretId: String get() = "search.$wire"
+
+private fun Provider.usesOfficialDeepSeekEndpoint(): Boolean {
+    if (protocol != ProviderProtocol.DEEPSEEK_MESSAGES) return false
+    val url = runCatching { URI(baseUrl) }.getOrNull() ?: return false
+    return url.scheme.equals("https", ignoreCase = true) &&
+        url.host.equals("api.deepseek.com", ignoreCase = true)
 }
