@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -37,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +68,7 @@ import io.tinychat.model.SessionRow
 import io.tinychat.model.SessionSearchHit
 import io.tinychat.model.SessionsUiState
 import io.tinychat.model.groupSessions
+import io.tinychat.ui.TcAlertDialog
 import io.tinychat.ui.MenuAnchor
 import io.tinychat.ui.TcAnchorMenu
 import io.tinychat.ui.TcIconButton
@@ -192,7 +193,7 @@ fun SessionsDrawerContent(
     }
 
     if (confirmingBatchDelete) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { confirmingBatchDelete = false },
             title = { Text("删除 ${state.selected.size} 个对话？", style = TcTypography.titleMedium, color = palette.labelPrimary) },
             text = {
@@ -231,7 +232,7 @@ fun SessionsDrawerContent(
     }
 
     deleting?.let { row ->
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("删除这个对话？", style = TcTypography.titleMedium, color = palette.labelPrimary) },
             text = {
@@ -460,12 +461,20 @@ private fun SessionListBody(
         }
     }
 
-    // 打开抽屉时定位到当前会话：搜索里点进来、或别处切过会话，都能落到那一行
-    LaunchedEffect(isOpen, currentSessionId) {
-        if (!isOpen || currentSessionId == null) return@LaunchedEffect
+    // 第一次打开时定位当前会话；从设置返回时沿用抽屉原来的滚动位置。
+    var positionedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(isOpen, currentSessionId, items) {
+        if (!isOpen) {
+            positionedSessionId = null
+            return@LaunchedEffect
+        }
+        if (currentSessionId == null || positionedSessionId == currentSessionId) return@LaunchedEffect
         val index = items.indexOfFirst { it is DrawerItem.Row && it.session.id == currentSessionId }
         // 落到分组标题上：直接滚到会话行会把「今天/昨天」的标题顶出屏幕
-        if (index >= 0) listState.scrollToItem((index - 1).coerceAtLeast(0))
+        if (index >= 0) {
+            listState.scrollToItem((index - 1).coerceAtLeast(0))
+            positionedSessionId = currentSessionId
+        }
     }
 
     if (items.isEmpty()) {
@@ -693,7 +702,7 @@ private fun RenameDialog(initial: String, onDismiss: () -> Unit, onConfirm: (Str
     val palette = TcTheme.palette
     var text by remember { mutableStateOf(initial) }
 
-    AlertDialog(
+    TcAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("重命名对话", style = TcTypography.titleMedium, color = palette.labelPrimary) },
         text = {

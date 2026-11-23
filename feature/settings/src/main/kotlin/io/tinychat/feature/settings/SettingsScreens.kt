@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -40,6 +39,7 @@ import io.tinychat.data.archive.ChatArchive
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
+import io.tinychat.ui.TcAlertDialog
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcListRow
 import io.tinychat.ui.TcSectionLabel
@@ -80,6 +80,8 @@ fun SettingsScreen(
     onSelectFontScale: (Float) -> Unit = {},
     location: String = "",
     onSelectLocation: (String) -> Unit = {},
+    webSearchSubtitle: String = "DeepSeek 内置",
+    onOpenWebSearch: () -> Unit = {},
 ) {
     val palette = TcTheme.palette
     var voicePicker by remember { mutableStateOf(false) }
@@ -103,6 +105,11 @@ fun SettingsScreen(
                 title = "服务商与 API Key",
                 subtitle = providerSubtitle,
                 onClick = onOpenProvider,
+            )
+            TcListRow(
+                title = "联网搜索",
+                subtitle = webSearchSubtitle,
+                onClick = onOpenWebSearch,
             )
             TcListRow(
                 title = "数据管理",
@@ -149,7 +156,7 @@ fun SettingsScreen(
     }
 
     if (voicePicker) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { voicePicker = false },
             title = { Text("朗读音色") },
             text = {
@@ -212,7 +219,7 @@ fun SettingsScreen(
     }
 
     if (locationEdit) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { locationEdit = false },
             title = { Text("所在地") },
             text = {
@@ -321,7 +328,7 @@ private fun <T> PickerDialog(
     onDismiss: () -> Unit,
     onPick: (T) -> Unit,
 ) {
-    AlertDialog(
+    TcAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -475,7 +482,7 @@ fun DataManagementScreen(
     }
 
     if (confirmClear) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("清空所有对话？") },
             text = { Text("本机全部对话与附件原件都会被删除，且不可撤销。") },
@@ -494,7 +501,7 @@ fun DataManagementScreen(
     }
 
     if (confirmImport) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { confirmImport = false },
             title = { Text("导入会覆盖现有对话？") },
             text = { Text("当前设备上的全部对话和附件都会被替换成导入的内容，且无法撤销。") },

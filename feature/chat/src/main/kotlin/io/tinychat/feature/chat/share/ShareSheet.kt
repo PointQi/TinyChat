@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -33,6 +32,7 @@ import androidx.core.content.FileProvider
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
 import java.io.File
+import io.tinychat.ui.TcAlertDialog
 
 /**
  * 分享抽屉（M8-2 / 02 §12.9）：生成长图 / 复制文本 / 分享文本。
@@ -83,7 +83,7 @@ private fun ShareRow(title: String, subtitle: String?, onClick: () -> Unit) {
 @Composable
 fun ShareProgressDialog() {
     val palette = TcTheme.palette
-    AlertDialog(
+    TcAlertDialog(
         onDismissRequest = {},
         confirmButton = {},
         text = {
@@ -104,7 +104,7 @@ fun SharePreviewDialog(
     onDismiss: () -> Unit,
 ) {
     val palette = TcTheme.palette
-    AlertDialog(
+    TcAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(

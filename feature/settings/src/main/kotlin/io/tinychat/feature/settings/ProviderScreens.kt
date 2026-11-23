@@ -21,7 +21,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Switch
@@ -53,6 +52,7 @@ import io.tinychat.model.ProviderKind
 import io.tinychat.model.ProviderNaming
 import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingMode
+import io.tinychat.ui.TcAlertDialog
 import io.tinychat.ui.TcButton
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcTopBar
@@ -131,7 +131,7 @@ fun ProviderListScreen(
     }
 
     pendingDelete?.let { provider ->
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("删除 ${provider.displayName}？") },
             text = { Text("该服务商下的会话仍可查看，换一个服务商就能继续对话。本机保存的密钥会一并删除。") },
@@ -605,7 +605,7 @@ fun ProviderEditorScreen(
     }
 
     if (confirmDiscard) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { confirmDiscard = false },
             title = { Text("放弃修改？") },
             text = { Text("这一页有还没保存的改动。") },
@@ -623,7 +623,7 @@ fun ProviderEditorScreen(
         )
     }
     if (confirmClear) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("清除已保存的密钥？") },
             text = { Text("清除后要重新填写才能继续对话。只删本机保存的密钥，历史记录和服务商账户不受影响。") },
@@ -855,6 +855,7 @@ private fun modelSummary(model: ModelInfo): String = buildList {
         add(if (model.capabilities.effort) "思考，可调强度" else "思考")
     }
     if (model.capabilities.imageInput) add("视觉")
+    if (model.capabilities.fileUpload) add("文件")
 }.joinToString("，")
 
 private fun shortTokens(value: Int): String = when {
@@ -886,8 +887,10 @@ private fun ModelDetailDialog(
     var thinking by remember { mutableStateOf(model.capabilities.thinking) }
     var effort by remember { mutableStateOf(model.capabilities.effort) }
     var vision by remember { mutableStateOf(model.capabilities.imageInput) }
+    var pdf by remember { mutableStateOf(model.capabilities.fileUpload) }
+    val compatibleProtocol = protocol != ProviderProtocol.DEEPSEEK_MESSAGES
 
-    AlertDialog(
+    TcAlertDialog(
         onDismissRequest = onDismiss,
         containerColor = palette.bg,
         title = {
@@ -958,15 +961,20 @@ private fun ModelDetailDialog(
                     enabled = thinking,
                     onCheckedChange = { effort = it },
                 )
-                // 视觉只对 OpenAI 兼容链路开放（决策 53）；Anthropic 兼容的图片块还没做，
-                // 不在这里放一个点了也不发货的开关
-                if (protocol == ProviderProtocol.OPENAI_CHAT) {
+                if (compatibleProtocol) {
                     DialogSwitch(
                         title = "视觉",
-                        subtitle = "可以发送图片；历史里的图片每轮都会重发一次",
+                        subtitle = "服务商和模型支持图片时开启",
                         checked = vision,
                         enabled = true,
                         onCheckedChange = { vision = it },
+                    )
+                    DialogSwitch(
+                        title = "PDF 文件",
+                        subtitle = "服务商和模型支持原生 PDF 时开启",
+                        checked = pdf,
+                        enabled = true,
+                        onCheckedChange = { pdf = it },
                     )
                 }
             }
@@ -989,12 +997,8 @@ private fun ModelDetailDialog(
                             capabilities = model.capabilities.copy(
                                 thinking = thinking,
                                 effort = effort && thinking,
-                                // 只有 OpenAI 兼容链路真的会发图，别的协议保持原值不动
-                                imageInput = if (protocol == ProviderProtocol.OPENAI_CHAT) {
-                                    vision
-                                } else {
-                                    model.capabilities.imageInput
-                                },
+                                imageInput = if (compatibleProtocol) vision else model.capabilities.imageInput,
+                                fileUpload = if (compatibleProtocol) pdf else model.capabilities.fileUpload,
                             ),
                         ),
                     )
@@ -1109,7 +1113,7 @@ private fun protocolOptions(kind: ProviderKind): List<ProviderProtocol> = when (
 }
 
 @Composable
-private fun EditorField(
+internal fun EditorField(
     label: String,
     value: String,
     enabled: Boolean,

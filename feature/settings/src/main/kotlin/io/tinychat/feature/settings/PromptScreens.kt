@@ -22,7 +22,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -51,6 +50,7 @@ import io.tinychat.designsystem.TcTypography
 import io.tinychat.model.prompt.PromptSeeds
 import io.tinychat.model.prompt.PromptTemplate
 import io.tinychat.model.prompt.PromptVariables
+import io.tinychat.ui.TcAlertDialog
 import io.tinychat.ui.TcButton
 import io.tinychat.ui.TcButtonVariant
 import io.tinychat.ui.TcChip
@@ -418,7 +418,7 @@ fun PromptEditorScreen(
             FillAction.Clear -> "清空"
             is FillAction.Template -> "「${action.template.name}」"
         }
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { pendingFill = null },
             title = { Text("用${label}替换当前内容？") },
             text = { Text("当前已输入的内容将被清空，此操作不可撤销") },
@@ -438,7 +438,7 @@ fun PromptEditorScreen(
     }
 
     if (confirmDiscard) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { confirmDiscard = false },
             title = { Text("放弃修改？") },
             text = { Text("这段内容还没有保存。") },
@@ -455,7 +455,7 @@ fun PromptEditorScreen(
     }
 
     if (confirmDelete) {
-        AlertDialog(
+        TcAlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("删除预设") },
             text = { Text("此操作无法恢复。删除后不会影响已经用它创建的会话。") },
