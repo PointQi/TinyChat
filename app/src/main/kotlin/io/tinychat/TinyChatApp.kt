@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavBackStackEntry
@@ -277,7 +278,18 @@ fun TinyChatApp() {
         else -> "不发送"
     }
 
-    CompositionLocalProvider(LocalTcFontScale provides fontScale) {
+    // 「字体大小」以前只喂给了 Markdown 正文，设置页、列表、输入框全都不动，看起来就像设置无效。
+    // 改成在 LocalDensity 上乘 fontScale：所有 sp 字号（标题、列表、正文、代码块）一起缩放，
+    // 同时把 LocalTcFontScale 钉回 1，避免 Markdown 被缩放两次。
+    val baseDensity = LocalDensity.current
+    val scaledDensity = remember(baseDensity, fontScale) {
+        Density(baseDensity.density, baseDensity.fontScale * fontScale)
+    }
+
+    CompositionLocalProvider(
+        LocalDensity provides scaledDensity,
+        LocalTcFontScale provides 1f,
+    ) {
         NavHost(
             navController = navController,
             startDestination = Routes.CHAT,

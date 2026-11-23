@@ -230,7 +230,7 @@ class AppContainer(context: Context) {
 
     suspend fun saveWebSearchSettings(provider: WebSearchProvider, keyChanges: Map<WebSearchProvider, String>) {
         webSearchSettingsLock.withLock {
-            if (provider != WebSearchProvider.DEEPSEEK) {
+            if (provider.needsOwnKey) {
                 val hasKey = keyChanges[provider]?.isNotBlank() ?: secrets.has(provider.secretId)
                 require(hasKey) { "需要配置 ${provider.label} API Key" }
             }
@@ -248,10 +248,13 @@ class AppContainer(context: Context) {
                 if (candidate.usesOfficialDeepSeekEndpoint()) apiKeyFor(candidate.id) else null
             }
         } else null
-        check(!key.isNullOrBlank()) { "尚未配置 ${provider.label} API Key" }
+        // AnySearch 的公开接口免鉴权：没填 Key 也能搜，不要把"没 Key"当成不可用。
+        if (provider.needsOwnKey) {
+            check(!key.isNullOrBlank()) { "尚未配置 ${provider.label} API Key" }
+        }
         return when (provider) {
-            WebSearchProvider.DEEPSEEK -> deepSeekSearch.search(key, query)
-            WebSearchProvider.TAVILY -> tavily.search(key, query)
+            WebSearchProvider.DEEPSEEK -> deepSeekSearch.search(key.orEmpty(), query)
+            WebSearchProvider.TAVILY -> tavily.search(key.orEmpty(), query)
             WebSearchProvider.ANYSEARCH -> anySearch.search(key, query)
         }
     }
