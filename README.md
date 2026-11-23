@@ -5,7 +5,7 @@
 # TinyChat
 
 轻巧纯净的 Android AI 聊天客户端，支持 DeepSeek 官方与 OpenAI / Anthropic 兼容接口。
-(还没改完qwq）
+(我fork还没改完qwq）
 
 <p>
   <a href="https://github.com/Takeoff0518/TinyChat/blob/master/LICENSE"><img src="https://img.shields.io/github/license/Takeoff0518/TinyChat" alt="License"></a>
