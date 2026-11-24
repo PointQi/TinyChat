@@ -16,8 +16,6 @@
 
 TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官方接口，以及其他兼容 OpenAI 或 Anthropic 接口的大模型。聊天记录与设置保存在当前手机中。
 
-> 1.0.7 本仓库的 APK 使用 fork 发布证书，安装与迁移方式见下文。[上游项目](https://github.com/Takeoff0518/TinyChat) · [签名与校验](#签名与校验)
-
 > **免责声明**：本应用为独立开发的第三方客户端，与深度求索（DeepSeek）官方没有任何关联，也未获得其授权或背书。「DeepSeek」等相关名称与商标归其各自权利人所有。
 
 ---
@@ -183,22 +181,6 @@ AnySearch 返回 `HTTP 401` 时，服务拒绝了当前请求的身份验证。�
 * **发布正式版**：如需打包签名的 Release 版本，请将你的签名密钥文件放在本地，并在项目根目录创建 `.local/keystore.properties` 填好路径、密码和别名，随后执行 `./gradlew assembleRelease`。（若不配置此文件也可编译，但生成的未签名包无法直接安装）。
 
 ---
-
-## 签名与校验
-
-本仓库的 1.0.7 与上游使用相同包名，但发布证书不同，因此无法覆盖或并存安装上游版。由上游使用原发布密钥签名的 APK 才能覆盖上游版。
-
-从 1.0.6 工作版迁移时，两个版本的包名不同，可并存安装。可从旧版导出聊天记录，再到 1.0.7 的「数据管理」导入，API Key 需重新填写。
-
-| 项目 | 值 |
-| --- | --- |
-| 包名（applicationId） | `top.tbpdt.tinychat` |
-| 版本 | `1.0.7`（versionCode 8） |
-| 签名方案 | APK Signature Scheme v2（RSA 3072） |
-| 证书主体 | `CN=TinyChat Work Fork, O=PointQi` |
-| 证书 SHA-256 | `8E:7F:17:9C:41:59:6E:86:81:A7:4E:06:F7:56:5B:09:77:8C:10:AE:B3:5D:53:E5:BC:16:50:E3:84:6C:60:DB` |
-| 证书 SHA-1 | `40:FC:80:A5:58:41:1D:DE:BA:BD:9E:B1:40:A3:D0:EE:FC:B4:22:0C` |
-| 证书 MD5 | `77:F2:92:AF:B0:C0:64:5C:74:10:74:1A:C5:48:FA:20` |
 
 用 Android SDK Build Tools 的 `apksigner` 检查 APK，将输出的 `certificate SHA-256 digest` 与上表核对。
 
