@@ -1109,7 +1109,7 @@ private fun protocolOptions(kind: ProviderKind): List<ProviderProtocol> = when (
 }
 
 @Composable
-private fun EditorField(
+internal fun EditorField(
     label: String,
     value: String,
     enabled: Boolean,
