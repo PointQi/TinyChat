@@ -31,12 +31,18 @@ object OpenAiChatProtocol {
 
     /**
      * 地址归一：用户可能填 `https://x/v1`、`https://x/v1/` 或只给域名。
-     * 已以 `/v1` 结尾就不重复拼（02 §12.6 的地址默认值就是这个形状）。
+     * 自带版本的地址直接沿用，例如智谱的 `/api/coding/paas/v4`。
      */
     fun endpoint(baseUrl: String): String {
+        require(baseUrl.trim().trimEnd('/').isNotEmpty()) { "API 地址不能为空" }
+        return "${apiBase(baseUrl)}/chat/completions"
+    }
+
+    private val versionSuffix = Regex("v[0-9]+")
+
+    internal fun apiBase(baseUrl: String): String {
         val base = baseUrl.trim().trimEnd('/')
-        require(base.isNotEmpty()) { "API 地址不能为空" }
-        return if (base.endsWith("/v1")) "$base/chat/completions" else "$base/v1/chat/completions"
+        return if (versionSuffix.matches(base.substringAfterLast('/'))) base else "$base/v1"
     }
 
     fun build(

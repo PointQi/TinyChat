@@ -41,6 +41,9 @@ data class SavedFile(val path: String, val size: Long)
 enum class InlineDocumentType(val maxBytes: Long, val limit: String) {
     PDF(8L * 1024 * 1024, "8 MiB"),
     TEXT(512L * 1024, "512 KiB"),
+    WORD(16L * 1024 * 1024, "16 MiB"),
+    WORKBOOK(16L * 1024 * 1024, "16 MiB"),
+    PRESENTATION(16L * 1024 * 1024, "16 MiB"),
 }
 
 /**
@@ -73,6 +76,9 @@ class AttachmentStore(private val context: Context) {
         private const val MAX_VISION_BYTES = 3L * 1024 * 1024
 
         private const val COPY_BUFFER = 64 * 1024
+        private const val DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        private const val XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        private const val PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
         private val TEXT_MIMES = setOf("application/json", "application/xml", "application/yaml", "application/x-yaml")
         private val TEXT_EXTENSIONS = setOf(
@@ -80,11 +86,16 @@ class AttachmentStore(private val context: Context) {
             "html", "htm", "css", "js", "ts", "py", "java", "kt", "kts", "c", "h", "cpp", "hpp", "rs", "go", "sql",
         )
 
+        val supportsLocalPdfText: Boolean get() = PdfAttachmentText.available
+
         fun inlineDocumentType(fileName: String, mime: String?): InlineDocumentType? {
             val mediaType = mime.orEmpty().substringBefore(';').trim().lowercase()
             val extension = fileName.substringAfterLast('.', "").lowercase()
             return when {
                 mediaType == "application/pdf" || extension == "pdf" -> InlineDocumentType.PDF
+                mediaType == DOCX_MIME || extension == "docx" -> InlineDocumentType.WORD
+                mediaType == XLSX_MIME || extension == "xlsx" -> InlineDocumentType.WORKBOOK
+                mediaType == PPTX_MIME || extension == "pptx" -> InlineDocumentType.PRESENTATION
                 mediaType.startsWith("text/") || mediaType in TEXT_MIMES || extension in TEXT_EXTENSIONS ->
                     InlineDocumentType.TEXT
                 else -> null
@@ -254,6 +265,23 @@ class AttachmentStore(private val context: Context) {
             .takeIf { text -> text.isNotBlank() && text.none { it.isISOControl() && it !in "\n\r\t\u000C" } }
     }.getOrNull()
 
+    internal fun extractedDocumentText(localPath: String, type: InlineDocumentType): String? = try {
+        val file = storedFile(localPath)
+        if (file == null || file.length() !in 1..type.maxBytes) {
+            null
+        } else {
+            when (type) {
+                InlineDocumentType.PDF -> PdfAttachmentText.read(file)
+                InlineDocumentType.TEXT -> documentText(localPath)
+                else -> OfficeAttachmentText.read(file, type)
+            }
+        }
+    } catch (e: AttachmentTextTooLong) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
     private fun storedFile(path: String): File? {
         val file = File(path).canonicalFile
         return file.takeIf { it.isFile && it.toPath().startsWith(attachmentsRoot.canonicalFile.toPath()) }
@@ -384,10 +412,10 @@ class AttachmentStore(private val context: Context) {
         "csv" -> "text/csv"
         "json" -> "application/json"
         "doc" -> "application/msword"
-        "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        "docx" -> DOCX_MIME
         "ppt" -> "application/vnd.ms-powerpoint"
-        "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "pptx" -> PPTX_MIME
+        "xlsx" -> XLSX_MIME
         "epub" -> "application/epub+zip"
         else -> null
     }

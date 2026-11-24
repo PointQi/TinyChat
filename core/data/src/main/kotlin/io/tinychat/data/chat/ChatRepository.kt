@@ -1,6 +1,7 @@
 package io.tinychat.data.chat
 
 import io.tinychat.data.attachment.AttachmentStore
+import io.tinychat.data.attachment.AttachmentTextTooLong
 import io.tinychat.data.attachment.AttachmentUploader
 import io.tinychat.data.attachment.InlineDocumentType
 import io.tinychat.data.attachment.PickedFile
@@ -589,7 +590,7 @@ class ChatRepository(
                 for (file in picked) {
                     val documentType = if (inline && !file.isImage) {
                         AttachmentStore.inlineDocumentType(file.fileName, file.mime)
-                            ?: throw attachmentError(file.fileName, "仅支持 PDF 和纯文本文件")
+                            ?: throw attachmentError(file.fileName, SUPPORTED_DOCUMENTS)
                     } else {
                         null
                     }
@@ -704,27 +705,40 @@ class ChatRepository(
 
         val name = row.fileName
         val path = row.localPath ?: throw attachmentError(name, "本机原件已丢失")
-        val type = if (row.isImage) null else AttachmentStore.inlineDocumentType(name, row.mime)
         var dataUri: String? = null
         var text: String? = null
-        val mime = when {
-            row.isImage -> {
-                if (!request.capabilities.imageInput) throw attachmentError(name, "当前模型不支持图片输入")
-                dataUri = attachmentStore.visionDataUri(path) ?: throw attachmentError(name, "无法处理这张图片")
-                "image/jpeg"
+        val mime = if (row.isImage) {
+            if (!request.capabilities.imageInput) throw attachmentError(name, "当前模型不支持图片输入")
+            dataUri = attachmentStore.visionDataUri(path) ?: throw attachmentError(name, "无法处理这张图片")
+            "image/jpeg"
+        } else {
+            val type = AttachmentStore.inlineDocumentType(name, row.mime)
+                ?: throw attachmentError(name, SUPPORTED_DOCUMENTS)
+            if (row.fileSize > type.maxBytes) throw attachmentError(name, "超过 ${type.limit}")
+            val nativePdf = type == InlineDocumentType.PDF && request.capabilities.fileUpload
+            if (nativePdf) dataUri = attachmentStore.pdfDataUri(path)
+            if (dataUri == null) {
+                text = try {
+                    attachmentStore.extractedDocumentText(path, type)
+                } catch (_: AttachmentTextTooLong) {
+                    throw attachmentError(name, "附件可提取文字过长")
+                }
             }
-            type == InlineDocumentType.PDF -> {
-                if (!request.capabilities.fileUpload) throw attachmentError(name, "请在模型设置中启用 PDF 文件输入")
-                if (row.fileSize > type.maxBytes) throw attachmentError(name, "超过 ${type.limit}")
-                dataUri = attachmentStore.pdfDataUri(path) ?: throw attachmentError(name, "无法读取 PDF 文件")
-                "application/pdf"
+            when {
+                dataUri != null -> "application/pdf"
+                text != null -> "text/plain"
+                nativePdf -> throw attachmentError(name, "无法读取 PDF 文件")
+                type == InlineDocumentType.PDF -> throw attachmentError(
+                    name,
+                    if (AttachmentStore.supportsLocalPdfText) {
+                        "无法从 PDF 提取文字。请先做文字识别，或使用支持 PDF 的模型"
+                    } else {
+                        "此 Android 版本无法在本机读取 PDF，请转为文本或使用支持 PDF 的模型"
+                    },
+                )
+                type == InlineDocumentType.TEXT -> throw attachmentError(name, "需要非空的 UTF-8 或 UTF-16 文本")
+                else -> throw attachmentError(name, "无法读取 Office 文件中的文字")
             }
-            type == InlineDocumentType.TEXT -> {
-                if (row.fileSize > type.maxBytes) throw attachmentError(name, "超过 ${type.limit}")
-                text = attachmentStore.documentText(path) ?: throw attachmentError(name, "需要非空的 UTF-8 或 UTF-16 文本")
-                "text/plain"
-            }
-            else -> throw attachmentError(name, "仅支持 PDF 和纯文本文件")
         }
         val bytes = dataUri?.length?.toLong() ?: text.orEmpty().toByteArray().size.toLong()
         if (bytes > request.remainingBytes) throw attachmentError(name, "本轮内联附件总大小超过 16 MiB")
@@ -1014,6 +1028,8 @@ class ChatRepository(
     }
 
     private companion object {
+        const val SUPPORTED_DOCUMENTS = "支持 PDF、DOCX、XLSX、PPTX 和纯文本"
+
         /** 本地标题长度：官方服务端标题一般 10–20 字，24 字够用（M8-1） */
         const val TITLE_MAX = 24
     }

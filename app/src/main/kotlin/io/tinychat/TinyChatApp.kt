@@ -22,8 +22,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.unit.Density
@@ -64,11 +65,13 @@ import io.tinychat.feature.settings.ProviderEditorScreen
 import io.tinychat.feature.settings.ProviderListScreen
 import io.tinychat.feature.settings.SettingsScreen
 import io.tinychat.feature.settings.WebSearchSettingsScreen
+import io.tinychat.feature.settings.R as SettingsResources
+import io.tinychat.model.KnownProviders
 import io.tinychat.ui.SidePanel
 import io.tinychat.ui.TcSideDrawers
 import io.tinychat.ui.panelTargetOpen
 import io.tinychat.ui.swipeToOpenPanel
-import java.text.SimpleDateFormat
+import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -95,7 +98,7 @@ object Routes {
  * 不弹窗、不跳转、不阻断主界面。
  */
 @Composable
-fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
+fun TinyChatApp() {
     val palette = TcTheme.palette
 
     val context = LocalContext.current
@@ -114,11 +117,15 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
     // 字体大小（M8-4）：只放大正文，不动顶栏/设置列表
     val fontScale by container.userSettings.fontScale.collectAsState(initial = 1f)
     val themeMode by container.userSettings.themeMode.collectAsState(initial = "system")
+    val languageTag by container.userSettings.appLanguage.collectAsState(initial = "zh-CN")
     val userLocation by container.userSettings.promptLocation.collectAsState(initial = "")
     val providerSubtitle = when {
-        keyedProviders.isEmpty() -> "未配置"
-        else -> providers.firstOrNull { it.id == activeProviderId }?.displayName
-            ?: "${keyedProviders.size} 个服务商"
+        keyedProviders.isEmpty() -> stringResource(R.string.prefs_home_unconfigured)
+        else -> providers.firstOrNull { it.id == activeProviderId }?.let { provider ->
+            if (provider.displayName == KnownProviders.deepSeek.displayName) {
+                stringResource(SettingsResources.string.prefs_detail_provider_official)
+            } else provider.displayName
+        } ?: stringResource(R.string.prefs_home_provider_count, keyedProviders.size)
     }
     val chatViewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.factory(
@@ -139,40 +146,32 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
     )
 
     val navController = rememberNavController()
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = currentBackStackEntry?.destination?.route
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    // 两侧面板同一时刻只能有一个（P-028）：所有权收在一个变量里，互斥是结构性的。
     var sidePanel by rememberSaveable { mutableStateOf(SidePanel.None) }
     val scope = rememberCoroutineScope()
     val closeDrawer = { sidePanel = SidePanel.None }
 
-    fun dismissChatKeyboard() {
+    fun dismissKeyboard() {
         focusManager.clearFocus(force = true)
         keyboard?.hide()
     }
 
     fun openDrawer(panel: SidePanel) {
         if (sidePanel == SidePanel.None) {
-            dismissChatKeyboard()
+            dismissKeyboard()
             sidePanel = panel
         }
     }
 
-    // 两个侧栏都是自绘的（P-030 起左抽屉也自己画，不再用 M3 的 DrawerState）：
-    // 拖拽期间进度由手指写，松手后由固定时长的标准缓动补完 —— 速度只用来判断开合，
-    // 不参与动画，所以不存在「冲过终点再弹回来」那一下。
     var panelProgress by remember { mutableFloatStateOf(sidePanel.openProgress) }
     var draggingPanel by remember { mutableStateOf(SidePanel.None) }
     val revealedPanel = if (draggingPanel != SidePanel.None) draggingPanel else sidePanel
     val drawerCoversChat by remember {
         derivedStateOf { sidePanel != SidePanel.None || draggingPanel != SidePanel.None || panelProgress != 0f }
     }
-
-    // 松手后走完剩下的路：固定时长 + 标准缓动（两头慢、中间快），与松手速度无关
-    fun settleSpec(open: Boolean) = tween<Float>(
-        durationMillis = if (open) TcMotion.Panel else TcMotion.Base,
-        easing = TcMotion.Standard,
-    )
 
     LaunchedEffect(sidePanel, draggingPanel) {
         if (draggingPanel != SidePanel.None) return@LaunchedEffect
@@ -181,7 +180,10 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
         animate(
             initialValue = panelProgress,
             targetValue = target,
-            animationSpec = settleSpec(open = sidePanel != SidePanel.None),
+            animationSpec = tween(
+                durationMillis = if (sidePanel == SidePanel.None) TcMotion.Base else TcMotion.Panel,
+                easing = TcMotion.Standard,
+            ),
         ) { value, _ -> panelProgress = value }
         panelProgress = target
     }
@@ -199,16 +201,16 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
 
     // 三个入口（整页滑动、两个抽屉上各自的拖动）共用这一套：dx 向右为正。
     // 位移按抽屉宽度换算成进度，会话列表为正，用量与费用为负。
-    val onPanelDragStart: (SidePanel) -> Unit = { panel ->
-        if (sidePanel == SidePanel.None) dismissChatKeyboard()
+    fun onPanelDragStart(panel: SidePanel) {
+        if (sidePanel == SidePanel.None) dismissKeyboard()
         draggingPanel = panel
     }
-    val onPanelDrag: (SidePanel, Float) -> Unit = { panel, dx ->
+    fun onPanelDrag(panel: SidePanel, dx: Float) {
         val widthPx = if (panel == SidePanel.Sessions) sessionsWidthPx else usageWidthPx
         val progress = panelProgress + dx * startDirection / widthPx
         panelProgress = progress.coerceIn(minOf(0f, panel.openProgress), maxOf(0f, panel.openProgress))
     }
-    val onPanelDragEnd: (SidePanel, Float) -> Unit = { panel, velocityDp ->
+    fun onPanelDragEnd(panel: SidePanel, velocityDp: Float) {
         // 判定口径统一成「正 = 打开」：左抽屉向右是开，右抽屉向左是开
         val open = panelTargetOpen(
             panelProgress * panel.openProgress,
@@ -222,9 +224,6 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
     LaunchedEffect(sidePanel) {
         if (sidePanel == SidePanel.Usage) chatViewModel.refreshUsageNow()
     }
-    // 手势只挂在会话页：设置那几页也有整块内容，不该一滑就出面板
-    val currentBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = currentBackStackEntry?.destination?.route
 
     // 崩溃兜底（M9-2）要知道「崩在哪、是不是正在生成」：只有正在生成时，
     // 崩溃页才说「当前正在生成的内容可能未保存」。
@@ -262,11 +261,11 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
     }
     val promptName = when {
         promptSelectedId != null && promptIncludeOfficial ->
-            "官方提示词 + ${promptPresets.firstOrNull { it.id == promptSelectedId }?.name.orEmpty()}"
+            "${stringResource(R.string.prefs_home_official_prompt)} + ${promptPresets.firstOrNull { it.id == promptSelectedId }?.name.orEmpty()}"
 
         promptSelectedId != null -> promptPresets.firstOrNull { it.id == promptSelectedId }?.name.orEmpty()
-        promptIncludeOfficial -> "官方提示词"
-        else -> "不发送"
+        promptIncludeOfficial -> stringResource(R.string.prefs_home_official_prompt)
+        else -> stringResource(R.string.prefs_home_no_prompt)
     }
 
     // 「字体大小」以前只喂给了 Markdown 正文，设置页、列表、输入框全都不动，看起来就像设置无效。
@@ -281,128 +280,119 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
         LocalDensity provides scaledDensity,
         LocalTcFontScale provides 1f,
     ) {
-        val settingsAreActive = currentRoute != null && currentRoute != Routes.CHAT
+        val chatIsActive = currentRoute == Routes.CHAT
+        val settingsAreActive = currentRoute != null && !chatIsActive
         Box(Modifier.fillMaxSize().background(palette.bg).clipToBounds()) {
+            BackHandler(enabled = chatIsActive && drawerCoversChat, onBack = closeDrawer)
             // 退回历史抽屉时直接露出已测量的聊天布局和列表。
-            Box(Modifier.fillMaxSize().then(
-                if (settingsAreActive) {
-                    Modifier.clearAndSetSemantics { hideFromAccessibility() }
-                } else Modifier,
-            )) {
-                val chatIsActive = currentBackStackEntry?.destination?.route == Routes.CHAT
-                BackHandler(enabled = chatIsActive && drawerCoversChat) {
-                    closeDrawer()
-                }
-                Box(Modifier.fillMaxSize().background(palette.bg)) {
-                    TcSideDrawers(
-                        sessionsWidth = sessionsWidth,
-                        usageWidth = usageWidth,
-                        progress = { panelProgress },
-                        revealed = revealedPanel,
-                        coversChat = drawerCoversChat,
-                        canDrag = chatIsActive && sidePanel != SidePanel.None,
+            TcSideDrawers(
+                sessionsWidth = sessionsWidth,
+                usageWidth = usageWidth,
+                progress = { panelProgress },
+                revealed = revealedPanel,
+                coversChat = drawerCoversChat,
+                canDrag = chatIsActive && sidePanel != SidePanel.None,
+                onDismiss = closeDrawer,
+                onDragStart = { onPanelDragStart(sidePanel) },
+                onDragDelta = { dx -> onPanelDrag(draggingPanel, dx) },
+                onDragEnd = { velocityDp -> onPanelDragEnd(draggingPanel, velocityDp) },
+                modifier = Modifier.then(
+                    if (settingsAreActive) Modifier.clearAndSetSemantics { hideFromAccessibility() } else Modifier,
+                ).swipeToOpenPanel(
+                    enabled = chatIsActive && sidePanel == SidePanel.None &&
+                        (!drawerCoversChat || draggingPanel != SidePanel.None),
+                    onDragStart = { leftward -> onPanelDragStart(panelForSwipe(leftward)) },
+                    onDragDelta = { leftward, dx -> onPanelDrag(panelForSwipe(leftward), dx) },
+                    onDragEnd = { leftward, velocityDp -> onPanelDragEnd(panelForSwipe(leftward), velocityDp) },
+                ),
+                sessions = {
+                    SessionsDrawerContent(
+                        state = chatViewModel.sessionsUi,
+                        currentSessionId = chatViewModel.sessionId,
+                        isOpen = sidePanel == SidePanel.Sessions,
+                        onOpenSettings = {
+                            dismissKeyboard()
+                            navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
+                        },
+                        onPickSession = { id ->
+                            chatViewModel.openSession(id)
+                            closeDrawer()
+                        },
+                        onRenameSession = chatViewModel::renameSession,
+                        onTogglePinSession = chatViewModel::togglePinnedSession,
+                        onDeleteSession = chatViewModel::deleteSession,
+                        onOpenSearch = chatViewModel::openSearch,
+                        onCloseSearch = chatViewModel::closeSearch,
+                        onSearchQueryChange = chatViewModel::onSearchQueryChange,
+                        onPickSearchResult = { id ->
+                            chatViewModel.pickSearchResult(id)
+                            closeDrawer()
+                        },
+                        onEnterSelection = chatViewModel::enterSelection,
+                        onExitSelection = chatViewModel::exitSelection,
+                        onToggleSelected = chatViewModel::toggleSelected,
+                        onPinSelected = chatViewModel::pinSelected,
+                        onDeleteSelected = chatViewModel::deleteSelected,
+                    )
+                },
+                usage = {
+                    UsageDrawerContent(
+                        summary = chatViewModel.state.usageSummary,
+                        contextUsed = chatViewModel.state.contextUsed,
+                        contextWindow = chatViewModel.state.contextWindow,
+                        balanceText = chatViewModel.state.balanceText,
+                        quota = chatViewModel.state.quota,
                         onDismiss = closeDrawer,
-                        onDragStart = { onPanelDragStart(sidePanel) },
-                        onDragDelta = { dx -> onPanelDrag(draggingPanel, dx) },
-                        onDragEnd = { velocityDp -> onPanelDragEnd(draggingPanel, velocityDp) },
-                        modifier = Modifier.swipeToOpenPanel(
-                            enabled = chatIsActive && sidePanel == SidePanel.None &&
-                                (!drawerCoversChat || draggingPanel != SidePanel.None),
-                            onDragStart = { leftward -> onPanelDragStart(panelForSwipe(leftward)) },
-                            onDragDelta = { leftward, dx -> onPanelDrag(panelForSwipe(leftward), dx) },
-                            onDragEnd = { leftward, velocityDp -> onPanelDragEnd(panelForSwipe(leftward), velocityDp) },
-                        ),
-                        sessions = {
-                            SessionsDrawerContent(
-                                state = chatViewModel.sessionsUi,
-                                currentSessionId = chatViewModel.sessionId,
-                                isOpen = sidePanel == SidePanel.Sessions,
-                                onOpenSettings = {
-                                    dismissChatKeyboard()
-                                    navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
-                                },
-                                onPickSession = { id ->
-                                    chatViewModel.openSession(id)
-                                    closeDrawer()
-                                },
-                                onRenameSession = chatViewModel::renameSession,
-                                onTogglePinSession = chatViewModel::togglePinnedSession,
-                                onDeleteSession = chatViewModel::deleteSession,
-                                onOpenSearch = chatViewModel::openSearch,
-                                onCloseSearch = chatViewModel::closeSearch,
-                                onSearchQueryChange = chatViewModel::onSearchQueryChange,
-                                onPickSearchResult = { id ->
-                                    chatViewModel.pickSearchResult(id)
-                                    closeDrawer()
-                                },
-                                onEnterSelection = chatViewModel::enterSelection,
-                                onExitSelection = chatViewModel::exitSelection,
-                                onToggleSelected = chatViewModel::toggleSelected,
-                                onPinSelected = chatViewModel::pinSelected,
-                                onDeleteSelected = chatViewModel::deleteSelected,
-                            )
+                    )
+                },
+            ) {
+                Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                    ChatScreen(
+                        sessionId = chatViewModel.sessionId,
+                        state = chatViewModel.state,
+                        screenIsActive = chatIsActive && !drawerCoversChat,
+                        hasApiKey = chatViewModel.state.hasApiKey,
+                        autoSpeak = chatViewModel.state.autoSpeak,
+                        onInputChange = chatViewModel::onInputChange,
+                        onSend = chatViewModel::send,
+                        onStop = chatViewModel::stop,
+                        onSetThinking = chatViewModel::setThinking,
+                        onSetExpertMode = chatViewModel::setExpertMode,
+                        onToggleSearch = chatViewModel::toggleSearch,
+                        onSelectModel = chatViewModel::selectModel,
+                        onOpenDrawer = {
+                            openDrawer(SidePanel.Sessions)
+                            chatViewModel.refreshBalance()
                         },
-                        usage = {
-                            UsageDrawerContent(
-                                summary = chatViewModel.state.usageSummary,
-                                contextUsed = chatViewModel.state.contextUsed,
-                                contextWindow = chatViewModel.state.contextWindow,
-                                balanceText = chatViewModel.state.balanceText,
-                                quota = chatViewModel.state.quota,
-                                onDismiss = closeDrawer,
-                            )
+                        onNewChat = chatViewModel::newChat,
+                        onToggleAutoSpeak = {
+                            chatViewModel.setAutoSpeak(!chatViewModel.state.autoSpeak)
                         },
-                    ) {
-                        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                            ChatScreen(
-                                sessionId = chatViewModel.sessionId,
-                                state = chatViewModel.state,
-                                greetingLogoModifier = greetingLogoModifier,
-                                screenIsActive = chatIsActive && !drawerCoversChat,
-                                hasApiKey = chatViewModel.state.hasApiKey,
-                                autoSpeak = chatViewModel.state.autoSpeak,
-                                onInputChange = chatViewModel::onInputChange,
-                                onSend = chatViewModel::send,
-                                onStop = chatViewModel::stop,
-                                onSetThinking = chatViewModel::setThinking,
-                                onSetExpertMode = chatViewModel::setExpertMode,
-                                onToggleSearch = chatViewModel::toggleSearch,
-                                onSelectModel = chatViewModel::selectModel,
-                                onOpenDrawer = {
-                                    openDrawer(SidePanel.Sessions)
-                                    chatViewModel.refreshBalance()
-                                },
-                                onNewChat = chatViewModel::newChat,
-                                onToggleAutoSpeak = {
-                                    chatViewModel.setAutoSpeak(!chatViewModel.state.autoSpeak)
-                                },
-                                onOpenProviderSettings = { navController.navigate(Routes.PROVIDER) },
-                                onEditMessage = chatViewModel::startEdit,
-                                onCancelEdit = chatViewModel::cancelEdit,
-                                onSwitchVersion = chatViewModel::switchVersion,
-                                onRegenerate = chatViewModel::regenerate,
-                                onContinue = chatViewModel::continueGeneration,
-                                onRetry = chatViewModel::retryFailed,
-                                onAddAttachments = chatViewModel::addAttachments,
-                                onRemoveAttachment = chatViewModel::removeAttachment,
-                                onRetryAttachment = chatViewModel::retryAttachment,
-                                onQuickSend = chatViewModel::quickSend,
-                                spectrum = chatViewModel.spectrum,
-                                onToggleVoiceMode = chatViewModel::toggleVoiceMode,
-                                onVoicePress = chatViewModel::startVoiceRecording,
-                                onVoiceRelease = { cancelled ->
-                                    if (cancelled) {
-                                        chatViewModel.cancelVoiceRecording()
-                                    } else {
-                                        chatViewModel.finishVoiceRecording()
-                                    }
-                                },
-                                onReadAloud = chatViewModel::toggleSpeak,
-                                onClearHint = chatViewModel::clearHint,
-                                onOpenUsage = { openDrawer(SidePanel.Usage) },
-                            )
-                        }
-                    }
+                        onOpenProviderSettings = { navController.navigate(Routes.PROVIDER) },
+                        onEditMessage = chatViewModel::startEdit,
+                        onCancelEdit = chatViewModel::cancelEdit,
+                        onSwitchVersion = chatViewModel::switchVersion,
+                        onRegenerate = chatViewModel::regenerate,
+                        onContinue = chatViewModel::continueGeneration,
+                        onRetry = chatViewModel::retryFailed,
+                        onAddAttachments = chatViewModel::addAttachments,
+                        onRemoveAttachment = chatViewModel::removeAttachment,
+                        onRetryAttachment = chatViewModel::retryAttachment,
+                        onQuickSend = chatViewModel::quickSend,
+                        spectrum = chatViewModel.spectrum,
+                        onToggleVoiceMode = chatViewModel::toggleVoiceMode,
+                        onVoicePress = chatViewModel::startVoiceRecording,
+                        onVoiceRelease = { cancelled ->
+                            if (cancelled) {
+                                chatViewModel.cancelVoiceRecording()
+                            } else {
+                                chatViewModel.finishVoiceRecording()
+                            }
+                        },
+                        onReadAloud = chatViewModel::toggleSpeak,
+                        onClearHint = chatViewModel::clearHint,
+                        onOpenUsage = { openDrawer(SidePanel.Usage) },
+                    )
                 }
             }
             if (settingsAreActive) {
@@ -442,6 +432,8 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
                         onSelectFontScale = { scope.launch { container.userSettings.setFontScale(it) } },
                         location = userLocation,
                         onSelectLocation = { scope.launch { container.userSettings.setPromptLocation(it) } },
+                        languageTag = languageTag,
+                        onSelectLanguage = { scope.launch { container.userSettings.setAppLanguage(it) } },
                     )
                 }
                 page(Routes.PROVIDER) {
@@ -590,14 +582,15 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
                 page(Routes.DIAGNOSTICS) {
                     // 报告的读写都在 app 侧（CrashReporter），页面只接数据与回调
                     val crashDir = remember { CrashGuard.crashDir(context) }
-                    val stamp = remember { SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA) }
+                    val stamp = remember(languageTag) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, Locale.forLanguageTag(languageTag)) }
+                    val fallbackScene = stringResource(R.string.prefs_home_crash)
                     var diagnostics by remember { mutableStateOf(emptyList<DiagnosticsItem>()) }
                     val reload: () -> Unit = {
                         diagnostics = CrashReporter.list(crashDir).map { file ->
                             DiagnosticsItem(
                                 id = file.name,
                                 time = stamp.format(Date(file.lastModified())),
-                                scene = CrashReporter.sceneOf(file) ?: "应用崩溃",
+                                scene = CrashReporter.sceneOf(file) ?: fallbackScene,
                             )
                         }
                     }
@@ -614,8 +607,8 @@ fun TinyChatApp(greetingLogoModifier: Modifier = Modifier) {
                     val file = remember(id) {
                         CrashReporter.list(CrashGuard.crashDir(context)).firstOrNull { it.name == id }
                     }
-                    val time = remember(file) {
-                        file?.let { SimpleDateFormat("MM月dd日 HH:mm", Locale.CHINA).format(Date(it.lastModified())) }
+                    val time = remember(file, languageTag) {
+                        file?.let { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, Locale.forLanguageTag(languageTag)).format(Date(it.lastModified())) }
                     }
                     DiagnosticReportScreen(
                         time = time,

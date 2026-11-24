@@ -42,6 +42,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -68,11 +70,11 @@ fun SettingsScreen(
     onOpenData: () -> Unit,
     onOpenAbout: () -> Unit,
     /** 服务商那一行的副标题（M8-6）：`未配置` / 当前服务商名 / `N 个服务商` */
-    providerSubtitle: String = "未配置",
+    providerSubtitle: String,
     /** 当前安装包的版本名（M9）：显示在「关于」那一行的副标题 */
     versionName: String = "",
     /** 当前系统提示词的状态（决策 45）：`官方提示词` / `官方提示词 + 角色扮演` / `不发送` */
-    promptName: String = "官方提示词",
+    promptName: String,
     onOpenPrompt: () -> Unit = {},
     /** 当前朗读音色（M5-4，只有官方两个） */
     ttsVoice: TtsVoice = TtsVoice.STELLA,
@@ -90,12 +92,15 @@ fun SettingsScreen(
     onSelectFontScale: (Float) -> Unit = {},
     location: String = "",
     onSelectLocation: (String) -> Unit = {},
-    webSearchSubtitle: String = "DeepSeek 内置",
+    webSearchSubtitle: String = "DeepSeek",
     onOpenWebSearch: () -> Unit = {},
+    languageTag: String = "zh-CN",
+    onSelectLanguage: (String) -> Unit = {},
 ) {
     val palette = TcTheme.palette
     var voicePicker by remember { mutableStateOf(false) }
     var themePicker by remember { mutableStateOf(false) }
+    var languagePicker by remember { mutableStateOf(false) }
     var fontPicker by remember { mutableStateOf(false) }
     var locationEdit by remember { mutableStateOf(false) }
     var locationDraft by remember { mutableStateOf("") }
@@ -111,33 +116,34 @@ fun SettingsScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Box(Modifier.size(36.dp).background(palette.selector, CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(TcIcons.Back, "返回", tint = palette.labelPrimary, modifier = Modifier.size(17.dp))
+                    Icon(TcIcons.Back, stringResource(R.string.prefs_home_back), tint = palette.labelPrimary, modifier = Modifier.size(17.dp))
                 }
             }
-            Text("设置", style = TcTypography.titleMedium, color = palette.labelPrimary, modifier = Modifier.align(Alignment.Center))
+            Text(stringResource(R.string.prefs_home_settings), style = TcTypography.titleMedium, color = palette.labelPrimary, modifier = Modifier.align(Alignment.Center))
         }
         Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-            SettingsGroup("账户") {
-                SettingsLink(TcIcons.Account, "模型供应商", providerSubtitle, onOpenProvider)
-                SettingsLink(TcIcons.Search, "联网搜索", webSearchSubtitle, onOpenWebSearch)
-                SettingsLink(TcIcons.Data, "数据管理", onClick = onOpenData)
+            SettingsGroup(stringResource(R.string.prefs_home_account)) {
+                SettingsLink(TcIcons.Account, stringResource(R.string.prefs_home_providers), providerSubtitle, onOpenProvider)
+                SettingsLink(TcIcons.Search, stringResource(R.string.prefs_home_search), webSearchSubtitle, onOpenWebSearch)
+                SettingsLink(TcIcons.Data, stringResource(R.string.prefs_home_data), onClick = onOpenData)
             }
-            SettingsGroup("应用") {
-                SettingsLink(TcIcons.ThemeLight, "外观", themeMode.themeLabel) { themePicker = true }
-                SettingsLink(TcIcons.Location, "所在地", location) {
+            SettingsGroup(stringResource(R.string.prefs_home_app)) {
+                SettingsLink(TcIcons.Globe, stringResource(R.string.prefs_home_language), LANGUAGES.firstOrNull { it.first == languageTag }?.second ?: LANGUAGES.first().second) { languagePicker = true }
+                SettingsLink(TcIcons.ThemeLight, stringResource(R.string.prefs_home_appearance), stringResource(themeMode.themeLabel)) { themePicker = true }
+                SettingsLink(TcIcons.Location, stringResource(R.string.prefs_home_location), location) {
                     locationDraft = location
                     locationEdit = true
                 }
-                SettingsLink(TcIcons.TypeSize, "字体大小", fontScale.fontLabel) { fontPicker = true }
-                SettingsLink(TcIcons.File, "提示词", promptName, onOpenPrompt)
-                SettingsSwitch(TcIcons.Account, "用户元信息", reminderEnabled, onToggleReminder)
-                SettingsSwitch(TcIcons.Usage, "显示每轮用量", showUsage, onToggleShowUsage)
+                SettingsLink(TcIcons.TypeSize, stringResource(R.string.prefs_home_font), stringResource(fontScale.fontLabel)) { fontPicker = true }
+                SettingsLink(TcIcons.File, stringResource(R.string.prefs_home_prompt), promptName, onOpenPrompt)
+                SettingsSwitch(TcIcons.Account, stringResource(R.string.prefs_home_metadata), reminderEnabled, onToggleReminder)
+                SettingsSwitch(TcIcons.Usage, stringResource(R.string.prefs_home_usage), showUsage, onToggleShowUsage)
             }
-            SettingsGroup("语音") {
-                SettingsLink(TcIcons.Speak, "朗读音色", ttsVoice.displayLabel) { voicePicker = true }
+            SettingsGroup(stringResource(R.string.prefs_home_voice)) {
+                SettingsLink(TcIcons.Speak, stringResource(R.string.prefs_home_read_voice), stringResource(ttsVoice.displayLabel)) { voicePicker = true }
             }
-            SettingsGroup("关于") {
-                SettingsLink(TcIcons.Info, "软件版本", versionName, onOpenAbout)
+            SettingsGroup(stringResource(R.string.prefs_home_about)) {
+                SettingsLink(TcIcons.Info, stringResource(R.string.prefs_home_version), versionName, onOpenAbout)
             }
         }
     }
@@ -145,11 +151,11 @@ fun SettingsScreen(
     if (voicePicker) {
         TcAlertDialog(
             onDismissRequest = { voicePicker = false },
-            title = { Text("朗读音色") },
+            title = { Text(stringResource(R.string.prefs_home_read_voice)) },
             text = {
                 Column(Modifier.selectableGroup()) {
                     TtsVoice.entries.forEach { voice ->
-                        SettingsChoice(voice.displayLabel, selected = voice == ttsVoice) {
+                        SettingsChoice(stringResource(voice.displayLabel), selected = voice == ttsVoice) {
                             onSelectTtsVoice(voice)
                             voicePicker = false
                         }
@@ -157,15 +163,25 @@ fun SettingsScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { voicePicker = false }) { Text("关闭", color = TcTheme.palette.labelSecondary) }
+                TextButton(onClick = { voicePicker = false }) { Text(stringResource(R.string.prefs_home_close), color = TcTheme.palette.labelSecondary) }
             },
         )
     }
 
+    if (languagePicker) {
+        PickerDialog(
+            title = stringResource(R.string.prefs_home_language), options = LANGUAGES, selected = languageTag,
+            onDismiss = { languagePicker = false },
+        ) {
+            languagePicker = false
+            onSelectLanguage(it)
+        }
+    }
+
     if (themePicker) {
         PickerDialog(
-            title = "外观",
-            options = THEME_OPTIONS,
+            title = stringResource(R.string.prefs_home_appearance),
+            options = THEME_OPTIONS.map { it.first to stringResource(it.second) },
             selected = themeMode,
             onDismiss = { themePicker = false },
             onPick = {
@@ -177,8 +193,8 @@ fun SettingsScreen(
 
     if (fontPicker) {
         PickerDialog(
-            title = "字体大小",
-            options = FONT_OPTIONS,
+            title = stringResource(R.string.prefs_home_font),
+            options = FONT_OPTIONS.map { it.first to stringResource(it.second) },
             selected = fontScale,
             onDismiss = { fontPicker = false },
             onPick = {
@@ -191,7 +207,7 @@ fun SettingsScreen(
     if (locationEdit) {
         TcAlertDialog(
             onDismissRequest = { locationEdit = false },
-            title = { Text("所在地") },
+            title = { Text(stringResource(R.string.prefs_home_location)) },
             text = {
                 Column {
                     Box(
@@ -210,7 +226,7 @@ fun SettingsScreen(
                             decorationBox = { inner ->
                                 if (locationDraft.isEmpty()) {
                                     Text(
-                                        "例如：浙江",
+                                        stringResource(R.string.prefs_home_location_hint),
                                         style = TcTypography.bodyLarge,
                                         color = palette.labelTertiary,
                                     )
@@ -225,10 +241,10 @@ fun SettingsScreen(
                 TextButton(onClick = {
                     locationEdit = false
                     onSelectLocation(locationDraft)
-                }) { Text("保存") }
+                }) { Text(stringResource(R.string.prefs_home_save)) }
             },
             dismissButton = {
-                TextButton(onClick = { locationEdit = false }) { Text("取消", color = TcTheme.palette.labelSecondary) }
+                TextButton(onClick = { locationEdit = false }) { Text(stringResource(R.string.prefs_home_cancel), color = TcTheme.palette.labelSecondary) }
             },
         )
     }
@@ -333,22 +349,23 @@ private fun SettingsChoice(label: String, selected: Boolean, onClick: () -> Unit
 }
 
 /** 官方两个音色的中文名（`stella` 海星女声 / `tide` 暗潮男声）。 */
-private val TtsVoice.displayLabel: String
+private val TtsVoice.displayLabel: Int
     get() = when (this) {
-        TtsVoice.STELLA -> "海星（女）"
-        TtsVoice.TIDE -> "暗潮（男）"
+        TtsVoice.STELLA -> R.string.prefs_home_stella
+        TtsVoice.TIDE -> R.string.prefs_home_tide
     }
 
 // 外观 / 字号（M8-4）。取值直接就是落库的字符串/浮点，不做第二套枚举，
 // 免得设置页、DataStore、聊天请求三处各有一份映射。
-private val THEME_OPTIONS = listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色")
-private val FONT_OPTIONS = listOf(0.9f to "小", 1f to "标准", 1.15f to "大", 1.3f to "特大")
+private val LANGUAGES = listOf("zh-CN" to "简体中文", "en" to "English", "ru" to "Русский", "fr" to "Français", "es" to "Español")
+private val THEME_OPTIONS = listOf("system" to R.string.prefs_home_system, "light" to R.string.prefs_home_light, "dark" to R.string.prefs_home_dark)
+private val FONT_OPTIONS = listOf(0.9f to R.string.prefs_home_small, 1f to R.string.prefs_home_regular, 1.15f to R.string.prefs_home_large, 1.3f to R.string.prefs_home_extra_large)
 
-private val String.themeLabel: String
-    get() = THEME_OPTIONS.firstOrNull { it.first == this }?.second ?: "跟随系统"
+private val String.themeLabel: Int
+    get() = THEME_OPTIONS.firstOrNull { it.first == this }?.second ?: R.string.prefs_home_system
 
-private val Float.fontLabel: String
-    get() = FONT_OPTIONS.firstOrNull { kotlin.math.abs(it.first - this) < 0.01f }?.second ?: "标准"
+private val Float.fontLabel: Int
+    get() = FONT_OPTIONS.firstOrNull { kotlin.math.abs(it.first - this) < 0.01f }?.second ?: R.string.prefs_home_regular
 
 /** 外观和字号共用的单选弹窗。 */
 @Composable
@@ -375,7 +392,7 @@ private fun <T> PickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭", color = TcTheme.palette.labelSecondary) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.prefs_home_close), color = TcTheme.palette.labelSecondary) }
         },
     )
 }
@@ -393,6 +410,7 @@ fun DataManagementScreen(
     onImported: () -> Unit,
     onClearAll: () -> Unit,
 ) {
+    val context = LocalContext.current
     val palette = TcTheme.palette
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
@@ -408,19 +426,17 @@ fun DataManagementScreen(
     fun startImport(uri: Uri) {
         if (busy) return
         busy = true
-        status = "正在导入…"
+        status = context.getString(R.string.prefs_home_importing)
         scope.launch {
             try {
                 val report = archive.import(uri)
-                status = "已导入 ${report.sessions} 个会话、${report.messages} 条消息、" +
-                    "${report.files} 个附件（丢弃 ${report.droppedFragments} 条提示碎片，" +
-                    "用时 ${report.durationMs / 1000}s）"
+                status = context.getString(R.string.prefs_home_import_done, report.sessions, report.messages, report.files)
                 onImported()
             } catch (e: CancellationException) {
                 // 离开页面时被取消很正常，别当成"导入失败"显示给用户
                 throw e
             } catch (e: Exception) {
-                status = "导入失败：${e.message ?: e::class.simpleName}"
+                status = context.getString(R.string.prefs_home_import_failed, e.message ?: e::class.simpleName.orEmpty())
             } finally {
                 busy = false
             }
@@ -436,19 +452,18 @@ fun DataManagementScreen(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         busy = true
-        status = "正在导出…"
+        status = context.getString(R.string.prefs_home_exporting)
         scope.launch {
             try {
                 val report = archive.export(uri) { done, total ->
-                    val value = "正在导出 $done/$total"
+                    val value = context.getString(R.string.prefs_home_export_progress, done, total)
                     scope.launch { status = value }
                 }
-                status = "已导出 ${report.sessions} 个会话、${report.messages} 条消息，" +
-                    "${formatSize(report.bytes)}（用时 ${report.durationMs / 1000}s）"
+                status = context.getString(R.string.prefs_home_export_done, report.sessions, report.messages, android.text.format.Formatter.formatShortFileSize(context, report.bytes))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                status = "导出失败：${e.message ?: e::class.simpleName}"
+                status = context.getString(R.string.prefs_home_export_failed, e.message ?: e::class.simpleName.orEmpty())
             } finally {
                 busy = false
             }
@@ -461,17 +476,17 @@ fun DataManagementScreen(
             .background(palette.bg),
     ) {
         TcTopBar(
-            title = "数据管理",
-            leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
+            title = stringResource(R.string.prefs_home_data),
+            leading = { TcIconButton(TcIcons.Back, stringResource(R.string.prefs_home_back), onBack) },
         )
         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-            TcSectionLabel("备份")
+            TcSectionLabel(stringResource(R.string.prefs_home_backup))
             TcListRow(
-                title = "导入对话",
+                title = stringResource(R.string.prefs_home_import_chat),
                 onClick = { if (!busy) confirmImport = true },
             )
             TcListRow(
-                title = "导出对话",
+                title = stringResource(R.string.prefs_home_export_chat),
                 onClick = {
                     if (!busy) {
                         exportPicker.launch("tinychat-backup-${System.currentTimeMillis()}.zip")
@@ -489,9 +504,9 @@ fun DataManagementScreen(
                 )
             }
 
-            TcSectionLabel("清理")
+            TcSectionLabel(stringResource(R.string.prefs_home_cleanup))
             TcListRow(
-                title = "清空所有对话",
+                title = stringResource(R.string.prefs_home_clear_all),
                 onClick = { if (!busy) confirmClear = true },
             )
 
@@ -501,17 +516,17 @@ fun DataManagementScreen(
     if (confirmClear) {
         TcAlertDialog(
             onDismissRequest = { confirmClear = false },
-            title = { Text("清空所有对话？") },
-            text = { Text("本机全部对话与附件原件都会被删除，且不可撤销。") },
+            title = { Text(stringResource(R.string.prefs_home_clear_title)) },
+            text = { Text(stringResource(R.string.prefs_home_clear_details)) },
             confirmButton = {
                 TextButton(onClick = {
                     confirmClear = false
                     onClearAll()
-                    status = "已清空本机所有对话"
-                }) { Text("清空") }
+                    status = context.getString(R.string.prefs_home_clear_done)
+                }) { Text(stringResource(R.string.prefs_home_clear)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmClear = false }) { Text("取消", color = TcTheme.palette.labelSecondary) }
+                TextButton(onClick = { confirmClear = false }) { Text(stringResource(R.string.prefs_home_cancel), color = TcTheme.palette.labelSecondary) }
             },
             containerColor = palette.bg,
         )
@@ -520,24 +535,19 @@ fun DataManagementScreen(
     if (confirmImport) {
         TcAlertDialog(
             onDismissRequest = { confirmImport = false },
-            title = { Text("导入会覆盖现有对话？") },
-            text = { Text("当前设备上的全部对话和附件都会被替换成导入的内容，且无法撤销。") },
+            title = { Text(stringResource(R.string.prefs_home_replace_title)) },
+            text = { Text(stringResource(R.string.prefs_home_replace_details)) },
             confirmButton = {
                 TextButton(onClick = {
                     confirmImport = false
                     importPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
-                }) { Text("选择文件") }
+                }) { Text(stringResource(R.string.prefs_home_pick_file)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmImport = false }) { Text("取消", color = TcTheme.palette.labelSecondary) }
+                TextButton(onClick = { confirmImport = false }) { Text(stringResource(R.string.prefs_home_cancel), color = TcTheme.palette.labelSecondary) }
             },
             containerColor = palette.bg,
         )
     }
 }
 
-private fun formatSize(bytes: Long): String = when {
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "%.0f KB".format(bytes / 1024.0)
-    else -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
-}

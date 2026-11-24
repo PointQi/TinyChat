@@ -50,6 +50,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -63,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
+import io.tinychat.model.SessionGroup
 import io.tinychat.model.SessionRow
 import io.tinychat.model.SessionSearchHit
 import io.tinychat.model.SessionsUiState
@@ -131,7 +134,7 @@ fun SessionsDrawerContent(
                 modifier = Modifier.weight(1f),
             )
             if (!state.selectionMode && !state.searching) {
-                TcIconButton(TcIcons.MultiSelect, "多选", onEnterSelection)
+                TcIconButton(TcIcons.MultiSelect, stringResource(R.string.sessions_multi_select), onEnterSelection)
             }
         }
 
@@ -176,7 +179,7 @@ fun SessionsDrawerContent(
         } else {
             Spacer(Modifier.height(4.dp))
             TcListRow(
-                title = "设置",
+                title = stringResource(R.string.sessions_settings),
                 leading = TcIcons.Settings,
                 onClick = onOpenSettings,
             )
@@ -185,12 +188,19 @@ fun SessionsDrawerContent(
     }
 
     if (confirmingBatchDelete) {
+        val selectedCount = state.selected.size
         TcAlertDialog(
             onDismissRequest = { confirmingBatchDelete = false },
-            title = { Text("删除 ${state.selected.size} 个对话？", style = TcTypography.titleMedium, color = palette.labelPrimary) },
+            title = {
+                Text(
+                    pluralStringResource(R.plurals.sessions_delete_selected, selectedCount, selectedCount),
+                    style = TcTypography.titleMedium,
+                    color = palette.labelPrimary,
+                )
+            },
             text = {
                 Text(
-                    text = "删除后将从列表移除。",
+                    text = stringResource(R.string.sessions_remove_selected),
                     style = TcTypography.bodyMedium,
                     color = palette.labelSecondary,
                 )
@@ -200,12 +210,12 @@ fun SessionsDrawerContent(
                     confirmingBatchDelete = false
                     onDeleteSelected()
                 }) {
-                    Text("删除", style = TcTypography.bodyMedium, color = palette.danger)
+                    Text(stringResource(R.string.sessions_delete), style = TcTypography.bodyMedium, color = palette.danger)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmingBatchDelete = false }) {
-                    Text("取消", style = TcTypography.bodyMedium, color = palette.labelSecondary)
+                    Text(stringResource(R.string.sessions_cancel), style = TcTypography.bodyMedium, color = palette.labelSecondary)
                 }
             },
             containerColor = palette.bg,
@@ -214,7 +224,7 @@ fun SessionsDrawerContent(
 
     renaming?.let { row ->
         RenameDialog(
-            initial = row.displayTitle,
+            initial = row.localizedTitle(),
             onDismiss = { renaming = null },
             onConfirm = { title ->
                 renaming = null
@@ -226,10 +236,10 @@ fun SessionsDrawerContent(
     deleting?.let { row ->
         TcAlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("删除这个对话？", style = TcTypography.titleMedium, color = palette.labelPrimary) },
+            title = { Text(stringResource(R.string.sessions_delete_chat), style = TcTypography.titleMedium, color = palette.labelPrimary) },
             text = {
                 Text(
-                    text = "「${row.displayTitle}」将从列表移除。",
+                    text = stringResource(R.string.sessions_remove_chat, row.localizedTitle()),
                     style = TcTypography.bodyMedium,
                     color = palette.labelSecondary,
                 )
@@ -239,12 +249,12 @@ fun SessionsDrawerContent(
                     deleting = null
                     onDeleteSession(row.id)
                 }) {
-                    Text("删除", style = TcTypography.bodyMedium, color = palette.danger)
+                    Text(stringResource(R.string.sessions_delete), style = TcTypography.bodyMedium, color = palette.danger)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { deleting = null }) {
-                    Text("取消", style = TcTypography.bodyMedium, color = palette.labelSecondary)
+                    Text(stringResource(R.string.sessions_cancel), style = TcTypography.bodyMedium, color = palette.labelSecondary)
                 }
             },
             containerColor = palette.bg,
@@ -269,7 +279,7 @@ private fun SearchEntry(onClick: () -> Unit) {
     ) {
         Icon(TcIcons.Search, null, tint = palette.labelTertiary, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
-        Text("搜索对话内容...", style = TcTypography.bodyMedium, color = palette.labelTertiary)
+        Text(stringResource(R.string.sessions_search), style = TcTypography.bodyMedium, color = palette.labelTertiary)
     }
 }
 
@@ -286,7 +296,7 @@ private fun SearchBar(query: String, onQueryChange: (String) -> Unit, onClose: (
             .padding(start = 2.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TcIconButton(TcIcons.Back, "退出搜索", onClose)
+        TcIconButton(TcIcons.Back, stringResource(R.string.sessions_close_search), onClose)
         Row(
             modifier = Modifier
                 .weight(1f)
@@ -309,7 +319,7 @@ private fun SearchBar(query: String, onQueryChange: (String) -> Unit, onClose: (
                     Box {
                         if (query.isEmpty()) {
                             Text(
-                                text = "搜索对话内容...",
+                                text = stringResource(R.string.sessions_search),
                                 style = TcTypography.bodyMedium,
                                 color = palette.labelTertiary,
                             )
@@ -327,7 +337,7 @@ private fun SearchBar(query: String, onQueryChange: (String) -> Unit, onClose: (
                         .clickable { onQueryChange("") },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(TcIcons.Close, "清空", tint = palette.bg, modifier = Modifier.size(12.dp))
+                    Icon(TcIcons.Close, stringResource(R.string.sessions_clear_search), tint = palette.bg, modifier = Modifier.size(12.dp))
                 }
             }
         }
@@ -346,12 +356,12 @@ private fun SelectionBar(onClose: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "选择对话",
+            text = stringResource(R.string.sessions_select_chats),
             style = TcTypography.bodyLarge,
             color = palette.labelPrimary,
             modifier = Modifier.weight(1f),
         )
-        TcIconButton(TcIcons.Close, "退出多选", onClose)
+        TcIconButton(TcIcons.Close, stringResource(R.string.sessions_close_selection), onClose)
     }
 }
 
@@ -367,7 +377,7 @@ private fun SelectionActions(enabled: Boolean, onPin: () -> Unit, onDelete: () -
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SelectionAction(
-            label = "置顶",
+            label = stringResource(R.string.sessions_pin),
             icon = TcIcons.Pin,
             enabled = enabled,
             tint = if (enabled) palette.labelPrimary else palette.labelTertiary,
@@ -375,7 +385,7 @@ private fun SelectionActions(enabled: Boolean, onPin: () -> Unit, onDelete: () -
             onClick = onPin,
         )
         SelectionAction(
-            label = "删除",
+            label = stringResource(R.string.sessions_delete),
             icon = TcIcons.Trash,
             enabled = enabled,
             tint = if (enabled) palette.danger else palette.labelTertiary,
@@ -409,9 +419,23 @@ private fun SelectionAction(
 }
 
 private sealed interface DrawerItem {
-    data class Header(val label: String) : DrawerItem
+    data class Header(val group: SessionGroup) : DrawerItem
     data class Row(val session: SessionRow) : DrawerItem
 }
+
+private val SessionGroup.labelRes: Int
+    get() = when (this) {
+        SessionGroup.PINNED -> R.string.sessions_group_pinned
+        SessionGroup.TODAY -> R.string.sessions_group_today
+        SessionGroup.YESTERDAY -> R.string.sessions_group_yesterday
+        SessionGroup.LAST_7_DAYS -> R.string.sessions_group_week
+        SessionGroup.LAST_30_DAYS -> R.string.sessions_group_month
+        SessionGroup.EARLIER -> R.string.sessions_group_earlier
+    }
+
+@Composable
+private fun SessionRow.localizedTitle(): String =
+    if (title.isNullOrBlank()) stringResource(R.string.sessions_new_chat) else displayTitle
 
 @Composable
 private fun SessionListBody(
@@ -447,7 +471,7 @@ private fun SessionListBody(
     val items = remember(state.rows) {
         buildList {
             groupSessions(state.rows, System.currentTimeMillis()).forEach { section ->
-                add(DrawerItem.Header(section.group.label))
+                add(DrawerItem.Header(section.group))
                 section.rows.forEach { add(DrawerItem.Row(it)) }
             }
         }
@@ -471,7 +495,7 @@ private fun SessionListBody(
 
     if (items.isEmpty()) {
         Text(
-            text = "还没有对话",
+            text = stringResource(R.string.sessions_empty),
             style = TcTypography.bodyMedium,
             color = palette.labelTertiary,
             modifier = Modifier.padding(start = 16.dp, top = 20.dp),
@@ -484,13 +508,13 @@ private fun SessionListBody(
             items = items,
             key = { item ->
                 when (item) {
-                    is DrawerItem.Header -> "h-${item.label}"
+                    is DrawerItem.Header -> "h-${item.group.name}"
                     is DrawerItem.Row -> item.session.id
                 }
             },
         ) { item ->
             when (item) {
-                is DrawerItem.Header -> TcSectionLabel(item.label)
+                is DrawerItem.Header -> TcSectionLabel(stringResource(item.group.labelRes))
                 is DrawerItem.Row -> SessionItem(
                     row = item.session,
                     selected = item.session.id == currentSessionId,
@@ -523,17 +547,17 @@ private fun SessionListBody(
             anchor = MenuAnchor.Row(bounds),
             onDismiss = { menuRow = null },
             items = listOf(
-                TcMenuItem("重命名") {
+                TcMenuItem(stringResource(R.string.sessions_rename)) {
                     menuRow = null
                     onRename(target)
                 },
-                TcMenuItem(if (target.pinned) "取消置顶" else "置顶") {
+                TcMenuItem(stringResource(if (target.pinned) R.string.sessions_unpin else R.string.sessions_pin)) {
                     menuRow = null
                     onTogglePin(target)
                     // 置顶后滚到顶部，否则被列表位置锚定顶到屏幕外，看着像没生效
                     scope.launch { listState.animateScrollToItem(0) }
                 },
-                TcMenuItem("删除", danger = true) {
+                TcMenuItem(stringResource(R.string.sessions_delete), danger = true) {
                     menuRow = null
                     onDelete(target)
                 },
@@ -555,6 +579,7 @@ private fun SessionItem(
 ) {
     val palette = TcTheme.palette
     val haptics = LocalHapticFeedback.current
+    val chatActionsLabel = stringResource(R.string.sessions_chat_actions)
     var bounds by remember { mutableStateOf(IntRect.Zero) }
 
     Row(
@@ -587,7 +612,7 @@ private fun SessionItem(
                 // 行尾的「⋯」删掉之后，读屏用户没有别的入口，这里补一个等价动作
                 if (!selectionMode) {
                     customActions = listOf(
-                        CustomAccessibilityAction("会话操作") {
+                        CustomAccessibilityAction(chatActionsLabel) {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             onMenuRequest(bounds)
                             true
@@ -604,7 +629,7 @@ private fun SessionItem(
             Spacer(Modifier.width(12.dp))
         }
         Text(
-            text = row.displayTitle,
+            text = row.localizedTitle(),
             style = TcTypography.bodyLarge,
             color = palette.labelPrimary,
             maxLines = 1,
@@ -643,7 +668,7 @@ private fun SearchResults(
     if (query.isBlank()) return
     if (results.isEmpty()) {
         Text(
-            text = "没有找到相关对话",
+            text = stringResource(R.string.sessions_no_results),
             style = TcTypography.bodyMedium,
             color = palette.labelTertiary,
             modifier = Modifier.padding(start = 16.dp, top = 20.dp),
@@ -660,7 +685,7 @@ private fun SearchResults(
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 Text(
-                    text = hit.title,
+                    text = if (hit.untitled) stringResource(R.string.sessions_new_chat) else hit.title,
                     style = TcTypography.bodyLarge,
                     color = palette.labelPrimary,
                     maxLines = 1,
@@ -696,7 +721,7 @@ private fun RenameDialog(initial: String, onDismiss: () -> Unit, onConfirm: (Str
 
     TcAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("重命名对话", style = TcTypography.titleMedium, color = palette.labelPrimary) },
+        title = { Text(stringResource(R.string.sessions_rename_chat), style = TcTypography.titleMedium, color = palette.labelPrimary) },
         text = {
             OutlinedTextField(
                 value = text,
@@ -707,12 +732,12 @@ private fun RenameDialog(initial: String, onDismiss: () -> Unit, onConfirm: (Str
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(text) }) {
-                Text("保存", style = TcTypography.bodyMedium, color = palette.brand)
+                Text(stringResource(R.string.sessions_save), style = TcTypography.bodyMedium, color = palette.brand)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消", style = TcTypography.bodyMedium, color = palette.labelSecondary)
+                Text(stringResource(R.string.sessions_cancel), style = TcTypography.bodyMedium, color = palette.labelSecondary)
             }
         },
         containerColor = palette.bg,
