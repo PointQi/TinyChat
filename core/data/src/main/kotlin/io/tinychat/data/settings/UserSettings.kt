@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import io.tinychat.model.TtsVoice
+import io.tinychat.model.WebSearchProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -68,6 +69,11 @@ class UserSettings(context: Context) {
 
     /** 字体大小：1.0–1.3，只作用于正文（M8-4） */
     val fontScale: Flow<Float> = store.data.map { it[FONT_SCALE] ?: 1f }
+
+    /** 联网搜索服务商：DeepSeek / Tavily / AnySearch，默认 DeepSeek */
+    val webSearchProvider: Flow<WebSearchProvider> = store.data.map {
+        WebSearchProvider.fromWire(it[WEB_SEARCH_PROVIDER])
+    }
 
     /** 当前服务商（M8-6）：新会话默认用它，由聊天页的模型选择器写入 */
     val activeProviderId: Flow<String> = store.data.map { it[ACTIVE_PROVIDER] ?: DEFAULT_PROVIDER_ID }
@@ -134,7 +140,12 @@ class UserSettings(context: Context) {
         store.edit { it[FONT_SCALE] = scale.coerceIn(0.9f, 1.3f) }
     }
 
+    suspend fun setWebSearchProvider(provider: WebSearchProvider) {
+        store.edit { it[WEB_SEARCH_PROVIDER] = provider.wire }
+    }
+
     companion object {
+        private val WEB_SEARCH_PROVIDER = stringPreferencesKey("web_search_provider")
         private val AUTO_SPEAK = booleanPreferencesKey("auto_speak")
         private val TTS_VOICE = stringPreferencesKey("tts_voice")
         private val SHOW_USAGE = booleanPreferencesKey("show_usage")
