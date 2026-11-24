@@ -8,15 +8,22 @@ import io.tinychat.data.db.DatabaseFactory
 import io.tinychat.data.provider.ProviderStore
 import io.tinychat.model.FragmentPayloadCodec
 import io.tinychat.model.KnownProviders
+import io.tinychat.model.MessageStatus
 import io.tinychat.model.SearchResult
 import io.tinychat.model.ToolSearchPayload
 import io.tinychat.model.WebSearchProvider
 import io.tinychat.net.SseEvent
 import io.tinychat.net.protocol.PreparedRequest
 import io.tinychat.net.transport.ChatTransport
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -28,6 +35,41 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ChatRepositoryWebSearchTest {
+    @Test
+    fun `cancel during pre-stream search leaves the new answer visible and incomplete`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = DatabaseFactory.createInMemory(context)
+        try {
+            val providers = ProviderStore.create(db)
+            providers.save(KnownProviders.genericOpenAiCompatible("test", "Test", "https://example.com/v1", "chat"))
+            val searching = CompletableDeferred<Unit>()
+            val repo = ChatRepository(
+                db = db,
+                transport = object : ChatTransport {
+                    override fun stream(request: PreparedRequest): Flow<SseEvent> = emptyFlow()
+                },
+                attachmentStore = AttachmentStore(context),
+                uploader = AttachmentUploader(),
+                providerStore = providers,
+                apiKeyFor = { "chat-key" },
+                webSearchProvider = { WebSearchProvider.TAVILY },
+                webSearch = { _, _ -> searching.complete(Unit); awaitCancellation() },
+            )
+            val id = repo.createSession(providerId = "test", model = "chat", searchEnabled = true)
+            val work = launch { repo.send(id, "pending question") }
+            withTimeout(5_000) { searching.await() }
+            val answer = db.sessionDao().byId(id)!!.currentMessageId!!
+            assertEquals(MessageStatus.WIP, db.messageDao().byId(answer)?.status)
+
+            work.cancelAndJoin()
+            assertEquals(answer, db.sessionDao().byId(id)?.currentMessageId)
+            assertEquals(MessageStatus.INCOMPLETE, db.messageDao().byId(answer)?.status)
+            assertEquals(2, db.messageDao().countInSession(id))
+        } finally {
+            db.close()
+        }
+    }
+
     @Test
     fun `the selected search service is independent of the chat provider`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()

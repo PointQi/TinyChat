@@ -1,5 +1,6 @@
 package io.tinychat.data.chat
 
+import androidx.room.withTransaction
 import io.tinychat.data.attachment.AttachmentStore
 import io.tinychat.data.attachment.AttachmentTextTooLong
 import io.tinychat.data.attachment.AttachmentUploader
@@ -61,10 +62,13 @@ import io.tinychat.net.transport.ChatTransport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
+import java.net.URI
 import java.time.LocalDate
 import java.time.ZonedDateTime
 import java.util.UUID
@@ -355,6 +359,100 @@ class ChatRepository(
         )
     }
 
+    /** Summarize an over-limit branch with the outgoing model, falling back to native DeepSeek. */
+    suspend fun switchModel(
+        sessionId: String,
+        sourceProviderId: String,
+        sourceModelId: String,
+        targetProviderId: String,
+        targetModelId: String,
+        effort: ThinkingEffort,
+        thinkingEnabled: Boolean,
+        searchEnabled: Boolean,
+        onCompressing: () -> Unit = {},
+    ): Int? {
+        val session = db.sessionDao().byId(sessionId) ?: throw compressionFailure("会话已不存在")
+        if (session.deleted || session.providerId != sourceProviderId || session.model != sourceModelId ||
+            db.messageDao().wipInSession(sessionId).isNotEmpty()
+        ) throw compressionFailure("会话已更新，请重新切换模型")
+        val target = providerStore.byId(targetProviderId)?.model(targetModelId)
+            ?: throw compressionFailure("找不到要切换的模型")
+        val branch = messageChain(sessionId, session.currentMessageId, useLatest = true)
+        val anchor = branch.lastOrNull()?.message
+        val summary = if (anchor != null && needsContextCompression(estimateContextUsed(branch), target.contextWindow)) {
+            onCompressing()
+            if (!isOnline()) throw ChatException(ErrorKind.NETWORK, message = "当前无网络连接，请检查网络后重试")
+            compressForSwitch(session, branch, target.contextWindow)
+        } else {
+            null
+        }
+
+        db.withTransaction {
+            val current = db.sessionDao().byId(sessionId)
+            if (current == null || current.deleted || current.currentMessageId != session.currentMessageId ||
+                current.providerId != sourceProviderId || current.model != sourceModelId ||
+                providerStore.byId(targetProviderId)?.model(targetModelId)?.contextWindow != target.contextWindow ||
+                db.messageDao().wipInSession(sessionId).isNotEmpty() ||
+                (anchor != null && db.messageDao().byId(anchor.id) != anchor)
+            ) throw compressionFailure("会话已更新，请重新切换模型")
+
+            if (anchor != null && summary != null) {
+                db.messageDao().setContextSummary(anchor.id, summary.summary, summary.estimatedTokens)
+            }
+            updateSettings(sessionId, targetProviderId, thinkingEnabled, searchEnabled, effort, targetModelId)
+        }
+        return summary?.estimatedTokens
+    }
+
+    private suspend fun compressForSwitch(
+        session: SessionEntity,
+        branch: List<MessageWithFragments>,
+        targetLimit: Int,
+    ): CompressedContext {
+        val compressor = ContextCompressor(transport, attachmentStore)
+        var failure = try {
+            val source = requireProvider(session)
+            val model = source.model(session.model) ?: throw compressionFailure("找不到切换前的模型")
+            return compressor.compress(session.id, branch, source, model, requireKey(source), targetLimit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            e
+        }
+
+        for (provider in providerStore.all().filter { it.isNativeDeepSeek() }) {
+            val key = try {
+                apiKeyFor(provider.id)?.takeIf { it.isNotBlank() } ?: continue
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                continue
+            }
+            for (model in provider.models) {
+                if (provider.id == session.providerId && model.id == session.model) continue
+                try {
+                    return compressor.compress(session.id, branch, provider, model, key, targetLimit)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failure = e
+                    // A different model won't fix this provider's rejected credentials or insufficient balance.
+                    if (e is ChatException && (e.kind == ErrorKind.HTTP_401 || e.kind == ErrorKind.HTTP_402)) break
+                }
+            }
+        }
+        throw failure
+    }
+
+    private fun Provider.isNativeDeepSeek(): Boolean {
+        if (kind != ProviderKind.DEEPSEEK_OFFICIAL || protocol != ProviderProtocol.DEEPSEEK_MESSAGES) return false
+        val url = runCatching { URI(baseUrl) }.getOrNull() ?: return false
+        return url.scheme.equals("https", ignoreCase = true) &&
+            url.host.equals("api.deepseek.com", ignoreCase = true) &&
+            (url.port == -1 || url.port == 443) &&
+            url.path in setOf("", "/") && url.rawUserInfo == null && url.rawQuery == null && url.rawFragment == null
+    }
+
 
     fun observeSession(sessionId: String): Flow<SessionEntity?> = db.sessionDao().observeById(sessionId)
 
@@ -495,7 +593,7 @@ class ChatRepository(
             maxOutputTokens = modelInfo.maxOutputTokens,
             searchEnabled = false,
             includeTitle = false,
-            messages = ContextRebuilder.build(history, reminder, attachments.flavor) +
+            messages = history.summaryMessages + ContextRebuilder.build(history.turns, reminder, attachments.flavor) +
                 ContextRebuilder.userMessage(
                     userText,
                     currentAttachments,
@@ -511,8 +609,8 @@ class ChatRepository(
             extraHeaders = ChatProtocols.extraHeaders(provider, sessionId),
         )
 
-        db.messageDao().setStatus(assistantMessageId, MessageStatus.WIP)
         val outcome = try {
+            db.messageDao().setStatus(assistantMessageId, MessageStatus.WIP)
             runner.run(
                 assistantMessageId,
                 request,
@@ -521,7 +619,7 @@ class ChatRepository(
             )
         } catch (e: Throwable) {
             // 失败要把状态退回「未完成」，否则界面一直显示生成中，还挡住下一次继续
-            runCatching { db.messageDao().setStatus(assistantMessageId, MessageStatus.INCOMPLETE) }
+            withContext(NonCancellable) { db.messageDao().markInterrupted(assistantMessageId) }
             throw e
         }
         // 续写同样定格费用（决策 47）：一次续写是一笔独立的账
@@ -778,12 +876,12 @@ class ChatRepository(
             val parentId = db.messageDao().byId(userMessageId)?.parentId
             chainTurns(sessionId, parentId, attachments)
         } else {
-            emptyList()
+            RequestHistory(emptyList(), emptyList())
         }
         val searchProvider = if (online && session.searchEnabled) webSearchProvider() else null
         val useBuiltInSearch = searchProvider?.usesBuiltInSearch(provider.protocol, modelInfo.capabilities.webSearch) == true
 
-        val assistantId = db.messageDao().insert(
+        return withAssistantMessage(
             MessageEntity(
                 sessionId = sessionId,
                 parentId = userMessageId,
@@ -796,115 +894,128 @@ class ChatRepository(
                 providerId = provider.id,
                 effort = session.effort,
             ),
-        )
-        db.sessionDao().setCurrentMessage(sessionId, assistantId, clock())
-
-        // 离线预检：没网就别等连接超时了，立刻落失败（界面显示橘色重试圆钮）
-        if (!online) {
-            val offline = ChatException(ErrorKind.NETWORK, message = "当前无网络连接，请检查网络后重试")
-            db.messageDao().setStatus(assistantId, MessageStatus.FAILED)
-            db.messageDao().setError(assistantId, offline.kind, offline.message)
-            db.sessionDao().touch(sessionId, clock())
-            return RunOutcome(
-                messageId = assistantId,
-                status = MessageStatus.FAILED,
-                usage = null,
-                stopReason = null,
-                title = null,
-                error = offline,
-            )
-        }
-
-        val turnText = if (searchProvider != null && !useBuiltInSearch) {
-            withWebSearch(assistantId, userText, searchProvider)
-        } else {
-            userText
-        }
-
-        // 这家服务商之前拒绝过思考参数：记住后不再发（模型声明还留着，用户改协议再说）
-        val effortDisabled = provider.meta[ProviderMeta.NO_EFFORT] == "1"
-        val prompt = promptFor(session, modelInfo, expertMode)
-        val command = ChatCommand(
-            capabilities = if (effortDisabled) modelInfo.capabilities.copy(effort = false) else modelInfo.capabilities,
-            model = session.model,
-            systemPrompt = prompt.content,
-            systemMode = prompt.mode,
-            thinkingEnabled = session.thinkingEnabled,
-            effort = session.effort,
-            thinking = if (effortDisabled) ThinkingMode.NONE else modelInfo.thinking,
-            maxOutputTokens = modelInfo.maxOutputTokens,
-            searchEnabled = useBuiltInSearch,
-            // 服务端标题只有官方支持；第三方不可能有，开着也只是白填字段
-            includeTitle = session.title == null && modelInfo.capabilities.serverSideTitle,
-            messages = ContextRebuilder.build(history, reminder, attachments.flavor) +
-                ContextRebuilder.userMessage(turnText, currentAttachments, attachments.flavor),
-        )
-
-        val request = ChatProtocols.build(
-            provider = provider,
-            apiKey = key,
-            command = command,
-            extraHeaders = ChatProtocols.extraHeaders(provider, sessionId),
-        )
-
-        val outcome = runner.run(
-            assistantId,
-            request,
-            transport,
-            ChatProtocols.assembler(request.protocol),
-        )
-        val finalOutcome = retryWithoutThinking(provider, session, command, key, assistantId, outcome)
-
-        // 费用定格（决策 47）：用这一轮自己的服务商与落库时间算一次写死，之后换家、调价都不改历史账
-        costFor(provider, session.model, finalOutcome.usage, assistantInsertedAt)?.let { micros ->
-            runCatching { db.messageDao().setCost(assistantId, micros) }
-        }
-
-        // 标题：官方用服务端下发的；第三方本地取首句前 24 字（02 §5.3 的等价实现）
-        if (session.title == null) {
-            val title = finalOutcome.title ?: userText
-                .lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.isNotEmpty() }
-                ?.let(::localTitle)
-            if (title != null && finalOutcome.status == FINISHED) {
-                db.sessionDao().rename(sessionId, title, clock())
+        ) { assistantId ->
+            // 离线预检：没网就别等连接超时了，立刻落失败（界面显示橘色重试圆钮）
+            if (!online) {
+                val offline = ChatException(ErrorKind.NETWORK, message = "当前无网络连接，请检查网络后重试")
+                db.messageDao().setStatus(assistantId, MessageStatus.FAILED)
+                db.messageDao().setError(assistantId, offline.kind, offline.message)
+                db.sessionDao().touch(sessionId, clock())
+                return@withAssistantMessage RunOutcome(
+                    messageId = assistantId,
+                    status = MessageStatus.FAILED,
+                    usage = null,
+                    stopReason = null,
+                    title = null,
+                    error = offline,
+                )
             }
+
+            val turnText = if (searchProvider != null && !useBuiltInSearch) {
+                withWebSearch(assistantId, userText, searchProvider)
+            } else {
+                userText
+            }
+
+            // 这家服务商之前拒绝过思考参数：记住后不再发（模型声明还留着，用户改协议再说）
+            val effortDisabled = provider.meta[ProviderMeta.NO_EFFORT] == "1"
+            val prompt = promptFor(session, modelInfo, expertMode)
+            val command = ChatCommand(
+                capabilities = if (effortDisabled) modelInfo.capabilities.copy(effort = false) else modelInfo.capabilities,
+                model = session.model,
+                systemPrompt = prompt.content,
+                systemMode = prompt.mode,
+                thinkingEnabled = session.thinkingEnabled,
+                effort = session.effort,
+                thinking = if (effortDisabled) ThinkingMode.NONE else modelInfo.thinking,
+                maxOutputTokens = modelInfo.maxOutputTokens,
+                searchEnabled = useBuiltInSearch,
+                // 服务端标题只有官方支持；第三方不可能有，开着也只是白填字段
+                includeTitle = session.title == null && modelInfo.capabilities.serverSideTitle,
+                messages = history.summaryMessages + ContextRebuilder.build(history.turns, reminder, attachments.flavor) +
+                    ContextRebuilder.userMessage(turnText, currentAttachments, attachments.flavor),
+            )
+
+            val request = ChatProtocols.build(
+                provider = provider,
+                apiKey = key,
+                command = command,
+                extraHeaders = ChatProtocols.extraHeaders(provider, sessionId),
+            )
+
+            val outcome = runner.run(
+                assistantId,
+                request,
+                transport,
+                ChatProtocols.assembler(request.protocol),
+            )
+            val finalOutcome = retryWithoutThinking(provider, session, command, key, assistantId, outcome)
+
+            // 费用定格（决策 47）：用这一轮自己的服务商与落库时间算一次写死，之后换家、调价都不改历史账
+            costFor(provider, session.model, finalOutcome.usage, assistantInsertedAt)?.let { micros ->
+                runCatching { db.messageDao().setCost(assistantId, micros) }
+            }
+
+            // 标题：官方用服务端下发的；第三方本地取首句前 24 字（02 §5.3 的等价实现）
+            if (session.title == null) {
+                val title = finalOutcome.title ?: userText
+                    .lineSequence()
+                    .map { it.trim() }
+                    .firstOrNull { it.isNotEmpty() }
+                    ?.let(::localTitle)
+                if (title != null && finalOutcome.status == FINISHED) {
+                    db.sessionDao().rename(sessionId, title, clock())
+                }
+            }
+            db.sessionDao().touch(sessionId, clock())
+            finalOutcome
         }
-        db.sessionDao().touch(sessionId, clock())
-        return finalOutcome
+    }
+
+    private suspend fun withAssistantMessage(
+        message: MessageEntity,
+        generate: suspend (Long) -> RunOutcome,
+    ): RunOutcome {
+        currentCoroutineContext().ensureActive()
+        var assistantId: Long? = null
+        try {
+            val id = withContext(NonCancellable) {
+                db.withTransaction {
+                    val created = db.messageDao().insert(message)
+                    db.sessionDao().setCurrentMessage(message.sessionId, created, clock())
+                    created
+                }.also { assistantId = it }
+            }
+            currentCoroutineContext().ensureActive()
+            return generate(id)
+        } catch (e: Throwable) {
+            assistantId?.let { id -> withContext(NonCancellable) { db.messageDao().markInterrupted(id) } }
+            throw e
+        }
     }
 
     private suspend fun withWebSearch(assistantId: Long, userText: String, provider: WebSearchProvider): String {
         val query = userText.replace(Regex("\\s+"), " ").trim().take(400).trimEnd { it.isHighSurrogate() }
         if (query.isBlank()) return userText
 
+        var failure: String? = null
         val results = try {
-            var failure: String? = null
-            val hits = try {
-                webSearch(provider, query)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // 原因要落到载荷里：只写 FAILED 的话，界面上永远只有「联网搜索暂不可用」，
-                // 分不清是没配 Key、401、还是根本没连上。
-                failure = e.message?.takeIf { it.isNotBlank() } ?: e::class.simpleName
-                null
-            }
-            val payload = ToolSearchPayload(
-                status = if (hits == null) "FAILED" else "FINISHED",
-                queries = listOf(query),
-                results = hits.orEmpty(),
-                reason = failure?.take(120),
-            )
-            db.fragmentDao().insert(Fragment(messageId = assistantId, ord = 0, payload = payload).toEntity())
-            hits
+            webSearch(provider, query)
         } catch (e: CancellationException) {
-            withContext(NonCancellable) {
-                db.messageDao().setStatus(assistantId, MessageStatus.INCOMPLETE)
-            }
             throw e
+        } catch (e: Exception) {
+            // 原因要落到载荷里：只写 FAILED 的话，界面上永远只有「联网搜索暂不可用」，
+            // 分不清是没配 Key、401、还是根本没连上。
+            failure = e.message?.takeIf { it.isNotBlank() } ?: e::class.simpleName
+            null
         }
+        val payload = ToolSearchPayload(
+            status = if (results == null) "FAILED" else "FINISHED",
+            queries = listOf(query),
+            results = results.orEmpty(),
+            reason = failure?.take(120),
+        )
+        db.fragmentDao().insert(Fragment(messageId = assistantId, ord = 0, payload = payload).toEntity())
 
         val context = if (results.isNullOrEmpty()) {
             "No search results are available. Do not present this response as web-verified."
@@ -995,23 +1106,41 @@ class ChatRepository(
     }
 
     /** 从 leaf 往上回溯成 root → leaf 的顺序 */
-    private suspend fun chainTurns(
+    private suspend fun messageChain(
         sessionId: String,
         leafId: Long?,
-        request: RequestAttachments,
-    ): List<ContextTurn> {
-        if (leafId == null) return emptyList()
+        useLatest: Boolean = false,
+    ): List<MessageWithFragments> {
+        if (leafId == null && !useLatest) return emptyList()
         val all = db.messageDao().withFragments(sessionId).associateBy { it.message.id }
         val path = ArrayDeque<MessageWithFragments>()
-        var cursor: Long? = leafId
+        var cursor: Long? = leafId ?: all.values.lastOrNull()?.message?.id
         val guard = HashSet<Long>()
         while (cursor != null && guard.add(cursor)) {
             val node = all[cursor] ?: break
             path.addFirst(node)
             cursor = node.message.parentId
         }
+        return path.toList()
+    }
+
+    private data class RequestHistory(val summaryMessages: List<WireMessage>, val turns: List<ContextTurn>)
+
+    private suspend fun chainTurns(
+        sessionId: String,
+        leafId: Long?,
+        request: RequestAttachments,
+    ): RequestHistory {
+        val path = messageChain(sessionId, leafId)
+        val anchor = path.indexOfLast { it.message.contextSummary != null }
+        val summaryMessages = path.getOrNull(anchor)?.message?.contextSummary?.let { summary ->
+            listOf(
+                WireMessage.text(WireMessage.ROLE_USER, "Use the following conversation summary as background for my next request."),
+                WireMessage.text(WireMessage.ROLE_ASSISTANT, summary),
+            )
+        }.orEmpty()
         return withContext(Dispatchers.IO) {
-            path.reversed().map { entry ->
+            val turns = path.subList(anchor + 1, path.size).asReversed().map { entry ->
                 ContextTurn(
                     message = entry.message.toDomain(),
                     fragments = entry.orderedFragments.map { it.toDomain() },
@@ -1024,6 +1153,7 @@ class ChatRepository(
                     },
                 )
             }.asReversed()
+            RequestHistory(summaryMessages, turns)
         }
     }
 

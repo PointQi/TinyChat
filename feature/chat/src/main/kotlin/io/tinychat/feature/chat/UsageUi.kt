@@ -192,13 +192,17 @@ fun UsageDrawerContent(
             ExplainableLabel(stringResource(R.string.chat_context_used), UsageGlossary.CONTEXT, expanded) { expanded = it }
             Spacer(Modifier.width(12.dp))
             Text(
-                text = "${(percent * 100).toInt()}%",
+                text = if (contextWindow > 0) "${(percent * 100).toInt()}%" else "—",
                 style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
                 color = palette.labelPrimary,
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = "~${compactTokens(contextUsed)} / ${compactTokens(contextWindow)}",
+                text = if (contextWindow > 0) {
+                    "~${compactTokens(contextUsed)} / ${compactTokens(contextWindow)}"
+                } else {
+                    "~${compactTokens(contextUsed)}"
+                },
                 style = TextStyle(fontSize = 12.sp),
                 color = palette.labelTertiary,
             )

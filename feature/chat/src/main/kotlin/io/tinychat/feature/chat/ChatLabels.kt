@@ -41,6 +41,7 @@ internal fun localizedToolTitle(step: ToolStep): String = when (step.kind) {
 }
 
 private fun chatStatusResource(message: String): Int? = when (message) {
+    "上下文压缩失败，已保留原模型" -> R.string.chat_context_compression_failed
     "已达到单次录音时长上限" -> R.string.chat_recording_time_limit_reached
     "打不开选中的文件" -> R.string.chat_couldn_t_open_the_selected_file
     "当前模型不支持图片输入" -> R.string.chat_this_model_doesn_t_accept_images

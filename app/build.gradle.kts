@@ -22,11 +22,11 @@ android {
         applicationId = "top.tbpdt.tinychat"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 9
+        versionName = "1.0.8"
     }
 
-    androidResources.localeFilters += listOf("zh", "en", "ru", "fr", "es")
+    androidResources.localeFilters += listOf("zh", "b+zh+Hant", "ja", "en", "ru", "fr", "es")
 
     signingConfigs {
         if (hasReleaseKey) {

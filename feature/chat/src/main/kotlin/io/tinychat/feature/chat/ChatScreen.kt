@@ -378,6 +378,21 @@ fun ChatScreen(
             )
         }
 
+        if (state.isCompactingContext) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.chat_compacting_context),
+                    style = TcTypography.bodySmall,
+                    color = palette.labelSecondary,
+                )
+            }
+        }
+
         state.error?.let { message ->
             val displayMessage = localizedChatStatus(context, message)
             val action = if (state.errorKind == ErrorKind.HTTP_401) onOpenProviderSettings else null
@@ -1917,7 +1932,7 @@ private fun InputCard(
         // 图片快捷提问（官方同款）：只要有图片草稿就出一排可横滑的圆角按钮，
         // 点一下就用这句话 + 全部附件直接发出去，省掉一次输入。
         if (pendingPrompt != null ||
-            (composerDrafts.any { it.isImage } && state.editingMessageId == null && !state.isStreaming)
+            (composerDrafts.any { it.isImage } && state.editingMessageId == null && !state.isBusy)
         ) {
             Row(
                 modifier = Modifier
@@ -2004,6 +2019,7 @@ private fun InputCard(
                     effort = state.effort,
                     thinkingEnabled = state.thinkingEnabled,
                     expertMode = state.expertMode,
+                    enabled = !state.isBusy,
                     onSetThinking = onSetThinking,
                     onSetExpertMode = onSetExpertMode,
                     onSelect = onSelectModel,
@@ -2033,6 +2049,8 @@ private fun InputCard(
                 Spacer(Modifier.width(4.dp))
             }
             when {
+                state.isCompactingContext -> CircleIcon(TcIcons.Stop, stringResource(R.string.chat_stop_compacting_context), palette.brand, filled = true, onClick = onStop)
+                state.isSwitchingModel -> Unit
                 state.isStreaming -> CircleIcon(TcIcons.Stop, stringResource(R.string.chat_stop_generating), palette.brand, filled = true, onClick = onStop)
                 state.voiceMode -> when (state.voiceStatus) {
                     // 识别中：转圈，点一下取消
@@ -2107,6 +2125,7 @@ private fun ModelEffortPill(
     effort: ThinkingEffort,
     thinkingEnabled: Boolean,
     expertMode: Boolean,
+    enabled: Boolean,
     onSetThinking: (Boolean, ThinkingEffort) -> Unit,
     onSetExpertMode: (Boolean) -> Unit,
     onSelect: (String, String, ThinkingEffort) -> Unit,
@@ -2129,7 +2148,7 @@ private fun ModelEffortPill(
             .height(32.dp)
             .clip(RoundedCornerShape(100.dp))
             .background(palette.brand.copy(alpha = 0.10f))
-            .clickable { sheetOpen = true }
+            .clickable(enabled = enabled) { sheetOpen = true }
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -2147,7 +2166,7 @@ private fun ModelEffortPill(
         )
     }
 
-    if (sheetOpen) {
+    if (sheetOpen && enabled) {
         ModalBottomSheet(
             onDismissRequest = { sheetOpen = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
