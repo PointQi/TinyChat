@@ -107,7 +107,8 @@ fun TinyChatApp() {
     val versionName = remember {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
     }
-    val container = remember { AppContainer(context.applicationContext) }
+    val application = context.applicationContext as TinyChatApplication
+    val container = application.container
     // 服务商目录与凭据（M8-6）：设置页、服务商页、模型选择器都读它
     val providers by container.providers.collectAsState()
     val keyedProviders by container.keyedProviders.collectAsState()
@@ -128,6 +129,7 @@ fun TinyChatApp() {
         } ?: stringResource(R.string.prefs_home_provider_count, keyedProviders.size)
     }
     val chatViewModel: ChatViewModel = viewModel(
+        viewModelStoreOwner = application,
         factory = ChatViewModel.factory(
             repository = container.repository,
             apiKey = container.apiKey,
@@ -142,6 +144,7 @@ fun TinyChatApp() {
             providerKeyFor = { id -> container.apiKeyFor(id) },
             webSearchProvider = container.webSearchProvider,
             webSearchCredentials = container.webSearchCredentials,
+            keepGenerationAlive = application.generation::keepAlive,
         ),
     )
 

@@ -6,6 +6,7 @@ import io.tinychat.net.SseEvent
 import io.tinychat.net.SseReader
 import io.tinychat.net.protocol.PreparedRequest
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import okhttp3.Call
@@ -109,8 +110,7 @@ class OkHttpChatTransport(
 
                     try {
                         for (event in SseReader.read(source)) {
-                            if (isClosedForSend) break
-                            trySend(event)
+                            if (trySendBlocking(event).isFailure) break
                         }
                         close()
                     } catch (e: IOException) {

@@ -13,6 +13,7 @@ import io.tinychat.data.provider.ProviderStore
 import io.tinychat.data.settings.KeystoreSecretStore
 import io.tinychat.data.settings.UserSettings
 import io.tinychat.feature.chat.voice.VoiceController
+import io.tinychat.model.DiscoveredModel
 import io.tinychat.model.Provider
 import io.tinychat.model.ProviderCheck
 import io.tinychat.model.ProviderKind
@@ -301,11 +302,11 @@ class AppContainer(context: Context) {
         return message
     }
 
-    /** 拉模型目录：返回 id 列表；失败抛异常，由页面翻成一行人话。 */
-    suspend fun fetchModels(provider: Provider, candidateKey: String? = null): List<String> {
+    /** 拉模型目录和服务端公布的限制。 */
+    suspend fun fetchModels(provider: Provider, candidateKey: String? = null): List<DiscoveredModel> {
         val key = candidateKey?.trim()?.takeIf { it.isNotEmpty() } ?: apiKeyFor(provider.id)
             ?: throw IllegalStateException("请先填写 API Key")
-        return account.modelIds(provider, key)
+        return account.models(provider, key)
     }
 
     /** 订阅额度（M8-6）：只有 OpenCode Go 有；失败返回 null，UI 隐藏整块。 */

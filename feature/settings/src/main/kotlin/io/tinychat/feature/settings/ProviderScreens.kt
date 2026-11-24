@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
 import io.tinychat.designsystem.TcTypography
+import io.tinychat.model.DiscoveredModel
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.ModelInfo
 import io.tinychat.model.Provider
@@ -59,6 +60,7 @@ import io.tinychat.model.ProviderKind
 import io.tinychat.model.ProviderNaming
 import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingMode
+import io.tinychat.model.mergeDiscoveredModels
 import io.tinychat.ui.TcAlertDialog
 import io.tinychat.ui.TcButton
 import io.tinychat.ui.TcIconButton
@@ -233,7 +235,7 @@ fun ProviderEditorScreen(
     onSave: suspend (Provider, String?) -> Unit,
     onCheck: suspend (Provider, String?) -> String?,
     onClearKey: suspend (String) -> Unit,
-    onFetchModels: suspend (Provider, String?) -> List<String>,
+    onFetchModels: suspend (Provider, String?) -> List<DiscoveredModel>,
 ) {
     val palette = TcTheme.palette
     val context = LocalContext.current
@@ -559,30 +561,11 @@ fun ProviderEditorScreen(
                             fetching = true
                             error = null
                             runCatching { onFetchModels(candidate, key.trim().takeIf { it.isNotEmpty() }) }
-                                .onSuccess { ids ->
-                                    if (ids.isEmpty()) {
+                                .onSuccess { discovered ->
+                                    if (discovered.isEmpty()) {
                                         error = context.getString(R.string.prefs_detail_provider_no_models)
                                     } else {
-                                        val fetched = ids.map { modelId ->
-                                            currentModels.firstOrNull { it.id == modelId } ?: ModelInfo(
-                                                id = modelId,
-                                                displayName = modelId,
-                                                contextWindow = 128_000,
-                                                maxOutputTokens = 8_192,
-                                                capabilities = io.tinychat.model.Capabilities(
-                                                    thinking = false,
-                                                    reasoning = false,
-                                                ),
-                                            )
-                                        }
-                                        if (kindOf == ProviderKind.OPENAI_COMPATIBLE) {
-                                            // 自定义服务商：拉到的追加到现有目录，不删用户手填的
-                                            val existingIds = currentModels.map { it.id }.toSet()
-                                            models = models + fetched.filter { it.id !in existingIds }
-                                        } else {
-                                            // 目录服务商：模型以服务端为准，拉取即替换
-                                            models = fetched
-                                        }
+                                        models = candidate.mergeDiscoveredModels(discovered)
                                     }
                                 }
                                 .onFailure {

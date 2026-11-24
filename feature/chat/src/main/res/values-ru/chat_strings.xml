@@ -178,4 +178,7 @@
     <string name="chat_web_search_is_unavailable">Поиск в интернете недоступен</string>
     <string name="chat_web_search_unavailable">Поиск в интернете недоступен (%s)</string>
     <string name="chat_week">Эта неделя</string>
+    <string name="chat_compacting_context">Сжатие контекста…</string>
+    <string name="chat_context_compression_failed">Не удалось сжать контекст. По-прежнему выбрана прежняя модель.</string>
+    <string name="chat_stop_compacting_context">Остановить сжатие контекста</string>
 </resources>

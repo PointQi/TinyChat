@@ -14,6 +14,7 @@ import io.tinychat.data.attachment.InlineDocumentType
 import io.tinychat.data.attachment.PickedFile
 import io.tinychat.data.chat.ChatRepository
 import io.tinychat.data.chat.RunOutcome
+import io.tinychat.data.chat.estimateContextUsed
 import io.tinychat.data.db.FragmentEntity
 import io.tinychat.data.db.MessageWithFragments
 import io.tinychat.data.settings.ChatDefaults
@@ -55,6 +56,8 @@ import io.tinychat.model.versionPointer
 import io.tinychat.net.speech.SpeechException
 import io.tinychat.net.transport.ChatException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -215,7 +218,7 @@ data class ChatMessage(
  */
 private const val CONTEXT_BLOCK_RATIO = 0.95f
 
-/** 上下文占比：分母是模型的窗口，拿不到窗口时按 1M 算 */
+/** 上下文占比：窗口未知时不启用本地上限判断。 */
 internal fun contextRatio(used: Int, window: Int): Float =
     if (window <= 0) 0f else (used.toFloat() / window).coerceIn(0f, 1f)
 
@@ -230,6 +233,9 @@ data class ChatUiState(
     val attachments: List<DraftAttachment> = emptyList(),
     val imagePromptSend: ImagePromptSend? = null,
     val isStreaming: Boolean = false,
+    val isSwitchingModel: Boolean = false,
+    val isCompactingContext: Boolean = false,
+    val contextUsed: Int = 0,
     /** 是否已配置 Key（M7-6：Key 改成运行时可变，UI 要跟着重算） */
     val hasApiKey: Boolean = false,
     val error: String? = null,
@@ -303,13 +309,11 @@ data class ChatUiState(
     val canAttachImage: Boolean
         get() = currentModel?.capabilities?.imageInput == true
 
-    /** 圆环分子：当前分支最后一条带 usage 的回答（决策 26，不做预估） */
-    val contextUsed: Int
-        get() = messages.lastOrNull { it.usage != null }?.usage?.contextUsed ?: 0
-
     /** 圆环分母 */
     val contextWindow: Int
-        get() = currentModel?.contextWindow ?: 1_000_000
+        get() = currentModel?.contextWindow ?: 0
+
+    val isBusy: Boolean get() = isStreaming || isSwitchingModel
 
     val contextPercent: Float
         get() = contextRatio(contextUsed, contextWindow)
@@ -383,6 +387,7 @@ class ChatViewModel(
     private val providerKeyFor: suspend (String) -> String? = { null },
     private val webSearchProvider: StateFlow<WebSearchProvider> = MutableStateFlow(WebSearchProvider.DEEPSEEK),
     private val webSearchCredentials: StateFlow<WebSearchCredentials> = MutableStateFlow(WebSearchCredentials()),
+    private val keepGenerationAlive: (Job) -> Unit = {},
 ) : ViewModel() {
 
     var state by mutableStateOf(ChatUiState())
@@ -396,6 +401,25 @@ class ChatViewModel(
         private set
 
     private var job: Job? = null
+
+    private fun launchChatOperation(block: suspend CoroutineScope.() -> Unit) {
+        val operation = viewModelScope.launch(start = CoroutineStart.LAZY, block = block)
+        job = operation
+        keepGenerationAlive(operation)
+        operation.invokeOnCompletion {
+            viewModelScope.launch {
+                if (job !== operation) return@launch
+                job = null
+                state = state.copy(
+                    isStreaming = false,
+                    isSwitchingModel = false,
+                    isCompactingContext = false,
+                    imagePromptSend = state.imagePromptSend?.takeIf { it.messageId != null },
+                )
+            }
+        }
+        operation.start()
+    }
     private var observing: Job? = null
     private var searchJob: Job? = null
     private var speakingJob: Job? = null
@@ -533,7 +557,7 @@ class ChatViewModel(
     /** 抽屉里点一条会话 */
     fun openSession(id: String) {
         if (id == sessionId) return
-        job?.cancel()
+        cancelChatOperation()
         observing?.cancel()
         stopSpeaking()
         autoSpeakPending = false
@@ -542,6 +566,9 @@ class ChatViewModel(
             messages = emptyList(),
             imagePromptSend = null,
             isStreaming = false,
+            isSwitchingModel = false,
+            isCompactingContext = false,
+            contextUsed = 0,
             hasApiKey = false,
             error = null,
             editingMessageId = null,
@@ -734,11 +761,11 @@ class ChatViewModel(
     /** 附件上传失败后点「重试」：重传这一轮的附件再重新请求，不新建提问 */
     fun retryAttachment(message: ChatMessage) {
         val id = sessionId ?: return
-        if (state.isStreaming) return
+        if (state.isBusy) return
         val defaults = rememberChatDefaults()
         val expertMode = state.expertMode
         state = state.copy(isStreaming = true, error = null, errorKind = null)
-        job = viewModelScope.launch {
+        launchChatOperation {
             try {
                 persistChatSettings(id, defaults)
                 state = state.withOutcomeError(repository.retryTurn(id, message.id, expertMode))
@@ -748,8 +775,6 @@ class ChatViewModel(
                 state = state.withRequestError(e)
             } catch (e: Exception) {
                 state = state.copy(error = "文件上传失败，请重试", errorKind = null)
-            } finally {
-                state = state.copy(isStreaming = false)
             }
         }
     }
@@ -762,7 +787,7 @@ class ChatViewModel(
     fun quickSend(text: String) = sendPreset(text, imagePrompt = true)
 
     private fun sendPreset(text: String, imagePrompt: Boolean = false) {
-        if (state.isStreaming) return
+        if (state.isBusy) return
         if (text.isBlank()) return
         state = state.copy(input = text)
         send(imagePrompt)
@@ -780,7 +805,7 @@ class ChatViewModel(
         val text = state.input.trim()
         val drafts = state.attachments
         // 只有附件没有文字也能发（真实 App 就是这样）
-        if ((text.isEmpty() && drafts.isEmpty()) || state.isStreaming) return
+        if ((text.isEmpty() && drafts.isEmpty()) || state.isBusy) return
         if (state.providerMissing) {
             state = state.copy(error = "当前会话使用的服务商已被移除，请新建会话", errorKind = null)
             return
@@ -832,7 +857,7 @@ class ChatViewModel(
             errorKind = null,
             editingMessageId = null,
         )
-        job = viewModelScope.launch {
+        launchChatOperation {
             try {
                 persistChatSettings(previousSessionId, sendingDefaults)
                 val id = previousSessionId ?: repository.createSession(
@@ -879,18 +904,13 @@ class ChatViewModel(
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
-            } finally {
-                state = state.copy(
-                    isStreaming = false,
-                    imagePromptSend = state.imagePromptSend?.takeUnless { it === pendingImagePrompt },
-                )
             }
         }
     }
 
     /** 点一下用户消息：进入编辑重发 */
     fun startEdit(message: ChatMessage) {
-        if (message.isUser.not() || state.isStreaming) return
+        if (!message.isUser || state.isBusy) return
         // 编辑重发只改文字；手上的草稿先清掉，免得用户以为会被一起发出去
         state.attachments.forEach { runCatching { attachmentStore.delete(it.id, null) } }
         state = state.copy(editingMessageId = message.id, input = message.text, attachments = emptyList())
@@ -903,21 +923,21 @@ class ChatViewModel(
     /** 切换版本（M1-8）：只在有兄弟分支时有效；指针换到那条分支的叶子上 */
     fun switchVersion(messageId: Long, delta: Int) {
         val id = sessionId ?: return
-        if (state.isStreaming) return
+        if (state.isBusy) return
         viewModelScope.launch { repository.switchVersion(id, messageId, delta) }
     }
 
     /** 重新生成（M1-8）：在当前这条回答下再生成一版，旧版留着可切回 */
     fun regenerate(message: ChatMessage) {
         val id = sessionId ?: return
-        if (state.isStreaming || message.isUser) return
+        if (state.isBusy || message.isUser) return
 
         val defaults = rememberChatDefaults()
         val expertMode = state.expertMode
         stopSpeaking()
         autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null)
-        job = viewModelScope.launch {
+        launchChatOperation {
             try {
                 persistChatSettings(id, defaults)
                 state = state.withOutcomeError(repository.regenerate(id, message.id, expertMode))
@@ -928,8 +948,6 @@ class ChatViewModel(
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
-            } finally {
-                state = state.copy(isStreaming = false)
             }
         }
     }
@@ -937,14 +955,14 @@ class ChatViewModel(
     /** 继续生成（M1-9）：把停住的回答接着写下去，内容原地追加 */
     fun continueGeneration(message: ChatMessage) {
         val id = sessionId ?: return
-        if (state.isStreaming || message.isUser || !message.canContinue) return
+        if (state.isBusy || message.isUser || !message.canContinue) return
 
         val defaults = rememberChatDefaults()
         val expertMode = state.expertMode
         stopSpeaking()
         autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null)
-        job = viewModelScope.launch {
+        launchChatOperation {
             try {
                 persistChatSettings(id, defaults)
                 state = state.withOutcomeError(repository.continueGeneration(id, message.id, expertMode))
@@ -955,15 +973,18 @@ class ChatViewModel(
             } catch (e: Exception) {
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
-            } finally {
-                state = state.copy(isStreaming = false)
             }
         }
     }
 
     fun stop() {
         job?.cancel()
-        state = state.copy(isStreaming = false)
+    }
+
+    private fun cancelChatOperation() {
+        val operation = job
+        job = null
+        operation?.cancel()
     }
 
     /** M6-6：清空所有对话（含附件原件与缩略图），回到新对话 */
@@ -976,7 +997,7 @@ class ChatViewModel(
     }
 
     fun newChat() {
-        job?.cancel()
+        cancelChatOperation()
         observing?.cancel()
         stopSpeaking()
         autoSpeakPending = false
@@ -1004,6 +1025,7 @@ class ChatViewModel(
     }
 
     fun setThinking(enabled: Boolean, effort: ThinkingEffort) {
+        if (state.isSwitchingModel) return
         state = state.copy(thinkingEnabled = enabled, effort = effort)
         persistStandalone()
     }
@@ -1013,6 +1035,7 @@ class ChatViewModel(
     }
 
     fun toggleSearch() {
+        if (state.isSwitchingModel) return
         if (!state.searchEnabled && !state.supportsSearch) {
             state = state.copy(hint = "请在设置的「联网搜索」中配置可用的搜索服务")
             return
@@ -1029,6 +1052,52 @@ class ChatViewModel(
      * 支持的历史附件会按新协议重建，切换时提示附件也会随对话发送。
      */
     fun selectModel(providerId: String, modelId: String, effort: ThinkingEffort) {
+        if (state.isBusy) return
+        val id = sessionId
+        val sourceProviderId = state.providerId
+        val sourceModelId = state.modelId
+        if (id == null || (sourceProviderId == providerId && sourceModelId == modelId)) {
+            applyModelSelection(providerId, modelId, effort)
+            persistStandalone()
+            return
+        }
+
+        val thinkingEnabled = state.thinkingEnabled
+        val searchEnabled = state.searchEnabled
+        state = state.copy(isSwitchingModel = true, error = null, errorKind = null)
+        launchChatOperation {
+            try {
+                chatSettingsMutex.withLock {
+                    val estimate = repository.switchModel(
+                        sessionId = id,
+                        sourceProviderId = sourceProviderId,
+                        sourceModelId = sourceModelId,
+                        targetProviderId = providerId,
+                        targetModelId = modelId,
+                        effort = effort,
+                        thinkingEnabled = thinkingEnabled,
+                        searchEnabled = searchEnabled,
+                        onCompressing = { state = state.copy(isCompactingContext = true) },
+                    )
+                    if (sessionId != id) return@withLock
+                    applyModelSelection(providerId, modelId, effort)
+                    if (estimate != null) state = state.copy(contextUsed = estimate)
+                    val defaults = rememberChatDefaults()
+                    try {
+                        settings.setChatDefaults(defaults)
+                    } catch (e: java.io.IOException) {
+                        android.util.Log.w("TinyChat", "Could not persist the last model selection", e)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (sessionId == id) state = state.copy(error = "上下文压缩失败，已保留原模型")
+            }
+        }
+    }
+
+    private fun applyModelSelection(providerId: String, modelId: String, effort: ThinkingEffort) {
         val switchingProvider = providerId != state.providerId
         val lostAttachments = switchingProvider && state.messages.any { it.attachments.isNotEmpty() }
         val providerName = state.providers.firstOrNull { it.id == providerId }?.displayName
@@ -1043,7 +1112,6 @@ class ChatViewModel(
                 state.hint
             },
         )
-        persistStandalone()
     }
 
     /**
@@ -1069,14 +1137,14 @@ class ChatViewModel(
     fun retryFailed(message: ChatMessage) {
         val targetId = message.retryTargetId ?: return
         val id = sessionId ?: return
-        if (state.isStreaming) return
+        if (state.isBusy) return
 
         val defaults = rememberChatDefaults()
         val expertMode = state.expertMode
         stopSpeaking()
         autoSpeakPending = state.autoSpeak
         state = state.copy(isStreaming = true, error = null, errorKind = null)
-        job = viewModelScope.launch {
+        launchChatOperation {
             try {
                 persistChatSettings(id, defaults)
                 state = state.withOutcomeError(repository.regenerate(id, targetId, expertMode))
@@ -1086,8 +1154,6 @@ class ChatViewModel(
                 state = state.withRequestError(e)
             } catch (e: Exception) {
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
-            } finally {
-                state = state.copy(isStreaming = false)
             }
         }
     }
@@ -1158,7 +1224,7 @@ class ChatViewModel(
      * 官方交互：进入语音模式后输入框整块变成居中的「按住说话」，**不弹输入法**。
      */
     fun toggleVoiceMode() {
-        if (state.isStreaming) return
+        if (state.isBusy) return
         if (state.voiceMode) {
             exitVoiceMode()
         } else {
@@ -1178,7 +1244,7 @@ class ChatViewModel(
 
     /** 按下「按住说话」。 */
     fun startVoiceRecording() {
-        if (!state.voiceMode || state.voiceStatus != VoiceStatus.IDLE || state.isStreaming) return
+        if (!state.voiceMode || state.voiceStatus != VoiceStatus.IDLE || state.isBusy) return
         try {
             voice.startRecording()
         } catch (error: SecurityException) {
@@ -1441,6 +1507,7 @@ class ChatViewModel(
                             retryHint = failed?.message?.let { it.errorKind?.retryHint(it.errorMessage) },
                         )
                     }
+                    val contextUsed = withContext(Dispatchers.Default) { estimateContextUsed(chain) }
                     val prompt = state.imagePromptSend
                     val sentPrompt = if (prompt != null && prompt.messageId == null) {
                         // While sending, only the new user turn can follow the previous leaf.
@@ -1455,6 +1522,7 @@ class ChatViewModel(
                     }
                     state = state.copy(
                         messages = messages,
+                        contextUsed = contextUsed,
                         imagePromptSend = sentPrompt,
                         title = session?.title,
                     )
@@ -1714,6 +1782,7 @@ private fun StringBuilder.trimmedEnd(): Int {
             providerKeyFor: suspend (String) -> String? = { null },
             webSearchProvider: StateFlow<WebSearchProvider> = MutableStateFlow(WebSearchProvider.DEEPSEEK),
             webSearchCredentials: StateFlow<WebSearchCredentials> = MutableStateFlow(WebSearchCredentials()),
+            keepGenerationAlive: (Job) -> Unit = {},
         ) = viewModelFactory {
             initializer {
                 ChatViewModel(
@@ -1730,6 +1799,7 @@ private fun StringBuilder.trimmedEnd(): Int {
                     providerKeyFor = providerKeyFor,
                     webSearchProvider = webSearchProvider,
                     webSearchCredentials = webSearchCredentials,
+                    keepGenerationAlive = keepGenerationAlive,
                 )
             }
         }

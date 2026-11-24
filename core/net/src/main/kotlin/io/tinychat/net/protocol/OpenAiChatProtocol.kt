@@ -12,6 +12,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * OpenAI Chat Completions 协议（M8-1 / 决策 53 起带图片）。
@@ -90,6 +91,14 @@ object OpenAiChatProtocol {
             put("model", command.model)
             put("messages", messages)
             put("stream", true)
+            if (command.enforceOutputLimit && command.maxOutputTokens > 0) {
+                val outputField = if (baseUrl.toHttpUrlOrNull()?.host == "api.openai.com") {
+                    "max_completion_tokens"
+                } else {
+                    "max_tokens"
+                }
+                put(outputField, command.maxOutputTokens)
+            }
             if (includeUsage) {
                 put(
                     "stream_options",

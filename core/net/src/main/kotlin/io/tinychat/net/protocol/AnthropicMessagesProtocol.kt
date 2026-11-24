@@ -45,8 +45,8 @@ object AnthropicMessagesProtocol {
         require(command.model.isNotBlank()) { "model 不能为空" }
         require(command.messages.isNotEmpty()) { "messages 不能为空" }
 
-        val budget = resolveBudget(command)
-        val maxTokens = resolveMaxTokens(command, budget)
+        val maxTokens = command.maxOutputTokens.takeIf { it > 0 } ?: 8_192
+        val budget = resolveBudget(command, maxTokens)
         val request = MessagesRequest(
             model = command.model,
             system = resolveSystem(command),
@@ -138,25 +138,20 @@ object AnthropicMessagesProtocol {
 
     /**
      * 思考预算：只有模型声明了「thinking 预算」且这一轮开着思考才发。
-     * 三档映射 1024 / 4096 / 8192，并且始终给 `max_tokens` 留出 512 的余量
-     * （Anthropic 要求 `budget_tokens < max_tokens`）。
+     * 三档映射 1024 / 4096 / 8192，并为答案留出 512 token。
+     * 如果输出上限容不下最小思考预算，就省略思考配置。
      */
-    private fun resolveBudget(command: ChatCommand): Int? {
+    private fun resolveBudget(command: ChatCommand, maxTokens: Int): Int? {
         if (!command.capabilities.effort || !command.thinkingEnabled) return null
         if (command.thinking != ThinkingMode.BUDGET) return null
+        val ceiling = maxTokens - 512
+        if (ceiling < 1_024) return null
         val desired = when (command.effort) {
             ThinkingEffort.LOW -> 1_024
             ThinkingEffort.HIGH -> 4_096
             ThinkingEffort.MAX -> 8_192
             null -> 4_096
         }
-        val ceiling = (command.maxOutputTokens - 512).coerceAtLeast(1_024)
         return desired.coerceAtMost(ceiling)
-    }
-
-    /** Anthropic 的 `max_tokens` 必填；至少比预算大 512。 */
-    private fun resolveMaxTokens(command: ChatCommand, budget: Int?): Int {
-        val base = command.maxOutputTokens.coerceAtLeast(1_024)
-        return if (budget == null) base else maxOf(base, budget + 512)
     }
 }

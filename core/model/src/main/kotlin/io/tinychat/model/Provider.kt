@@ -91,6 +91,35 @@ data class ModelInfo(
     val thinking: ThinkingMode = ThinkingMode.NONE,
 )
 
+/** Limits advertised by a provider. A missing field leaves the locally known limit untouched. */
+data class DiscoveredModel(
+    val id: String,
+    val contextWindow: Int? = null,
+    val maxOutputTokens: Int? = null,
+)
+
+fun Provider.mergeDiscoveredModels(discovered: List<DiscoveredModel>): List<ModelInfo> {
+    val existing = models.associateBy(ModelInfo::id)
+    val remote = discovered.associateBy(DiscoveredModel::id)
+    fun update(result: DiscoveredModel): ModelInfo {
+        val saved = existing[result.id] ?: ModelInfo(
+            id = result.id,
+            displayName = result.id,
+            contextWindow = 0,
+            maxOutputTokens = 0,
+            capabilities = Capabilities(thinking = false, reasoning = false),
+        )
+        return saved.copy(
+            contextWindow = result.contextWindow ?: saved.contextWindow,
+            maxOutputTokens = result.maxOutputTokens ?: saved.maxOutputTokens,
+        )
+    }
+
+    if (kind != ProviderKind.OPENAI_COMPATIBLE) return remote.values.map(::update)
+    return models.map { model -> remote[model.id]?.let(::update) ?: model } +
+        remote.values.filter { it.id !in existing }.map(::update)
+}
+
 data class Provider(
     val id: String,
     val kind: ProviderKind,

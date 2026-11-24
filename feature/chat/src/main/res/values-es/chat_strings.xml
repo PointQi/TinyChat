@@ -178,4 +178,7 @@
     <string name="chat_web_search_is_unavailable">La búsqueda web no está disponible</string>
     <string name="chat_web_search_unavailable">Búsqueda web no disponible (%s)</string>
     <string name="chat_week">Esta semana</string>
+    <string name="chat_compacting_context">Comprimiendo el contexto…</string>
+    <string name="chat_context_compression_failed">No se pudo comprimir el contexto. Sigue seleccionado el modelo anterior.</string>
+    <string name="chat_stop_compacting_context">Detener la compresión del contexto</string>
 </resources>

@@ -15,8 +15,10 @@ import io.tinychat.net.transport.ChatException
 import io.tinychat.net.transport.ChatTransport
 import io.tinychat.net.protocol.PreparedRequest
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 
 /** 一次流式生成的结果。 */
 data class RunOutcome(
@@ -55,19 +57,25 @@ class ChatStreamRunner(
     ): RunOutcome {
         // 继续生成（M1-9）会复用一条已有消息：新碎片的 ord 必须接在已有碎片后面，
         // 否则撞上 fragments(message_id, ord) 的唯一索引。
-        val ordBase = fragmentDao.nextOrd(assistantMessageId)
+        var ordBase: Int? = null
         val rowIds = HashMap<Int, Long>()
         val written = HashMap<Int, String>()
         var lastFlush = 0L
 
-        suspend fun flush() {
+        suspend fun flush(recovering: Boolean = false) {
+            val base = ordBase ?: return
             val fragments = assembler.fragments()
             for (fragment in fragments) {
                 val json = FragmentPayloadCodec.encode(fragment.payload)
                 if (written[fragment.ord] == json) continue
-                val rowId = rowIds[fragment.ord]
+                // A cancelled insert can commit after Room declines to deliver the returned id.
+                val rowId = rowIds[fragment.ord] ?: if (recovering) {
+                    fragmentDao.idAt(assistantMessageId, base + fragment.ord)
+                } else {
+                    null
+                }
                 if (rowId == null) {
-                    rowIds[fragment.ord] = fragmentDao.insert(fragment.forMessage(assistantMessageId, ordBase).toEntity())
+                    rowIds[fragment.ord] = fragmentDao.insert(fragment.forMessage(assistantMessageId, base).toEntity())
                 } else {
                     fragmentDao.updateTypeAndPayload(rowId, fragment.payload.typeWire, json)
                 }
@@ -81,15 +89,20 @@ class ChatStreamRunner(
         }
 
         try {
+            ordBase = fragmentDao.nextOrd(assistantMessageId)
             streamWithRetry(request, transport, assembler) { flushIfDue() }
             assembler.finishUnpairedTools()
-            flush()
-            return finalize(assistantMessageId, assembler)
+            return withContext(NonCancellable) {
+                flush()
+                finalize(assistantMessageId, assembler)
+            }
         } catch (e: ChatException) {
-            runCatching { flush() }
-            messageDao.setStatus(assistantMessageId, MessageStatus.FAILED)
-            // 失败原因必须落库：界面上「断网重试圆钮」靠 error_kind 判断
-            runCatching { messageDao.setError(assistantMessageId, e.kind, e.message) }
+            withContext(NonCancellable) {
+                runCatching { flush(recovering = true) }
+                messageDao.setStatus(assistantMessageId, MessageStatus.FAILED)
+                // 失败原因必须落库：界面上「断网重试圆钮」靠 error_kind 判断
+                runCatching { messageDao.setError(assistantMessageId, e.kind, e.message) }
+            }
             return RunOutcome(
                 messageId = assistantMessageId,
                 status = MessageStatus.FAILED,
@@ -100,8 +113,10 @@ class ChatStreamRunner(
             )
         } catch (e: CancellationException) {
             // 用户点了停止：已生成的内容必须保留
-            runCatching { flush() }
-            messageDao.setStatus(assistantMessageId, MessageStatus.INCOMPLETE)
+            withContext(NonCancellable) {
+                runCatching { flush(recovering = true) }
+                messageDao.markInterrupted(assistantMessageId)
+            }
             throw e
         }
     }

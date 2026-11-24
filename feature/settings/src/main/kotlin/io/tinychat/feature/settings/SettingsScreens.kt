@@ -357,7 +357,15 @@ private val TtsVoice.displayLabel: Int
 
 // 外观 / 字号（M8-4）。取值直接就是落库的字符串/浮点，不做第二套枚举，
 // 免得设置页、DataStore、聊天请求三处各有一份映射。
-private val LANGUAGES = listOf("zh-CN" to "简体中文", "en" to "English", "ru" to "Русский", "fr" to "Français", "es" to "Español")
+private val LANGUAGES = listOf(
+    "zh-CN" to "简体中文",
+    "zh-Hant" to "繁體中文",
+    "ja" to "日本語",
+    "en" to "English",
+    "ru" to "Русский",
+    "fr" to "Français",
+    "es" to "Español",
+)
 private val THEME_OPTIONS = listOf("system" to R.string.prefs_home_system, "light" to R.string.prefs_home_light, "dark" to R.string.prefs_home_dark)
 private val FONT_OPTIONS = listOf(0.9f to R.string.prefs_home_small, 1f to R.string.prefs_home_regular, 1.15f to R.string.prefs_home_large, 1.3f to R.string.prefs_home_extra_large)
 

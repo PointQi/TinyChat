@@ -3,6 +3,8 @@ package io.tinychat.net.transport
 import io.tinychat.model.ErrorKind
 import io.tinychat.model.ProviderKind
 import io.tinychat.net.protocol.PreparedRequest
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType
@@ -20,6 +22,24 @@ import org.junit.Test
 import java.net.SocketTimeoutException
 
 class ChatTransportTest {
+    @Test
+    fun `rapid frames and the final marker survive a slow collector`() = runBlocking {
+        val expected = (1..180).map(Int::toString) + "[DONE]"
+        val wire = expected.joinToString("") { "data: $it\n\n" }
+        val transport = OkHttpChatTransport(OkHttpChatTransport.defaultClient().newBuilder().addInterceptor { chain ->
+            Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(wire.toResponseBody())
+                .build()
+        }.build())
+
+        val frames = transport.stream(request(null)).onEach { delay(1) }.toList()
+        assertEquals(expected, frames.map { it.data })
+    }
+
     @Test
     fun `only OpenCode requests get more read time to receive the first response`() = runBlocking {
         val transport = OkHttpChatTransport(OkHttpChatTransport.defaultClient().newBuilder().addInterceptor { chain ->

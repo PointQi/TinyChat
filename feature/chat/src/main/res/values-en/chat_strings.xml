@@ -178,4 +178,7 @@
     <string name="chat_web_search_is_unavailable">Web search is unavailable</string>
     <string name="chat_web_search_unavailable">Web search unavailable (%s)</string>
     <string name="chat_week">This week</string>
+    <string name="chat_compacting_context">Compressing context…</string>
+    <string name="chat_context_compression_failed">Couldn’t compress the context. The previous model is still selected.</string>
+    <string name="chat_stop_compacting_context">Stop compressing context</string>
 </resources>
