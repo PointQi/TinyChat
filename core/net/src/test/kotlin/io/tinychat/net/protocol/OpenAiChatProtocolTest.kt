@@ -196,7 +196,7 @@ class OpenAiChatProtocolTest {
         assertTrue(marker.length <= 64)
         assertEquals(marker, ChatProtocols.extraHeaders(provider, "session-1")["x-opencode-session"])
         assertTrue(prepared.headers["User-Agent"]!!.startsWith("TinyChat/"))
-        assertEquals(ProviderKind.OPENCODE_GO, provider.kind)
+        assertEquals(ProviderKind.OPENCODE_GO, prepared.providerKind)
     }
 
     @Test

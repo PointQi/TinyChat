@@ -29,7 +29,7 @@ data class WebSearchCredentials(
     val canReuseDeepSeekKey: Boolean = false,
 ) {
     fun hasKey(provider: WebSearchProvider): Boolean = when {
-        !provider.needsOwnKey -> true
+        provider == WebSearchProvider.ANYSEARCH -> true
         provider in savedKeys -> true
         provider == WebSearchProvider.DEEPSEEK && canReuseDeepSeekKey -> true
         else -> false

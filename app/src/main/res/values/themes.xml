@@ -11,10 +11,7 @@
         <item name="android:windowLightStatusBar">true</item>
     </style>
 
-    <!--
-      M8-7 启动体验：只设背景色 + 应用图标，**不加动画、不加 setKeepOnScreenCondition**。
-      Android 12+ 的系统 SplashScreen 无法移除，能做的是让它最短、最不突兀（02 §11.1）。
-    -->
+    <!-- 系统开屏只提供背景和图标，首页测量完成后由 MainActivity 接手退出动画。 -->
     <style name="Theme.TinyChat.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/tc_window_bg</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>

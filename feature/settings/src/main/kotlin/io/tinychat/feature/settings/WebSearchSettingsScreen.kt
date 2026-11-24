@@ -25,7 +25,6 @@ import io.tinychat.model.WebSearchProvider
 import io.tinychat.ui.TcButton
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcListRow
-import io.tinychat.ui.TcSectionLabel
 import io.tinychat.ui.TcTopBar
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -53,16 +52,9 @@ fun WebSearchSettingsScreen(
     Column(Modifier.fillMaxSize().background(palette.bg)) {
         TcTopBar(title = "联网搜索", leading = { TcIconButton(TcIcons.Back, "返回", onBack) })
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            TcSectionLabel("搜索服务")
             for (option in WebSearchProvider.entries) {
-                val description = when (option) {
-                    WebSearchProvider.DEEPSEEK -> "可复用官方 DeepSeek 密钥，支持第三方聊天模型"
-                    WebSearchProvider.TAVILY -> "使用独立密钥，支持第三方聊天模型"
-                    WebSearchProvider.ANYSEARCH -> "公开接口免密钥即可使用，支持第三方聊天模型"
-                }
                 TcListRow(
                     title = option.label,
-                    subtitle = description,
                     trailing = if (picked == option) {
                         { Icon(TcIcons.Check, "已选择", tint = palette.brand) }
                     } else {
@@ -77,10 +69,10 @@ fun WebSearchSettingsScreen(
                     value = key,
                     enabled = !saving,
                     placeholder = when {
-                        keySaved && !clearKey -> "留空使用已保存的密钥"
-                        picked == WebSearchProvider.DEEPSEEK && credentials.canReuseDeepSeekKey -> "留空复用官方 DeepSeek 密钥"
-                        !picked.needsOwnKey -> "可留空（公开接口免密钥）"
-                        else -> "输入 ${picked.label} API Key"
+                        keySaved && !clearKey -> "已保存"
+                        picked == WebSearchProvider.DEEPSEEK && credentials.canReuseDeepSeekKey -> "复用官方密钥"
+                        picked == WebSearchProvider.ANYSEARCH -> "可选"
+                        else -> ""
                     },
                     onValueChange = { input ->
                         val trimmed = input.trim()
@@ -98,7 +90,7 @@ fun WebSearchSettingsScreen(
                 )
                 if (keySaved && key.isBlank()) {
                     Text(
-                        text = if (clearKey) "撤销清除" else "清除已保存的密钥",
+                        text = if (clearKey) "撤销清除" else "清除密钥",
                         style = TcTypography.labelMedium,
                         color = if (clearKey) palette.brand else palette.danger,
                         modifier = Modifier
@@ -107,7 +99,7 @@ fun WebSearchSettingsScreen(
                                     keyEdits = keyEdits - picked
                                 } else {
                                     keyEdits = keyEdits + (picked to "")
-                                    picked = WebSearchProvider.DEEPSEEK
+                                    if (picked.needsOwnKey) picked = WebSearchProvider.DEEPSEEK
                                 }
                             }
                             .padding(vertical = 10.dp),

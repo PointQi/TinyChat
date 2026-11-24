@@ -23,8 +23,8 @@ android {
         applicationId = "io.github.pointqi.tinychat"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 5
-        versionName = "1.0.4"
+        versionCode = 7
+        versionName = "1.0.6"
     }
 
     signingConfigs {
@@ -113,6 +113,7 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.navigationevent.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
     debugImplementation(libs.compose.ui.tooling)

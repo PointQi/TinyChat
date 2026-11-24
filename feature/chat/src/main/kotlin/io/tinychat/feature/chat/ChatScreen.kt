@@ -46,7 +46,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -93,6 +92,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -113,6 +113,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -131,6 +132,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
 import androidx.compose.ui.unit.sp
@@ -162,7 +164,6 @@ import io.tinychat.model.ErrorKind
 import io.tinychat.model.MessageStatus
 import io.tinychat.model.KnownProviders
 import io.tinychat.model.Provider
-import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ThinkingMode
 import io.tinychat.ui.MenuAnchor
@@ -190,6 +191,8 @@ import java.time.LocalTime
 fun ChatScreen(
     sessionId: String?,
     state: ChatUiState,
+    greetingLogoModifier: Modifier = Modifier,
+    screenIsActive: Boolean = true,
     hasApiKey: Boolean,
     autoSpeak: Boolean,
     onInputChange: (String) -> Unit,
@@ -236,6 +239,9 @@ fun ChatScreen(
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var attachmentDrawerOpen by remember(sessionId, state.providerId, state.modelId) { mutableStateOf(false) }
+    LaunchedEffect(screenIsActive) {
+        if (!screenIsActive) attachmentDrawerOpen = false
+    }
     val onBlankTap by rememberUpdatedState({
         attachmentDrawerOpen = false
         focusManager.clearFocus(force = true)
@@ -352,7 +358,7 @@ fun ChatScreen(
         )
 
         if (state.messages.isEmpty()) {
-            Greeting(modifier = Modifier.weight(1f))
+            Greeting(modifier = Modifier.weight(1f), logoModifier = greetingLogoModifier)
         } else {
             MessageList(
                 sessionId = sessionId,
@@ -396,6 +402,7 @@ fun ChatScreen(
 
         InputCard(
             state = state,
+            screenIsActive = screenIsActive,
             attachmentDrawerOpen = attachmentDrawerOpen,
             onAttachmentDrawerChange = { attachmentDrawerOpen = it },
             onInputChange = onInputChange,
@@ -455,7 +462,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun Greeting(modifier: Modifier = Modifier) {
+private fun Greeting(modifier: Modifier = Modifier, logoModifier: Modifier = Modifier) {
     val palette = TcTheme.palette
     val hour = remember { LocalTime.now().hour }
     val greeting = when {
@@ -472,7 +479,7 @@ private fun Greeting(modifier: Modifier = Modifier) {
     ) {
         // 图标 + 问候语整块居中（决策 62）：只加图标不破版，文字位置不受影响。
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TcLogoMark(size = 72.dp)
+            TcLogoMark(size = 72.dp, modifier = logoModifier)
             Spacer(Modifier.height(20.dp))
             Text(
                 text = "$greeting，我能帮什么忙吗？",
@@ -506,6 +513,7 @@ private fun MessageList(
     val focus = LocalFocusManager.current
     // 同一对话内滚动保留手动展开的条目，切换对话时清空选择。
     var expandedThinkingIds by rememberSaveable(sessionId) { mutableStateOf(longArrayOf()) }
+    var hiddenThinkingPreviewIds by rememberSaveable(sessionId) { mutableStateOf(longArrayOf()) }
 
     // 用户自己拖离底部就停止跟随，别把人拽回去；拖回底部后恢复。
     val following = rememberFollowLatest(listState)
@@ -551,12 +559,17 @@ private fun MessageList(
                 MessageRow(
                     message = message,
                     showUsage = showUsage,
-                    thinkingExpanded = message.id in expandedThinkingIds,
+                    streaming = isLatest && state.isStreaming,
+                    thinkingExpanded = if (message.isThinking) {
+                        message.id !in hiddenThinkingPreviewIds
+                    } else {
+                        message.id in expandedThinkingIds
+                    },
                     onToggleThinking = {
-                        expandedThinkingIds = if (message.id in expandedThinkingIds) {
-                            expandedThinkingIds.filterNot { it == message.id }.toLongArray()
+                        if (message.isThinking) {
+                            hiddenThinkingPreviewIds = hiddenThinkingPreviewIds.toggle(message.id)
                         } else {
-                            expandedThinkingIds + message.id
+                            expandedThinkingIds = expandedThinkingIds.toggle(message.id)
                         }
                     },
                     onTap = { onEditMessage(message) },
@@ -615,6 +628,7 @@ private fun MessageList(
 private fun MessageRow(
     message: ChatMessage,
     showUsage: Boolean,
+    streaming: Boolean,
     thinkingExpanded: Boolean,
     onToggleThinking: () -> Unit,
     onTap: () -> Unit,
@@ -775,11 +789,12 @@ private fun MessageRow(
                     .tcPressPosition { pressPos = it }
                     .combinedClickable(onClick = {}, onLongClick = { openMenuAtPress() }),
             ) {
-                if (message.hasThinking) {
+                if (message.hasThinking || message.isThinking) {
                     ThinkingBlock(
                         timeline = message.timeline,
                         seconds = message.thinkingSeconds,
                         inProgress = message.isThinking,
+                        streaming = streaming,
                         expanded = thinkingExpanded,
                         onToggle = onToggleThinking,
                         stopped = message.status == MessageStatus.INCOMPLETE && message.text.isBlank(),
@@ -1133,7 +1148,6 @@ private fun ResultRow(
             ) {
                 TcFavicon(
                     url = iconUrl,
-                    fallbackLetter = site,
                     size = 18,
                 )
                 Spacer(Modifier.width(8.dp))
@@ -1204,14 +1218,7 @@ private fun SourceCapsule(
             .padding(start = 6.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        sources.distinctBy { it.site }.take(3).forEach { source ->
-            TcFavicon(
-                url = source.iconUrl,
-                fallbackLetter = source.site,
-                size = 20,
-            )
-            Spacer(Modifier.width(2.dp))
-        }
+        SourceIcons(sources.distinctBy { it.site }.take(3).mapNotNull { it.iconUrl }, size = 20)
         Spacer(Modifier.width(8.dp))
         Text(
             text = "${sources.size} 个网页",
@@ -1499,6 +1506,7 @@ private fun ThinkingBlock(
     timeline: List<TimelineItem>,
     seconds: Double?,
     inProgress: Boolean,
+    streaming: Boolean,
     expanded: Boolean,
     onToggle: () -> Unit,
     stopped: Boolean,
@@ -1524,12 +1532,7 @@ private fun ThinkingBlock(
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = TcIcons.Think,
-                contentDescription = null,
-                tint = if (inProgress) palette.brand else palette.labelSecondary,
-                modifier = Modifier.size(16.dp),
-            )
+            ThinkingIcon(inProgress)
             Spacer(Modifier.width(6.dp))
             // 文案切换（正在思考 → 已思考（用时 N 秒））用淡入淡出，别硬跳
             Crossfade(
@@ -1556,6 +1559,13 @@ private fun ThinkingBlock(
             )
         }
 
+        var showPreview by remember { mutableStateOf(inProgress) }
+        // 思考一结束就开始收起预览。等用户主动展开时，再换成完整记录。
+        LaunchedEffect(inProgress, expanded) {
+            if (inProgress || expanded) showPreview = inProgress
+        }
+        val previewText = if (inProgress || showPreview) remember(timeline) { timeline.thinkingPreviewText() } else null
+        val previewEnd = previewText?.let { rememberThinkingPreviewEnd(it, inProgress, streaming) }
         AnimatedVisibility(
             visible = expanded,
             enter = expandVertically(
@@ -1567,24 +1577,23 @@ private fun ThinkingBlock(
                 shrinkTowards = Alignment.Top,
             ) + fadeOut(animationSpec = tween(TcMotion.Quick, easing = TcMotion.Decelerate)),
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .padding(top = 6.dp)
-                    .height(IntrinsicSize.Min),
+                    .fillMaxWidth()
+                    .drawBehind {
+                        val stroke = 2.dp.toPx()
+                        val x = if (layoutDirection == LayoutDirection.Ltr) stroke / 2 else size.width - stroke / 2
+                        drawLine(palette.borderL2, Offset(x, 0f), Offset(x, size.height), strokeWidth = stroke)
+                    }
+                    .padding(start = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                // 左侧 2dp 竖线
-                Box(
-                    modifier = Modifier
-                        .width(2.dp)
-                        .fillMaxHeight()
-                        .background(palette.borderL2, RoundedCornerShape(1.dp)),
-                )
-                Column(
-                    modifier = Modifier
-                        .padding(start = 12.dp)
-                        .fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
+                if (showPreview && previewText != null && previewEnd != null) {
+                    val lastTool = timeline.lastOrNull { it is TimelineItem.Tool } as? TimelineItem.Tool
+                    lastTool?.let { ToolCard(it.step, onOpenTool) }
+                    ThinkingPreview(previewText, previewEnd)
+                } else {
                     timeline.forEach { item ->
                         when (item) {
                             is TimelineItem.Text -> TimelineText(item.content)
@@ -1596,6 +1605,9 @@ private fun ThinkingBlock(
         }
     }
 }
+
+private fun LongArray.toggle(id: Long): LongArray =
+    if (id in this) filterNot { it == id }.toLongArray() else this + id
 
 /** 时间轴上的一段思考：每行一个圆点 */
 @Composable
@@ -1683,26 +1695,41 @@ private const val STACK_LIMIT = 4
  */
 @Composable
 private fun SiteStack(entries: List<ToolEntry>) {
-    val palette = TcTheme.palette
-    val shown = entries
+    val urls = entries
         .distinctBy { it.site.ifBlank { it.url ?: it.title.orEmpty() } }
         .take(STACK_LIMIT)
+        .mapNotNull { it.iconUrl }
+    SourceIcons(urls, size = 16)
+}
 
-    Row {
-        shown.forEachIndexed { index, entry ->
-            Box(
-                modifier = Modifier
-                    // 负 padding 会抛异常，叠压只能用 offset
-                    .offset(x = if (index == 0) 0.dp else (-6).dp)
-                    .size(18.dp)
-                    .background(palette.bg, CircleShape)
-                    .padding(1.dp),
-            ) {
+/** 未加载到站点图标时，整组共用一个地球图标。 */
+@Composable
+private fun SourceIcons(iconUrls: List<String>, size: Int) {
+    val urls = iconUrls.filter { it.isNotBlank() }.distinct()
+    var available by remember(urls) { mutableStateOf(emptySet<String>()) }
+    Layout(content = {
+        urls.forEach { url ->
+            androidx.compose.runtime.key(url) {
                 TcFavicon(
-                    url = entry.iconUrl,
-                    fallbackLetter = entry.site.ifBlank { entry.title.orEmpty() },
-                    size = 16,
+                    url = url,
+                    size = size,
+                    showFallback = false,
+                    onAvailableChange = { loaded ->
+                        available = if (loaded) available + url else available - url
+                    },
                 )
+            }
+        }
+        TcFavicon(url = null, size = size)
+    }) { measurables, constraints ->
+        val icons = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+        val visible = urls.indices.filter { urls[it] in available }.map { icons[it] }.ifEmpty { listOf(icons.last()) }
+        val gap = 2.dp.roundToPx()
+        layout(visible.sumOf { it.width } + gap * (visible.size - 1), visible.maxOf { it.height }) {
+            var x = 0
+            for (icon in visible) {
+                icon.placeRelative(x, 0)
+                x += icon.width + gap
             }
         }
     }
@@ -1713,6 +1740,7 @@ private fun InputCard(
     contextPercent: Float,
     onOpenUsage: () -> Unit,
     state: ChatUiState,
+    screenIsActive: Boolean,
     attachmentDrawerOpen: Boolean,
     onAttachmentDrawerChange: (Boolean) -> Unit,
     onInputChange: (String) -> Unit,
@@ -1753,7 +1781,7 @@ private fun InputCard(
         transitionSpec = { spring(dampingRatio = 0.80f, stiffness = 580f) },
         label = "drawer and paperclip",
     ) { if (it) 1f else 0f }
-    BackHandler(enabled = showAttachments) { onAttachmentDrawerChange(false) }
+    BackHandler(enabled = screenIsActive && showAttachments) { onAttachmentDrawerChange(false) }
     var previewImage by remember { mutableStateOf<DraftAttachment?>(null) }
 
     /** 取消编辑：清空由 ViewModel 做，这里负责「失焦 + 收起输入法」 */
@@ -1983,13 +2011,7 @@ private fun InputCard(
             progress = { attachmentProgress.value },
             photosEnabled = state.canAttachImage,
             cameraEnabled = canTakePhoto && state.canAttachImage,
-            filesLabel = if (state.canAttachFile) {
-                when {
-                    state.currentProvider?.protocol == ProviderProtocol.DEEPSEEK_MESSAGES -> "文件"
-                    state.canAttachPdf -> "文件（PDF 或文本）"
-                    else -> "文件（文本）"
-                }
-            } else null,
+            filesEnabled = state.canAttachFile,
             drafts = state.attachments,
             onTogglePhoto = { uri ->
                 val draft = state.attachments.firstOrNull { it.uri == uri }

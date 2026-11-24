@@ -1029,7 +1029,11 @@ class ChatViewModel(
     }
 
     private fun ChatUiState.withRequestError(error: ChatException): ChatUiState = copy(
-        error = if (error.kind == ErrorKind.UPLOAD) error.message else error.kind.userMessage(currentProvider?.displayName),
+        error = if (error.kind == ErrorKind.UPLOAD || error.cause is java.net.SocketTimeoutException) {
+            error.message
+        } else {
+            error.kind.userMessage(currentProvider?.displayName)
+        },
         errorKind = error.kind,
     )
 
@@ -1611,7 +1615,8 @@ class ChatViewModel(
             anchors = anchors,
             timeline = timeline,
             thinkingSeconds = seconds,
-            isThinking = message.status == MessageStatus.WIP,
+            isThinking = message.status == MessageStatus.WIP && text.isBlank() &&
+                (message.thinkingEnabled || timeline.isNotEmpty()),
             status = message.status,
             canContinue = canContinue,
             usage = rowUsage,

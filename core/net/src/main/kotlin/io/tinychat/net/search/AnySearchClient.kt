@@ -19,12 +19,17 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 import kotlin.coroutines.resumeWithException
 
 class AnySearchClient(
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .callTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS)
         .followRedirects(false)
         .retryOnConnectionFailure(false)
         .build(),
@@ -42,7 +47,8 @@ class AnySearchClient(
         val builder = Request.Builder()
             .url("https://api.anysearch.com/v1/search")
             .header("Accept", "application/json")
-        apiKey?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
+        val key = apiKey?.trim()?.takeIf { it.isNotEmpty() }
+        key?.let { builder.header("Authorization", "Bearer $it") }
         val request = builder
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
@@ -51,22 +57,28 @@ class AnySearchClient(
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) = continuation.resumeWithException(e)
+                override fun onFailure(call: Call, e: IOException) {
+                    continuation.resumeWithException(networkError(e))
+                }
 
                 override fun onResponse(call: Call, response: Response) {
-                    continuation.resumeWith(runCatching { response.use(::readResults) })
+                    continuation.resumeWith(runCatching { response.use { readResults(it, key != null) } })
                 }
             })
         }
     }
 
-    private fun readResults(response: Response): List<SearchResult> {
+    private fun readResults(response: Response, authenticated: Boolean): List<SearchResult> {
         // AnySearch 的错误正文可能包含生成的凭据，只保留 HTTP 状态码。
-        if (!response.isSuccessful) throw IOException("AnySearch HTTP ${response.code}")
+        if (!response.isSuccessful) throw httpError(response.code, authenticated)
         val source = response.body?.source() ?: throw IOException("AnySearch 返回为空")
-        if (source.request(MAX_RESPONSE_BYTES + 1)) throw IOException("AnySearch 返回过大")
+        val payload = try {
+            if (source.request(MAX_RESPONSE_BYTES + 1)) null else source.readUtf8()
+        } catch (error: IOException) {
+            throw networkError(error)
+        } ?: throw IOException("AnySearch 返回过大")
         val envelope = try {
-            Json.parseToJsonElement(source.readUtf8()) as? JsonObject
+            Json.parseToJsonElement(payload) as? JsonObject
         } catch (_: SerializationException) {
             null
         } ?: throw IOException("AnySearch 返回格式无法解析")
@@ -99,6 +111,27 @@ class AnySearchClient(
         ?.content
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
+
+    private fun httpError(code: Int, authenticated: Boolean): IOException {
+        val reason = when (code) {
+            401, 403 -> if (authenticated) "请检查 API Key 是否有效" else "匿名访问被拒绝，请配置 API Key"
+            402 -> if (authenticated) "当前 API Key 的搜索额度已用完" else "匿名搜索额度已用完，请配置 API Key"
+            429 -> "请求过于频繁，请稍后重试"
+            in 500..599 -> "搜索服务暂不可用，请稍后重试"
+            else -> "搜索请求失败"
+        }
+        return IOException("AnySearch $reason（HTTP $code）")
+    }
+
+    private fun networkError(error: IOException): IOException {
+        val reason = when (error) {
+            is InterruptedIOException -> "等待搜索结果超时，请稍后重试"
+            is UnknownHostException -> "无法解析搜索服务地址，请检查网络或 DNS"
+            is SSLException -> "无法建立安全连接，请检查网络"
+            else -> "无法连接搜索服务，请检查网络"
+        }
+        return IOException("AnySearch $reason", error)
+    }
 
     private companion object {
         const val MAX_RESULTS = 5
