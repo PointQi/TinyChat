@@ -77,7 +77,7 @@ internal fun AttachmentPickerDrawer(
     progress: () -> Float,
     photosEnabled: Boolean,
     cameraEnabled: Boolean,
-    filesLabel: String?,
+    filesEnabled: Boolean,
     drafts: List<DraftAttachment>,
     onTogglePhoto: (Uri) -> Unit,
     onOpenGallery: () -> Unit,
@@ -98,7 +98,7 @@ internal fun AttachmentPickerDrawer(
                 ) {
                     if (cameraEnabled) AttachmentAction(TcIcons.Camera, "拍照", Modifier.weight(1f), onTakePhoto)
                     if (photosEnabled) AttachmentAction(TcIcons.Photo, "相册", Modifier.weight(1f), onOpenGallery)
-                    if (filesLabel != null) AttachmentAction(TcIcons.Folder, filesLabel, Modifier.weight(1f), onPickFiles)
+                    if (filesEnabled) AttachmentAction(TcIcons.Folder, "文件", Modifier.weight(1f), onPickFiles)
                 }
             }
         },

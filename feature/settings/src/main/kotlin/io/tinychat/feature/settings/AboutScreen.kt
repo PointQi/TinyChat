@@ -140,13 +140,6 @@ fun LicenseScreen(onBack: () -> Unit) {
             TcSectionLabel("仅构建与测试使用")
             TestComponents.forEach { (name, license) -> LicenseRow(name, license) }
 
-            Spacer(Modifier.height(16.dp))
-            Text(
-                text = "以上组件按各自的许可证分发，版权属于各自作者。",
-                style = TcTypography.bodySmall,
-                color = palette.labelTertiary,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
             Spacer(Modifier.height(24.dp))
         }
     }

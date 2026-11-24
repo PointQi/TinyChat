@@ -2,6 +2,8 @@ package io.tinychat.net.protocol
 
 import io.tinychat.model.Capabilities
 import io.tinychat.model.PromptMode
+import io.tinychat.model.ProviderKind
+import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ThinkingMode
 import io.tinychat.model.prompt.PromptSeeds
@@ -106,7 +108,9 @@ data class PreparedRequest(
     val headers: Map<String, String>,
     val bodyJson: String,
     /** 决定用哪个流解码器（`ChatStreamRunner` 据此选 assembler） */
-    val protocol: io.tinychat.model.ProviderProtocol = io.tinychat.model.ProviderProtocol.DEEPSEEK_MESSAGES,
+    val protocol: ProviderProtocol = ProviderProtocol.DEEPSEEK_MESSAGES,
+    /** 传输层据此应用服务商的网络等待策略。 */
+    val providerKind: ProviderKind? = null,
 )
 
 /**

@@ -58,7 +58,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import io.tinychat.designsystem.TcIcons
@@ -74,15 +73,8 @@ import io.tinychat.ui.TcAnchorMenu
 import io.tinychat.ui.TcIconButton
 import io.tinychat.ui.TcMenuItem
 import io.tinychat.ui.TcListRow
-import io.tinychat.ui.TcListRow
 import io.tinychat.ui.TcSectionLabel
 import kotlinx.coroutines.launch
-
-/**
- * 会话抽屉的宽度。外壳（`TcSideSheet`，在 app 层组装）和内容必须用同一个值，
- * 否则抽屉的内容会跟板块对不上，所以提出来共用。
- */
-val SessionsDrawerWidth: Dp = 300.dp
 
 /**
  * 会话抽屉（02 §12.3）：标题行（右侧多选）→ 搜索框 → 分组的会话列表 → 设置。
@@ -120,7 +112,7 @@ fun SessionsDrawerContent(
     Column(
         modifier = Modifier
             .fillMaxHeight()
-            .width(SessionsDrawerWidth)
+            .fillMaxWidth()
             .background(palette.bg)
             .statusBarsPadding()
             .navigationBarsPadding()

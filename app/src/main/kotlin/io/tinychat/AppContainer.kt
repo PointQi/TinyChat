@@ -249,7 +249,7 @@ class AppContainer(context: Context) {
             }
         } else null
         // AnySearch 的公开接口免鉴权：没填 Key 也能搜，不要把"没 Key"当成不可用。
-        if (provider.needsOwnKey) {
+        if (provider != WebSearchProvider.ANYSEARCH) {
             check(!key.isNullOrBlank()) { "尚未配置 ${provider.label} API Key" }
         }
         return when (provider) {

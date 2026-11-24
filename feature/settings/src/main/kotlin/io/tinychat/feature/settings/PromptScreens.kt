@@ -40,9 +40,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.tinychat.data.db.PromptPresetEntity
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
@@ -79,7 +77,7 @@ fun PromptSettingsScreen(
     val palette = TcTheme.palette
 
     Column(Modifier.fillMaxSize().background(palette.bg)) {
-        TcTopBar(title = "系统提示词", leading = { TcIconButton(TcIcons.Back, "返回", onBack) })
+        TcTopBar(title = "提示词", leading = { TcIconButton(TcIcons.Back, "返回", onBack) })
 
         Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
             Row(
@@ -90,7 +88,7 @@ fun PromptSettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "同时发送官方提示词",
+                    text = "官方提示词",
                     style = TcTypography.bodyLarge,
                     color = palette.labelPrimary,
                     modifier = Modifier.weight(1f),
@@ -106,18 +104,11 @@ fun PromptSettingsScreen(
                     ),
                 )
             }
-            Text(
-                text = PromptSeeds.OFFICIAL_SYSTEM,
-                style = TcTypography.labelMedium,
-                color = palette.labelTertiary,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
-            )
-
             Spacer(Modifier.height(16.dp))
             TcSectionLabel("预设")
 
             PromptRow(
-                title = "不使用自定义内容",
+                title = "不使用预设",
                 selected = selectedId == null,
                 onClick = { onSelect(null) },
             )
@@ -128,15 +119,6 @@ fun PromptSettingsScreen(
                     selected = preset.id == selectedId,
                     onClick = { onSelect(preset.id) },
                     onEdit = { onEdit(preset.id) },
-                )
-            }
-
-            if (presets.isEmpty()) {
-                Text(
-                    text = "还没有预设。官方提示词会照常发送。",
-                    style = TcTypography.bodyMedium,
-                    color = palette.labelTertiary,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
 
@@ -272,16 +254,6 @@ fun PromptEditorScreen(
                     textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
                     cursorBrush = SolidColor(palette.brand),
                     modifier = Modifier.fillMaxWidth(),
-                    decorationBox = { inner ->
-                        if (name.isEmpty()) {
-                            Text(
-                                "给这个预设起个名字",
-                                color = palette.labelTertiary,
-                                style = TcTypography.bodyLarge,
-                            )
-                        }
-                        inner()
-                    },
                 )
             }
 
@@ -308,16 +280,6 @@ fun PromptEditorScreen(
                     textStyle = TcTypography.bodyLarge.copy(color = palette.labelPrimary),
                     cursorBrush = SolidColor(palette.brand),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp),
-                    decorationBox = { inner ->
-                        if (body.text.isEmpty()) {
-                            Text(
-                                "在这里写提示词",
-                                color = palette.labelTertiary,
-                                style = TcTypography.bodyLarge,
-                            )
-                        }
-                        inner()
-                    },
                 )
             }
 
@@ -414,14 +376,14 @@ fun PromptEditorScreen(
     }
 
     pendingFill?.let { action ->
-        val label = when (action) {
-            FillAction.Clear -> "清空"
-            is FillAction.Template -> "「${action.template.name}」"
+        val title = when (action) {
+            FillAction.Clear -> "清空当前内容？"
+            is FillAction.Template -> "用「${action.template.name}」替换当前内容？"
         }
         TcAlertDialog(
             onDismissRequest = { pendingFill = null },
-            title = { Text("用${label}替换当前内容？") },
-            text = { Text("当前已输入的内容将被清空，此操作不可撤销") },
+            title = { Text(title) },
+            text = { Text("此操作无法撤销。") },
             confirmButton = {
                 TextButton(onClick = {
                     body = when (action) {
@@ -429,7 +391,7 @@ fun PromptEditorScreen(
                         is FillAction.Template -> body.copy(text = action.template.content)
                     }
                     pendingFill = null
-                }) { Text("替换") }
+                }) { Text(if (action == FillAction.Clear) "清空" else "替换") }
             },
             dismissButton = {
                 TextButton(onClick = { pendingFill = null }) { Text("取消", color = TcTheme.palette.labelSecondary) }
@@ -441,7 +403,6 @@ fun PromptEditorScreen(
         TcAlertDialog(
             onDismissRequest = { confirmDiscard = false },
             title = { Text("放弃修改？") },
-            text = { Text("这段内容还没有保存。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDiscard = false
@@ -457,8 +418,8 @@ fun PromptEditorScreen(
     if (confirmDelete) {
         TcAlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除预设") },
-            text = { Text("此操作无法恢复。删除后不会影响已经用它创建的会话。") },
+            title = { Text("删除预设？") },
+            text = { Text("删除后无法恢复。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false

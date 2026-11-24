@@ -191,7 +191,7 @@ private fun ClearDiagnosticsDialog(onDismiss: () -> Unit, onClear: () -> Unit) {
     TcAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("清除诊断信息？") },
-        text = { Text("清除后无法恢复，不会影响你的聊天记录。") },
+        text = { Text("清除后无法恢复。") },
         confirmButton = {
             TextButton(onClick = onClear) { Text("清除", color = palette.danger) }
         },

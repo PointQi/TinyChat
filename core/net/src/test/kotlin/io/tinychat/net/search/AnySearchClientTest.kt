@@ -15,6 +15,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 
 class AnySearchClientTest {
     @Test
@@ -38,7 +40,7 @@ class AnySearchClientTest {
             }""".trimIndent(),
         ) { request = it }
 
-        val hits = AnySearchClient(client).search("test-search-key", "今日新闻")
+        val hits = AnySearchClient(client).search(" test-search-key ", "今日新闻")
         val json = Buffer().apply { request.body!!.writeTo(this) }.readUtf8()
         val payload = Json.parseToJsonElement(json).jsonObject
 
@@ -68,21 +70,42 @@ class AnySearchClientTest {
 
     @Test
     fun `HTTP quota errors omit server text that could contain credentials`() {
-        val client = clientReturning(402, """{"code":-1,"message":"api_key=example-private-key"}""")
-        val error = assertThrows(IOException::class.java) {
-            runBlocking { AnySearchClient(client).search("test-search-key", "weather") }
-        }
-        assertEquals("AnySearch HTTP 402", error.message)
+        val body = """{"code":-1,"message":"api_key=example-private-key"}"""
+        assertEquals(
+            "AnySearch 匿名搜索额度已用完，请配置 API Key（HTTP 402）",
+            searchError(clientReturning(402, body), key = null).message,
+        )
+        assertEquals(
+            "AnySearch 当前 API Key 的搜索额度已用完（HTTP 402）",
+            searchError(clientReturning(402, body)).message,
+        )
+    }
+
+    @Test
+    fun `invalid key failure explains how to fix the authenticated search`() {
+        val client = clientReturning(401, """{"code":-1,"error_code":"invalid_api_key"}""")
+        assertEquals("AnySearch 请检查 API Key 是否有效（HTTP 401）", searchError(client).message)
+    }
+
+    @Test
+    fun `search timeout and DNS failure report different reasons`() {
+        val timeout = OkHttpClient.Builder().addInterceptor { throw SocketTimeoutException() }.build()
+        assertEquals("AnySearch 等待搜索结果超时，请稍后重试", searchError(timeout).message)
+        val dnsFailure = OkHttpClient.Builder().addInterceptor { throw UnknownHostException() }.build()
+        assertEquals("AnySearch 无法解析搜索服务地址，请检查网络或 DNS", searchError(dnsFailure).message)
     }
 
     @Test
     fun `nonzero API status is reported without returning results or server text`() {
         val client = clientReturning(200, """{"code":-1,"message":"server details","data":{"results":[]}}""")
-        val error = assertThrows(IOException::class.java) {
-            runBlocking { AnySearchClient(client).search("test-search-key", "weather") }
-        }
+        val error = searchError(client)
         assertEquals("AnySearch 返回错误（代码 -1）", error.message)
     }
+
+    private fun searchError(client: OkHttpClient, key: String? = "test-search-key"): IOException =
+        assertThrows(IOException::class.java) {
+            runBlocking { AnySearchClient(client).search(key, "weather") }
+        }
 
     private fun clientReturning(code: Int, body: String, capture: (Request) -> Unit = {}): OkHttpClient =
         OkHttpClient.Builder().addInterceptor { chain ->

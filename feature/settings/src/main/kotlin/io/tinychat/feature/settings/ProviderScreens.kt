@@ -94,13 +94,6 @@ fun ProviderListScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            Text(
-                text = "填入各服务商的 API 密钥即可使用其模型。",
-                style = TcTypography.labelMedium,
-                color = palette.labelTertiary,
-                modifier = Modifier.padding(bottom = 14.dp),
-            )
-
             providers.forEach { provider ->
                 ProviderCard(
                     provider = provider,
@@ -134,7 +127,7 @@ fun ProviderListScreen(
         TcAlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("删除 ${provider.displayName}？") },
-            text = { Text("该服务商下的会话仍可查看，换一个服务商就能继续对话。本机保存的密钥会一并删除。") },
+            text = { Text("同时删除本机密钥。原会话可切换服务商后继续。") },
             confirmButton = {
                 TextButton(onClick = {
                     pendingDelete = null
@@ -405,12 +398,6 @@ fun ProviderEditorScreen(
             Spacer(Modifier.height(14.dp))
 
             if (catalogMode) {
-                Text(
-                    "从内置目录中选择一家，填入 API 密钥即可使用；同一家可以添加多次。",
-                    style = TcTypography.labelMedium,
-                    color = palette.labelTertiary,
-                )
-                Spacer(Modifier.height(12.dp))
                 catalogEntries.forEach { item ->
                     CatalogRow(
                         provider = item,
@@ -439,12 +426,6 @@ fun ProviderEditorScreen(
                         placeholder = "acme-gateway",
                         onValueChange = { id = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '-' }.take(32) },
                     )
-                    Text(
-                        "以小写字母开头的标识，用于在本机唯一标识该服务商。",
-                        style = TcTypography.labelMedium,
-                        color = palette.labelTertiary,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
                     Spacer(Modifier.height(16.dp))
                 }
 
@@ -452,7 +433,7 @@ fun ProviderEditorScreen(
                     label = "显示名称",
                     value = name,
                     enabled = !busy,
-                    placeholder = "例如：我的网关",
+                    placeholder = "我的网关",
                     onValueChange = { name = it.take(24) },
                 )
                 Spacer(Modifier.height(16.dp))
@@ -478,7 +459,7 @@ fun ProviderEditorScreen(
                     label = "API 密钥",
                     value = key,
                     enabled = !busy,
-                    placeholder = if (hasKey) "留空使用已保存的凭据" else "输入 API 密钥",
+                    placeholder = if (hasKey) "已保存" else "",
                     secret = !reveal,
                     onValueChange = { key = it.trim() },
                     trailing = {
@@ -608,7 +589,6 @@ fun ProviderEditorScreen(
         TcAlertDialog(
             onDismissRequest = { confirmDiscard = false },
             title = { Text("放弃修改？") },
-            text = { Text("这一页有还没保存的改动。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDiscard = false
@@ -626,7 +606,7 @@ fun ProviderEditorScreen(
         TcAlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("清除已保存的密钥？") },
-            text = { Text("清除后要重新填写才能继续对话。只删本机保存的密钥，历史记录和服务商账户不受影响。") },
+            text = { Text("重新填写后才能继续使用此服务商。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmClear = false
@@ -800,19 +780,6 @@ private fun ModelDirectory(
         }
     }
 
-    if (models.isEmpty()) {
-        Text(
-            text = if (editable) {
-                "还没有模型。点击上面「获取可用模型」，或手动添加。"
-            } else {
-                "还没有模型。点击上面「获取可用模型」拉取。"
-            },
-            style = TcTypography.labelMedium,
-            color = palette.labelTertiary,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
-    }
-
     if (editable) {
         Text(
             text = "＋ 添加模型",
@@ -918,12 +885,12 @@ private fun ModelDetailDialog(
                     label = "显示名称",
                     value = name,
                     enabled = true,
-                    placeholder = "留空则与 ID 相同",
+                    placeholder = id,
                     onValueChange = { name = it.take(40) },
                 )
                 Spacer(Modifier.height(14.dp))
                 EditorField(
-                    label = "上下文窗口",
+                    label = "上下文窗口（token）",
                     value = contextText,
                     enabled = true,
                     placeholder = "128000",
@@ -931,22 +898,15 @@ private fun ModelDetailDialog(
                 )
                 Spacer(Modifier.height(14.dp))
                 EditorField(
-                    label = "最大输出",
+                    label = "最大输出（token）",
                     value = outputText,
                     enabled = true,
                     placeholder = "8192",
                     onValueChange = { outputText = it.filter(Char::isDigit).take(9) },
                 )
-                Text(
-                    text = "单位是 token，不是千 token：128k 写 128000。留空表示未知。",
-                    style = TcTypography.labelMedium,
-                    color = palette.labelTertiary,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
                 Spacer(Modifier.height(6.dp))
                 DialogSwitch(
                     title = "支持思考",
-                    subtitle = "模型会返回思考过程",
                     checked = thinking,
                     enabled = true,
                     onCheckedChange = {
@@ -956,7 +916,6 @@ private fun ModelDetailDialog(
                 )
                 DialogSwitch(
                     title = "可调思考强度",
-                    subtitle = if (thinking) "开启后底栏出现强度选择" else "先开启思考",
                     checked = effort && thinking,
                     enabled = thinking,
                     onCheckedChange = { effort = it },
@@ -964,14 +923,12 @@ private fun ModelDetailDialog(
                 if (compatibleProtocol) {
                     DialogSwitch(
                         title = "视觉",
-                        subtitle = "服务商和模型支持图片时开启",
                         checked = vision,
                         enabled = true,
                         onCheckedChange = { vision = it },
                     )
                     DialogSwitch(
                         title = "PDF 文件",
-                        subtitle = "服务商和模型支持原生 PDF 时开启",
                         checked = pdf,
                         enabled = true,
                         onCheckedChange = { pdf = it },
@@ -1016,7 +973,6 @@ private fun ModelDetailDialog(
 @Composable
 private fun DialogSwitch(
     title: String,
-    subtitle: String,
     checked: Boolean,
     enabled: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -1028,14 +984,12 @@ private fun DialogSwitch(
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = TcTypography.bodyMedium,
-                color = if (enabled) palette.labelPrimary else palette.labelTertiary,
-            )
-            Text(subtitle, style = TcTypography.labelMedium, color = palette.labelTertiary)
-        }
+        Text(
+            text = title,
+            style = TcTypography.bodyMedium,
+            color = if (enabled) palette.labelPrimary else palette.labelTertiary,
+            modifier = Modifier.weight(1f),
+        )
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
@@ -1144,7 +1098,7 @@ internal fun EditorField(
                 visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
                 modifier = Modifier.weight(1f),
                 decorationBox = { inner ->
-                    if (value.isEmpty()) {
+                    if (value.isEmpty() && placeholder.isNotEmpty()) {
                         Text(placeholder, style = TcTypography.bodyMedium, color = palette.labelTertiary)
                     }
                     inner()
