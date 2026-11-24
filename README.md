@@ -7,9 +7,10 @@
 轻巧纯净的 Android AI 聊天客户端，支持 DeepSeek 官方与 OpenAI / Anthropic 兼容接口。
 
 <p>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/PointQi/TinyChat" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Takeoff0518/TinyChat" alt="License"></a>
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 8.0 及以上">
-  <a href="https://github.com/PointQi/TinyChat/actions/workflows/ci.yml"><img src="https://github.com/PointQi/TinyChat/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Takeoff0518/TinyChat/actions/workflows/ci.yml"><img src="https://github.com/Takeoff0518/TinyChat/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Takeoff0518/TinyChat/releases"><img src="https://img.shields.io/github/v/release/Takeoff0518/TinyChat" alt="Release"></a>
 </p>
 
 </div>
@@ -27,7 +28,7 @@ TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官�
 - **专家模式**：在模型面板中开启后，使用 DeepSeek Harness 标准模式的系统提示词。关闭后恢复原有提示词。
 - **联网搜索**：聊天模型和搜索供应商可独立配置。搜索可选 DeepSeek、Tavily 或 AnySearch，例如使用 OpenCode Go 回答、DeepSeek 联网搜索。
 - **发送图片与文件**：点击回形针可快选最近照片，长按缩略图可预览，也可从相册或「文件」选择。第三方模型可以读取在手机上提取的文档文本，包括 PDF、Word、Excel 和 PowerPoint。见下方的[文档支持](#文档支持)。
-- **界面语言**：可在「设置 → 语言」切换简体中文、English、Русский、Français 和 Español。
+- **界面语言**：可在「设置 → 语言」切换简体中文、繁體中文、日本語、English、Русский、Français 和 Español。
 - **语音交互**：不想打字时可以直接语音输入，也可以让模型把回答朗读出来（仅支持 DeepSeek 官方接口）。
 - **会话管理**：支持历史对话搜索、置顶、重命名以及批量删除。
 - **用量与费用统计**：清晰展示每轮对话消耗的 Token/字数、预估花费以及当前账户余额。
@@ -56,6 +57,10 @@ TinyChat 是一款开源的 Android 聊天客户端，用来连接 DeepSeek 官�
 
 4. 回到聊天主界面，在底部输入框上方选择你想使用的模型。
 5. 输入问题并发送，系统会自动为你创建第一个对话。
+
+在供应商设置里拉取模型时，`/models` 返回的上下文与最大输出 token 分别更新到模型设置。接口未提供的值保留已有配置，新模型的对应字段留空，可手动填写。
+
+当对话接近或超过目标模型的上下文上限时，应用先用切换前的模型生成摘要。原模型无法调用时，会用已配置的 DeepSeek 官方接口重试，届时 DeepSeek 会收到当前对话的整理内容。压缩成功后才切换，原有聊天和附件仍可查看。
 
 ## 配置联网搜索
 
@@ -124,71 +129,10 @@ AnySearch 返回 `HTTP 401` 时，服务拒绝了当前请求的身份验证。�
 
 受限于客户端定位与接口机制，以下情况目前暂不支持，请知悉：
 
-* **仅支持前台生成**：为保证轻量化，本版本未做后台保活。回答生成期间如果切到后台或锁屏，生成过程可能会被系统中断。
+* **后台生成**：打开设置或返回系统桌面时，当前生成由前台服务保持，任务结束后服务自动退出。系统强制停止应用或网络中断时，生成仍可能中断。
 * **无云端多端同步**：应用没有自建服务器，换新手机时请通过「导出 → 导入」手动迁移数据。
 * **语音功能限制**：语音输入和朗读依赖 DeepSeek 官方接口，使用第三方服务商时会自动隐藏这两个按钮。
 * **接口能力边界**：识图和原生 PDF 需要相应的模型及接口能力。联网搜索可在「设置 → 联网搜索」单独配置。
-
----
-
-## 更新记录
-
-### 1.0.7（versionCode 8）
-
-* 启动与主页上的图标使用固定尺寸和位置。发送图片快捷提示词时，消息平滑进入对话。
-* 设置支持从页面内向右滑返回，页面跟随手指移动，滑动距离不足时回到当前页。
-* 支持在中文、英文、俄文、法文和西班牙文界面之间切换，重启后保留所选语言。
-* 参考 DeepSeek Harness 加入第三方供应商预设。第三方模型支持读取提取后的 PDF、Word、Excel 和 PowerPoint 文本。
-
-### 1.0.6（versionCode 7）
-
-* 思考预览平滑显示最新六行，完成后仍可手动展开全文。
-* 放缓开屏图标落位动画至 460 毫秒。历史和上下文抽屉分别从聊天卡片下方的左侧、右侧露出。页面返回跟随实际侧滑距离，松手后完成返回或回到当前页。
-* 设置主页改为分组卡片，精简说明，统一设置名称。弹窗选项的选中和按压反馈使用圆角矩形。附件入口统一显示「文件」。
-
-### 1.0.5（versionCode 6）
-
-* OpenCode Go 的读取空闲超时延长至 300 秒，适配首字较慢的响应。
-* 思考中滚动预览最新六行，完成后默认折叠，搜索结果缺少站点图标时显示地球图标。
-
-### 1.0.4（versionCode 5）
-
-* 联网失败不再一律显示「请检查网络后重试」：超时、域名解析失败、连不上分别给出提示，超时注明 120 秒。
-* 搜索失败时，搜索卡片的标题会带上真实原因，便于判断是网络问题还是配置问题。
-* 「字体大小」改为全局生效，此前只缩放消息正文，设置页与列表不动。
-* AnySearch 公开接口允许留空 API Key。
-
-### 1.0.2（versionCode 3）
-
-* 安装包身份独立为 `io.github.pointqi.tinychat`，可与上游原版同时安装。
-* 支持向 OpenAI / Anthropic 兼容接口发送图片与文件。
-* 新增专家模式，使用 DeepSeek Harness 标准模式的系统提示词。
-* 联网搜索添加 Tavily 和 AnySearch 的接入。
-
----
-
-## 自行编译构建
-
-如果你想修改源码或自己打包 APK，可以按照以下步骤操作：
-
-1. 准备 JDK 21、Android SDK Platform 37，以及 Build Tools 37.0.0。Android Studio 和命令行均可构建。
-2. **加载项目**：用 Android Studio 打开项目根目录，等待 Gradle 自动同步并下载依赖。
-3. **打包调试版**：在终端运行 `./gradlew assembleDebug`（Windows 系统请运行 `gradlew.bat assembleDebug`）。
-4. **安装体验**：编译完成后，安装包位于 `app/build/outputs/apk/debug/app-debug.apk`，发送到手机即可安装。
-
-**进阶配置（可选）：**
-
-* **发布正式版**：如需打包签名的 Release 版本，请将你的签名密钥文件放在本地，并在项目根目录创建 `.local/keystore.properties` 填好路径、密码和别名，随后执行 `./gradlew assembleRelease`。（若不配置此文件也可编译，但生成的未签名包无法直接安装）。
-
----
-
-用 Android SDK Build Tools 的 `apksigner` 检查 APK，将输出的 `certificate SHA-256 digest` 与上表核对。
-
-```bash
-apksigner verify --print-certs TinyChat-v1.0.7.apk
-```
-
-签名密钥和口令保存在本地 `.local/` 或仓库的 Actions Secrets 中。
 
 ---
 

@@ -16,7 +16,7 @@
 11-21 23:23:52.091  1824  2263 I WindowManager: Deferring rotation, rotation not changed, rotation=0
 11-21 23:23:52.092  1824  2376 I HwActivityTaskManagerServiceEx: onChange mDefaultInputMethod: com.huawei.ohos.inputmethod/com.android.inputmethod.latin.LatinIME
 11-21 23:23:52.093  1824  7337 I HwInputMethodManagerService: startInputOrWindowGainedFocus windowToken:android.os.BinderProxy@c02973f mInputShown:false
-11-21 23:23:52.093  1824  7337 I HwOcrImeController: updateMultiWindow focus window = top.tbpdt.tinychat/io.tinychat.MainActivity mIsInMultiScreen = false
+11-21 23:23:52.093  1824  7337 I HwOcrImeController: updateMultiWindow focus window = PACKAGE_ID/io.tinychat.MainActivity mIsInMultiScreen = false
 11-21 23:23:52.093  1824  7337 I HwOcrImeController: updateUser userId = 0 mIsOwnerUser = true
 11-21 23:23:52.093  1824  7337 I HwOcrImeController: setOcrImeSupportProp mIsOcrImeValid = true mIsHardKeyboardAvailable = false mIsInMultiScreen = false mIsOwnerUser = true
 11-21 23:23:52.093  1824  7337 I HwOcrImeController: setOcrImeSupportProp mIsOcrImeValid = true mIsHardKeyboardAvailable = false mIsInMultiScreen = false mIsOwnerUser = true
