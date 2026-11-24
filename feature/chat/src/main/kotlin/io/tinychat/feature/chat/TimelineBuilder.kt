@@ -52,6 +52,8 @@ data class ToolStep(
     val subtitle: String?,
     val entries: List<ToolEntry> = emptyList(),
     val failed: Boolean = false,
+    val searchFailure: String? = null,
+    val findPattern: String? = null,
 ) {
     val canOpen: Boolean get() = entries.isNotEmpty()
 
@@ -147,6 +149,7 @@ internal fun buildTimeline(fragments: List<TimelineFragment>): List<TimelineItem
                         subtitle = payload.queries.joinToString(" ").takeIf { it.isNotBlank() },
                         entries = entries,
                         failed = failed,
+                        searchFailure = payload.reason,
                     ),
                 )
             }
@@ -177,6 +180,7 @@ internal fun buildTimeline(fragments: List<TimelineFragment>): List<TimelineItem
                         },
                         subtitle = null,
                         failed = failed,
+                        findPattern = payload.pattern,
                     ),
                 )
             }

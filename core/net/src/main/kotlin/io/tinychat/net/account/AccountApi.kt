@@ -1,5 +1,7 @@
 package io.tinychat.net.account
 
+import io.tinychat.model.Provider
+import io.tinychat.net.protocol.ProviderModels
 import io.tinychat.net.transport.OkHttpChatTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,8 +25,11 @@ object AccountRequests {
     const val BALANCE_PATH = "/user/balance"
 
     fun get(baseUrl: String, path: String, apiKey: String): Request =
+        get(baseUrl.trimEnd('/') + path, apiKey)
+
+    internal fun get(url: String, apiKey: String): Request =
         Request.Builder()
-            .url(baseUrl.trimEnd('/') + path)
+            .url(url)
             .header("Authorization", "Bearer $apiKey")
             .get()
             .build()
@@ -68,30 +73,14 @@ class AccountClient(
     suspend fun checkKey(apiKey: String): KeyCheck = checkKey(AccountRequests.get(baseUrl, AccountRequests.MODELS_PATH, apiKey))
 
     /**
-     * 校验某个服务商的 Key（M8-6）：地址由调用方按协议算好（见 `ProviderModels`）。
+     * 校验某个服务商的 Key（M8-6）：地址与鉴权按服务商协议选择。
      * 只发 GET，不计费。
      */
-    suspend fun checkKey(url: String, apiKey: String): KeyCheck = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer $apiKey")
-            .get()
-            .build()
-        try {
-            client.newCall(request).execute().use { response ->
-                when {
-                    response.isSuccessful -> KeyCheck.Ok
-                    response.code == 401 || response.code == 403 -> KeyCheck.Invalid
-                    response.code == 402 -> KeyCheck.Failed("账户余额不足，充值后即可继续")
-                    response.code == 429 -> KeyCheck.Failed("操作太频繁，稍后再试")
-                    response.code >= 500 -> KeyCheck.Failed("服务异常，请稍后再试")
-                    else -> KeyCheck.Failed("连接失败（${response.code}）")
-                }
-            }
-        } catch (e: IOException) {
-            KeyCheck.Failed("无法连接网络，请检查网络设置后重试")
-        }
-    }
+    suspend fun checkKey(provider: Provider, apiKey: String): KeyCheck =
+        checkKey(ProviderModels.keyCheckRequest(provider, apiKey))
+
+    suspend fun checkKey(url: String, apiKey: String): KeyCheck =
+        checkKey(AccountRequests.get(url, apiKey))
 
     private suspend fun checkKey(request: Request): KeyCheck = withContext(Dispatchers.IO) {
         try {
@@ -114,12 +103,13 @@ class AccountClient(
      * 拉模型目录（`GET …/models`）。返回模型 id 列表；401 抛 [AccountException] 带 401，
      * 让 UI 能区分「Key 无效」与「该地址没这个接口」。
      */
-    suspend fun modelIds(url: String, apiKey: String): List<String> = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer $apiKey")
-            .get()
-            .build()
+    suspend fun modelIds(provider: Provider, apiKey: String): List<String> =
+        modelIds(ProviderModels.listRequest(provider, apiKey))
+
+    suspend fun modelIds(url: String, apiKey: String): List<String> =
+        modelIds(AccountRequests.get(url, apiKey))
+
+    private suspend fun modelIds(request: Request): List<String> = withContext(Dispatchers.IO) {
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {

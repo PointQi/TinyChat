@@ -14,6 +14,8 @@ import io.tinychat.net.SseEvent
 import io.tinychat.net.protocol.PreparedRequest
 import io.tinychat.net.transport.ChatTransport
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
@@ -28,7 +30,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class ChatRepositoryAttachmentTest {
     @Test
-    fun `OpenAI PDF and text attachments are read locally for send follow up and retry`() = runBlocking {
+    fun `OpenAI PDF text and Office attachments are read locally for send follow up and retry`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val db = DatabaseFactory.createInMemory(context)
         val localStore = AttachmentStore(context)
@@ -55,15 +57,26 @@ class ChatRepositoryAttachmentTest {
             )
             val pdf = File(context.cacheDir, "fixture.pdf").apply { writeText("%PDF-1.7\n%%EOF") }
             val text = File(context.cacheDir, "fixture.txt").apply { writeText("notes from the document") }
+            val word = File(context.cacheDir, "fixture.docx").apply {
+                ZipOutputStream(outputStream()).use { zip ->
+                    zip.putNextEntry(ZipEntry("word/document.xml"))
+                    zip.write(
+                        """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>notes from Word</w:t></w:r></w:p></w:body></w:document>"""
+                            .toByteArray(),
+                    )
+                    zip.closeEntry()
+                }
+            }
             val id = repo.createSession(providerId = custom.id, model = model.id)
             val reply = repo.send(id, "", attachments = listOf(
                 PickedFile(localStore.newId(), Uri.fromFile(pdf), pdf.name, pdf.length(), "application/pdf", false),
                 PickedFile(localStore.newId(), Uri.fromFile(text), text.name, text.length(), "text/plain", false),
+                PickedFile(localStore.newId(), Uri.fromFile(word), word.name, word.length(), "application/octet-stream", false),
             ))
             val userId = db.messageDao().byId(reply.messageId)!!.parentId!!
             questionId = userId
             val stored = db.attachmentDao().byMessage(userId)
-            assertEquals(2, stored.size)
+            assertEquals(3, stored.size)
             assertTrue(stored.all { it.remoteId == null && it.state == AttachmentState.LOCAL })
 
             repo.send(id, "follow up")
@@ -75,6 +88,8 @@ class ChatRepositoryAttachmentTest {
                 assertTrue(request.bodyJson.contains("fixture.pdf"))
                 assertTrue(request.bodyJson.contains("fixture.txt"))
                 assertTrue(request.bodyJson.contains("notes from the document"))
+                assertTrue(request.bodyJson.contains("fixture.docx"))
+                assertTrue(request.bodyJson.contains("notes from Word"))
             }
         } finally {
             questionId?.let(localStore::deleteMessageDir)

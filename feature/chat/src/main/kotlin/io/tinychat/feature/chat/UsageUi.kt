@@ -1,5 +1,6 @@
 package io.tinychat.feature.chat
 
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,17 +60,18 @@ object UsageGlossary {
     const val BALANCE = "balance"
     const val USAGE_TOTAL = "usageTotal"
 
+    @Composable
     fun of(key: String): String = when (key) {
         CONTEXT ->
-            "这一轮实际发给模型的全部内容，占模型上限的比例。"
+            stringResource(R.string.chat_how_much_of_the_model_s_context)
         CACHE_HIT ->
-            "服务端直接复用了上一轮的对话内容，不用重新计算。"
+            stringResource(R.string.chat_the_provider_reused_part_of_the_previous)
         COST ->
-            "按服务商的价目表估算，和真实账单可能有几分钱误差。"
+            stringResource(R.string.chat_the_actual_charge_may_differ_from_this)
         BALANCE ->
-            "通过服务商接口获取的账户余额。"
+            stringResource(R.string.chat_balance_reported_by_the_provider)
         USAGE_TOTAL ->
-            "本会话的累计用量数据，包括所有重新生成和重新编辑的版本。"
+            stringResource(R.string.chat_total_usage_for_this_chat_including_edited)
         else -> ""
     }
 }
@@ -87,11 +89,12 @@ fun ContextRing(
         percent >= 0.4f -> palette.warning
         else -> palette.brand
     }
+    val openUsage = stringResource(R.string.chat_open_usage_and_costs)
     Box(
         modifier = modifier
             .size(40.dp)
             .clip(CircleShape)
-            .semantics { contentDescription = "打开用量与费用" }
+            .semantics { contentDescription = openUsage }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -125,10 +128,14 @@ fun ContextRing(
 @Composable
 fun UsageStatsLine(usage: Usage, costMicros: Long?) {
     val palette = TcTheme.palette
+    val tokens = stringResource(
+        R.string.chat_usage_stats_line,
+        Money.tokens(usage.cacheHitTokens.toLong()),
+        Money.tokens(usage.promptTokens.toLong()),
+        Money.tokens(usage.completionTokens.toLong()),
+    )
     val line = buildString {
-        append("${Money.tokens(usage.cacheHitTokens.toLong())} 命中  ")
-        append("${Money.tokens(usage.promptTokens.toLong())} 未命中  ")
-        append("${Money.tokens(usage.completionTokens.toLong())} 输出")
+        append(tokens)
         // 第三方服务商没有单价表（CostCalculator 返回 0）：只显示 token，不编一个 ￥0.0000
         if (costMicros != null && costMicros > 0) append("  ${Money.format(costMicros)}")
     }
@@ -169,12 +176,12 @@ fun UsageDrawerContent(
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "用量与费用",
+                text = stringResource(R.string.chat_usage_and_costs),
                 style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
                 color = palette.labelPrimary,
             )
             Spacer(Modifier.weight(1f))
-            TcIconButton(TcIcons.Close, "关闭", onDismiss)
+            TcIconButton(TcIcons.Close, stringResource(R.string.chat_close), onDismiss)
         }
 
         Spacer(Modifier.height(16.dp))
@@ -182,7 +189,7 @@ fun UsageDrawerContent(
         // 上下文占比
         val percent = contextRatio(contextUsed, contextWindow)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ExplainableLabel("上下文已用", UsageGlossary.CONTEXT, expanded) { expanded = it }
+            ExplainableLabel(stringResource(R.string.chat_context_used), UsageGlossary.CONTEXT, expanded) { expanded = it }
             Spacer(Modifier.width(12.dp))
             Text(
                 text = "${(percent * 100).toInt()}%",
@@ -223,7 +230,7 @@ fun UsageDrawerContent(
         }
 
         Spacer(Modifier.height(28.dp))
-        ExplainableLabel("Token 用量", UsageGlossary.USAGE_TOTAL, expanded) { expanded = it }
+        ExplainableLabel(stringResource(R.string.chat_token_usage), UsageGlossary.USAGE_TOTAL, expanded) { expanded = it }
         if (expanded == UsageGlossary.USAGE_TOTAL) {
             GlossaryText(UsageGlossary.USAGE_TOTAL)
         }
@@ -231,7 +238,7 @@ fun UsageDrawerContent(
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
-                ExplainableLabel("预估费用", UsageGlossary.COST, expanded) { expanded = it }
+                ExplainableLabel(stringResource(R.string.chat_estimated_cost), UsageGlossary.COST, expanded) { expanded = it }
                 Text(
                     text = if (summary.costMicros == 0L) "--" else Money.format(summary.costMicros),
                     style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
@@ -240,7 +247,7 @@ fun UsageDrawerContent(
                 )
             }
             Column(Modifier.weight(1f)) {
-                ExplainableLabel("缓存命中", UsageGlossary.CACHE_HIT, expanded) { expanded = it }
+                ExplainableLabel(stringResource(R.string.chat_cache_hits), UsageGlossary.CACHE_HIT, expanded) { expanded = it }
                 Text(
                     text = summary.cacheHitRate?.let { "%.1f%%".format(it * 100) } ?: "--",
                     style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
@@ -253,9 +260,9 @@ fun UsageDrawerContent(
         if (expanded == UsageGlossary.CACHE_HIT) GlossaryText(UsageGlossary.CACHE_HIT)
 
         val hasData = !summary.isEmpty
-        MetricBlock("未缓存输入", summary.usage.promptTokens, hasData)
-        MetricBlock("缓存读取", summary.usage.cacheHitTokens, hasData)
-        MetricBlock("输出", summary.usage.completionTokens, hasData)
+        MetricBlock(stringResource(R.string.chat_uncached_input), summary.usage.promptTokens, hasData)
+        MetricBlock(stringResource(R.string.chat_cache_reads), summary.usage.cacheHitTokens, hasData)
+        MetricBlock(stringResource(R.string.chat_output), summary.usage.completionTokens, hasData)
 
         val hasAccount = quota != null || balanceText != null
         if (hasAccount) {
@@ -268,11 +275,11 @@ fun UsageDrawerContent(
             )
             Spacer(Modifier.height(20.dp))
 
-            ExplainableLabel("账户", UsageGlossary.BALANCE, expanded) { expanded = it }
+            ExplainableLabel(stringResource(R.string.chat_account), UsageGlossary.BALANCE, expanded) { expanded = it }
             Spacer(Modifier.height(12.dp))
             if (quota != null) {
                 Text(
-                    text = "订阅额度",
+                    text = stringResource(R.string.chat_subscription_quota),
                     style = TextStyle(fontSize = 13.sp),
                     color = palette.labelSecondary,
                 )
@@ -281,7 +288,7 @@ fun UsageDrawerContent(
                 }
             } else {
                 Text(
-                    text = "余额",
+                    text = stringResource(R.string.chat_balance),
                     style = TextStyle(fontSize = 13.sp),
                     color = palette.labelSecondary,
                 )
@@ -313,7 +320,12 @@ private fun QuotaRow(window: QuotaWindow) {
     Column(Modifier.padding(top = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = window.label,
+                text = when (window.key) {
+                    "rolling" -> stringResource(R.string.chat_five_hours)
+                    "weekly" -> stringResource(R.string.chat_week)
+                    "monthly" -> stringResource(R.string.chat_month)
+                    else -> window.label
+                },
                 style = TextStyle(fontSize = 13.sp),
                 color = palette.labelSecondary,
                 modifier = Modifier.weight(1f),
@@ -350,20 +362,21 @@ private fun QuotaRow(window: QuotaWindow) {
 }
 
 /** 重置时间：只给相对说法（`3 小时后重置`），不暴露 ISO 串。单位为零时省略。 */
+@Composable
 private fun resetLabel(resetAt: String?): String? {
     if (resetAt.isNullOrBlank()) return null
     val instant = runCatching { java.time.Instant.parse(resetAt) }.getOrNull() ?: return null
     val minutes = java.time.Duration.between(java.time.Instant.now(), instant).toMinutes()
-    if (minutes <= 0) return "即将重置"
+    if (minutes <= 0) return stringResource(R.string.chat_resets_soon)
     val days = minutes / (24 * 60)
     val hours = minutes % (24 * 60) / 60
     val mins = minutes % 60
     return when {
-        days > 0 && hours > 0 -> "$days 天 $hours 小时后重置"
-        days > 0 -> "$days 天后重置"
-        hours > 0 && mins > 0 -> "$hours 小时 $mins 分钟后重置"
-        hours > 0 -> "$hours 小时后重置"
-        else -> "$mins 分钟后重置"
+        days > 0 && hours > 0 -> stringResource(R.string.chat_resets_in_d_h, days, hours)
+        days > 0 -> stringResource(R.string.chat_resets_in_d, days)
+        hours > 0 && mins > 0 -> stringResource(R.string.chat_resets_in_h_min, hours, mins)
+        hours > 0 -> stringResource(R.string.chat_resets_in_h, hours)
+        else -> stringResource(R.string.chat_resets_in_min, mins)
     }
 }
 

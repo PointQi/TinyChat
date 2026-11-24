@@ -26,7 +26,6 @@ import io.tinychat.model.prompt.PromptMeta
 import io.tinychat.net.account.AccountClient
 import io.tinychat.net.account.KeyCheck
 import io.tinychat.net.account.QuotaClient
-import io.tinychat.net.protocol.ProviderModels
 import io.tinychat.net.search.AnySearchClient
 import io.tinychat.net.search.DeepSeekWebSearchClient
 import io.tinychat.net.search.TavilySearchClient
@@ -282,7 +281,7 @@ class AppContainer(context: Context) {
             providerStore.setCheck(provider.id, ProviderCheck.UNKNOWN, null, System.currentTimeMillis())
             return "尚未配置 API Key"
         }
-        val message = when (val result = account.checkKey(ProviderModels.url(provider), key)) {
+        val message = when (val result = account.checkKey(provider, key)) {
             KeyCheck.Ok -> null
             KeyCheck.Invalid -> "Key 无效"
             is KeyCheck.Failed -> result.message
@@ -306,7 +305,7 @@ class AppContainer(context: Context) {
     suspend fun fetchModels(provider: Provider, candidateKey: String? = null): List<String> {
         val key = candidateKey?.trim()?.takeIf { it.isNotEmpty() } ?: apiKeyFor(provider.id)
             ?: throw IllegalStateException("请先填写 API Key")
-        return account.modelIds(ProviderModels.url(provider), key)
+        return account.modelIds(provider, key)
     }
 
     /** 订阅额度（M8-6）：只有 OpenCode Go 有；失败返回 null，UI 隐藏整块。 */

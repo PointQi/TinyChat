@@ -78,6 +78,7 @@ class UserSettings internal constructor(private val store: DataStore<Preferences
 
     /** 用户常用语言，喂给 `{{language}}` 与 `latest_reminder` */
     val promptLanguage: Flow<String> = store.data.map { it[PROMPT_LANGUAGE] ?: "中文" }
+    val appLanguage: Flow<String> = store.data.map { it[APP_LANGUAGE] ?: "zh-CN" }
 
     /** 外观：`system` / `light` / `dark`（M8-4） */
     val themeMode: Flow<String> = store.data.map { it[THEME_MODE] ?: "system" }
@@ -198,6 +199,10 @@ class UserSettings internal constructor(private val store: DataStore<Preferences
         store.edit { it[THEME_MODE] = mode }
     }
 
+    suspend fun setAppLanguage(languageTag: String) {
+        store.edit { it[APP_LANGUAGE] = languageTag }
+    }
+
     suspend fun setFontScale(scale: Float) {
         store.edit { it[FONT_SCALE] = scale.coerceIn(0.9f, 1.3f) }
     }
@@ -215,6 +220,7 @@ class UserSettings internal constructor(private val store: DataStore<Preferences
         private val PROMPT_LOCATION = stringPreferencesKey("prompt_location")
         private val PROMPT_LANGUAGE = stringPreferencesKey("prompt_language")
         private val THEME_MODE = stringPreferencesKey("theme_mode")
+        private val APP_LANGUAGE = stringPreferencesKey("app_language")
         private val FONT_SCALE = floatPreferencesKey("font_scale")
         private val ACTIVE_PROVIDER = stringPreferencesKey("active_provider_id")
         private val CHAT_EFFORT = stringPreferencesKey("chat_effort")

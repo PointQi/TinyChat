@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
@@ -50,13 +51,13 @@ fun WebSearchSettingsScreen(
     val hasEffectiveKey = keyEdits[picked]?.isNotBlank() ?: credentials.hasKey(picked)
 
     Column(Modifier.fillMaxSize().background(palette.bg)) {
-        TcTopBar(title = "联网搜索", leading = { TcIconButton(TcIcons.Back, "返回", onBack) })
+        TcTopBar(title = stringResource(R.string.prefs_detail_search_title), leading = { TcIconButton(TcIcons.Back, stringResource(R.string.prefs_detail_back), onBack) })
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             for (option in WebSearchProvider.entries) {
                 TcListRow(
                     title = option.label,
                     trailing = if (picked == option) {
-                        { Icon(TcIcons.Check, "已选择", tint = palette.brand) }
+                        { Icon(TcIcons.Check, stringResource(R.string.prefs_detail_selected), tint = palette.brand) }
                     } else {
                         null
                     },
@@ -65,13 +66,13 @@ fun WebSearchSettingsScreen(
             }
             Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                 EditorField(
-                    label = "${picked.label} API Key",
+                    label = stringResource(R.string.prefs_detail_search_key, picked.label),
                     value = key,
                     enabled = !saving,
                     placeholder = when {
-                        keySaved && !clearKey -> "已保存"
-                        picked == WebSearchProvider.DEEPSEEK && credentials.canReuseDeepSeekKey -> "复用官方密钥"
-                        picked == WebSearchProvider.ANYSEARCH -> "可选"
+                        keySaved && !clearKey -> stringResource(R.string.prefs_detail_saved)
+                        picked == WebSearchProvider.DEEPSEEK && credentials.canReuseDeepSeekKey -> stringResource(R.string.prefs_detail_search_key_reuse)
+                        picked == WebSearchProvider.ANYSEARCH -> stringResource(R.string.prefs_detail_search_key_optional)
                         else -> ""
                     },
                     onValueChange = { input ->
@@ -81,7 +82,7 @@ fun WebSearchSettingsScreen(
                     secret = !reveal,
                     trailing = {
                         Text(
-                            if (reveal) "隐藏" else "显示",
+                            if (reveal) stringResource(R.string.prefs_detail_hide) else stringResource(R.string.prefs_detail_show),
                             style = TcTypography.bodyMedium,
                             color = palette.labelSecondary,
                             modifier = Modifier.clickable { reveal = !reveal }.padding(start = 10.dp),
@@ -90,7 +91,7 @@ fun WebSearchSettingsScreen(
                 )
                 if (keySaved && key.isBlank()) {
                     Text(
-                        text = if (clearKey) "撤销清除" else "清除密钥",
+                        text = if (clearKey) stringResource(R.string.prefs_detail_search_undo_clear) else stringResource(R.string.prefs_detail_search_clear_key),
                         style = TcTypography.labelMedium,
                         color = if (clearKey) palette.brand else palette.danger,
                         modifier = Modifier
@@ -108,7 +109,7 @@ fun WebSearchSettingsScreen(
             }
             if (saveFailed) {
                 Text(
-                    "保存失败，请重试",
+                    stringResource(R.string.prefs_detail_search_save_retry),
                     style = TcTypography.labelMedium,
                     color = palette.danger,
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -116,7 +117,7 @@ fun WebSearchSettingsScreen(
             }
         }
         TcButton(
-            text = if (saving) "保存中…" else "保存",
+            text = if (saving) stringResource(R.string.prefs_detail_saving) else stringResource(R.string.prefs_detail_save),
             onClick = {
                 scope.launch {
                     saving = true

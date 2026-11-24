@@ -235,7 +235,7 @@ object KnownProviders {
     )
 
     /** 目录服务商：添加页「第三方模型提供商」下拉里的选项。 */
-    val catalog: List<Provider> get() = listOf(deepSeek, openCodeGo)
+    val catalog: List<Provider> = listOf(deepSeek, openCodeGo) + DshProviderPresets.entries
 }
 
 /** `Provider.meta` 的已知键。 */

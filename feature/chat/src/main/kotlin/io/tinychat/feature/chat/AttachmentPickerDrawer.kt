@@ -1,5 +1,6 @@
 package io.tinychat.feature.chat
 
+import androidx.compose.ui.res.stringResource
 import android.Manifest
 import android.content.ContentResolver
 import android.content.ContentUris
@@ -96,9 +97,9 @@ internal fun AttachmentPickerDrawer(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (cameraEnabled) AttachmentAction(TcIcons.Camera, "拍照", Modifier.weight(1f), onTakePhoto)
-                    if (photosEnabled) AttachmentAction(TcIcons.Photo, "相册", Modifier.weight(1f), onOpenGallery)
-                    if (filesEnabled) AttachmentAction(TcIcons.Folder, "文件", Modifier.weight(1f), onPickFiles)
+                    if (cameraEnabled) AttachmentAction(TcIcons.Camera, stringResource(R.string.chat_take_a_photo), Modifier.weight(1f), onTakePhoto)
+                    if (photosEnabled) AttachmentAction(TcIcons.Photo, stringResource(R.string.chat_photos), Modifier.weight(1f), onOpenGallery)
+                    if (filesEnabled) AttachmentAction(TcIcons.Folder, stringResource(R.string.chat_files), Modifier.weight(1f), onPickFiles)
                 }
             }
         },
@@ -164,13 +165,13 @@ private fun RecentPhotos(drafts: List<DraftAttachment>, onTogglePhoto: (Uri) -> 
                         .combinedClickable(
                             role = Role.Checkbox,
                             onClick = { onTogglePhoto(uri) },
-                            onLongClickLabel = "预览",
+                            onLongClickLabel = stringResource(R.string.chat_preview),
                             onLongClick = { preview = uri },
                         ),
                 ) {
                     val thumb by rememberPhotoBitmap(uri, targetSize = 240, thumbnail = true)
                     thumb?.let {
-                        Image(it, "最近照片 ${index + 1}", Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+                        Image(it, stringResource(R.string.chat_recent_photo_number, index + 1), Modifier.matchParentSize(), contentScale = ContentScale.Crop)
                     }
                     Box(
                         modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).size(19.dp)
@@ -187,7 +188,7 @@ private fun RecentPhotos(drafts: List<DraftAttachment>, onTogglePhoto: (Uri) -> 
         Box(Modifier.fillMaxWidth().height(78.dp), contentAlignment = Alignment.Center) {
             when {
                 !permission -> Text(
-                    "允许显示最近照片",
+                    stringResource(R.string.chat_allow_access_to_recent_photos),
                     style = TcTypography.bodyMedium,
                     color = palette.brand,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) {
@@ -195,7 +196,7 @@ private fun RecentPhotos(drafts: List<DraftAttachment>, onTogglePhoto: (Uri) -> 
                     }.padding(10.dp),
                 )
                 items == null -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else -> Text("暂无最近照片", style = TcTypography.bodySmall, color = palette.labelTertiary)
+                else -> Text(stringResource(R.string.chat_no_recent_photos), style = TcTypography.bodySmall, color = palette.labelTertiary)
             }
         }
     }
@@ -207,7 +208,7 @@ private fun RecentPhotos(drafts: List<DraftAttachment>, onTogglePhoto: (Uri) -> 
                     .background(Color.Black).clickable { preview = null },
                 contentAlignment = Alignment.Center,
             ) {
-                image?.let { Image(it, "照片预览", Modifier.matchParentSize(), contentScale = ContentScale.Fit) }
+                image?.let { Image(it, stringResource(R.string.chat_photo_preview), Modifier.matchParentSize(), contentScale = ContentScale.Fit) }
             }
         }
     }

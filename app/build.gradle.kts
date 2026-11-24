@@ -19,13 +19,14 @@ android {
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        // Fork 使用独立的安装包身份，可和上游 TinyChat 同时安装。
-        applicationId = "io.github.pointqi.tinychat"
+        applicationId = "top.tbpdt.tinychat"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 7
-        versionName = "1.0.6"
+        versionCode = 8
+        versionName = "1.0.7"
     }
+
+    androidResources.localeFilters += listOf("zh", "en", "ru", "fr", "es")
 
     signingConfigs {
         if (hasReleaseKey) {

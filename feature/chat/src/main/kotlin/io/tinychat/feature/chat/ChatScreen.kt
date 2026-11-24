@@ -1,11 +1,14 @@
 package io.tinychat.feature.chat
 
+import androidx.compose.ui.res.stringResource
 import android.Manifest
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -14,6 +17,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -191,7 +195,6 @@ import java.time.LocalTime
 fun ChatScreen(
     sessionId: String?,
     state: ChatUiState,
-    greetingLogoModifier: Modifier = Modifier,
     screenIsActive: Boolean = true,
     hasApiKey: Boolean,
     autoSpeak: Boolean,
@@ -296,7 +299,7 @@ fun ChatScreen(
         if (granted) {
             onToggleVoiceMode()
         } else {
-            Toast.makeText(context, "无法使用麦克风，请在系统设置里允许录音", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.chat_allow_microphone_access_in_system_settings), Toast.LENGTH_SHORT).show()
         }
     }
     val onMicClick: () -> Unit = {
@@ -312,7 +315,7 @@ fun ChatScreen(
     // 语音/朗读的一次性提示（未识别到语音内容、朗读失败……）
     LaunchedEffect(state.hint) {
         val hint = state.hint ?: return@LaunchedEffect
-        Toast.makeText(context, hint, Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, localizedChatStatus(context, hint), Toast.LENGTH_SHORT).show()
         onClearHint()
     }
 
@@ -337,7 +340,7 @@ fun ChatScreen(
     ) {
         TcTopBar(
             leading = {
-                TcIconButton(TcIcons.Menu, "会话列表", onClick = {
+                TcIconButton(TcIcons.Menu, stringResource(R.string.chat_chat_history), onClick = {
                     attachmentDrawerOpen = false
                     onOpenDrawer()
                 })
@@ -348,17 +351,17 @@ fun ChatScreen(
                 if (state.supportsVoice) {
                     TcIconButton(
                         icon = TcIcons.Speak,
-                        contentDescription = if (autoSpeak) "关闭自动朗读" else "开启自动朗读",
+                        contentDescription = if (autoSpeak) stringResource(R.string.chat_turn_off_auto_read) else stringResource(R.string.chat_turn_on_auto_read),
                         onClick = onToggleAutoSpeak,
                         tint = if (autoSpeak) palette.brand else palette.labelSecondary,
                     )
                 }
-                TcIconButton(TcIcons.PlusCircle, "新建对话", onNewChat)
+                TcIconButton(TcIcons.PlusCircle, stringResource(R.string.chat_new_chat), onNewChat)
             },
         )
 
         if (state.messages.isEmpty()) {
-            Greeting(modifier = Modifier.weight(1f), logoModifier = greetingLogoModifier)
+            Greeting(modifier = Modifier.weight(1f))
         } else {
             MessageList(
                 sessionId = sessionId,
@@ -376,9 +379,10 @@ fun ChatScreen(
         }
 
         state.error?.let { message ->
+            val displayMessage = localizedChatStatus(context, message)
             val action = if (state.errorKind == ErrorKind.HTTP_401) onOpenProviderSettings else null
             Text(
-                text = if (action != null) "$message，点这里去设置" else message,
+                text = if (action != null) stringResource(R.string.chat_error_with_settings, displayMessage) else displayMessage,
                 style = TcTypography.bodySmall,
                 color = palette.danger,
                 modifier = Modifier
@@ -390,12 +394,12 @@ fun ChatScreen(
 
         if (state.providerMissing) {
             TcInlineHint(
-                text = "此会话的服务商已被移除，无法继续对话",
+                text = stringResource(R.string.chat_the_provider_for_this_chat_was_removed),
                 onClick = onOpenProviderSettings,
             )
         } else if (!hasApiKey) {
             TcInlineHint(
-                text = "尚未配置服务商，点击设置 API Key",
+                text = stringResource(R.string.chat_set_up_a_provider_to_start_chatting),
                 onClick = onOpenProviderSettings,
             )
         }
@@ -447,7 +451,7 @@ fun ChatScreen(
 
         if (state.messages.isNotEmpty()) {
             Text(
-                text = "回答由 AI 生成，仅供参考",
+                text = stringResource(R.string.chat_ai_can_make_mistakes_check_important_information),
                 style = TcTypography.bodySmall,
                 color = palette.labelTertiary,
                 textAlign = TextAlign.Center,
@@ -462,13 +466,13 @@ fun ChatScreen(
 }
 
 @Composable
-private fun Greeting(modifier: Modifier = Modifier, logoModifier: Modifier = Modifier) {
+private fun Greeting(modifier: Modifier = Modifier) {
     val palette = TcTheme.palette
     val hour = remember { LocalTime.now().hour }
     val greeting = when {
-        hour < 12 -> "早上好"
-        hour < 18 -> "下午好"
-        else -> "晚上好"
+        hour < 12 -> stringResource(R.string.chat_good_morning_how_can_i_help)
+        hour < 18 -> stringResource(R.string.chat_good_afternoon_how_can_i_help)
+        else -> stringResource(R.string.chat_good_evening_how_can_i_help)
     }
 
     Box(
@@ -479,10 +483,10 @@ private fun Greeting(modifier: Modifier = Modifier, logoModifier: Modifier = Mod
     ) {
         // 图标 + 问候语整块居中（决策 62）：只加图标不破版，文字位置不受影响。
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TcLogoMark(size = 72.dp, modifier = logoModifier)
+            TcLogoMark(size = 72.dp)
             Spacer(Modifier.height(20.dp))
             Text(
-                text = "$greeting，我能帮什么忙吗？",
+                text = greeting,
                 style = TcTypography.headlineSmall,
                 color = palette.labelPrimary,
                 textAlign = TextAlign.Center,
@@ -515,6 +519,35 @@ private fun MessageList(
     var expandedThinkingIds by rememberSaveable(sessionId) { mutableStateOf(longArrayOf()) }
     var hiddenThinkingPreviewIds by rememberSaveable(sessionId) { mutableStateOf(longArrayOf()) }
 
+    val imagePrompt = state.imagePromptSend
+    val promptMessageId = imagePrompt?.messageId
+    val promptProgress = remember(sessionId, promptMessageId) {
+        val justInserted = imagePrompt != null && promptMessageId != null &&
+            SystemClock.uptimeMillis() - imagePrompt.revealedAt < TcMotion.Base &&
+            ValueAnimator.areAnimatorsEnabled()
+        Animatable(if (justInserted) 0f else 1f)
+    }
+    LaunchedEffect(promptProgress) {
+        if (promptProgress.value < 1f) {
+            promptProgress.animateTo(1f, tween(TcMotion.Base, easing = TcMotion.Decelerate))
+        }
+    }
+    val promptDrafts = imagePrompt?.drafts.orEmpty()
+    val pendingPromptAttachments = remember(promptDrafts) {
+        promptDrafts.map { draft ->
+            ChatAttachment(
+                id = draft.id,
+                fileName = draft.fileName,
+                size = draft.size,
+                isImage = draft.isImage,
+                width = draft.width,
+                height = draft.height,
+                thumbPath = draft.thumbPath,
+                state = AttachmentState.LOCAL,
+            )
+        }
+    }
+
     // 用户自己拖离底部就停止跟随，别把人拽回去；拖回底部后恢复。
     val following = rememberFollowLatest(listState)
 
@@ -531,8 +564,8 @@ private fun MessageList(
     // 自动跟随：新增消息、正文变长、思考区展开、键盘弹起让视口变矮，都会重新布局，
     // 因此不再依赖 messages.size —— 流式输出期间也能一直贴着底部。
     LaunchedEffect(listState) {
-        snapshotFlow { listState.layoutInfo }.collect {
-            if (following.value && !listState.isScrollInProgress) listState.jumpToBottom()
+        snapshotFlow { listState.layoutInfo to following.value }.collect { (_, followLatest) ->
+            if (followLatest && !listState.isScrollInProgress) listState.jumpToBottom()
         }
     }
 
@@ -556,8 +589,22 @@ private fun MessageList(
         ) {
             items(state.messages, key = { it.id }) { message ->
                 val isLatest = message.id == state.messages.lastOrNull()?.id
+                val isNewPrompt = message.id == promptMessageId
+                // The text row can reach the UI before its attachments finish saving.
+                // Use the existing draft previews to reserve the final row size on the first frame.
+                val visibleMessage = if (isNewPrompt && state.isStreaming && message.attachments.isEmpty()) {
+                    message.copy(attachments = pendingPromptAttachments)
+                } else {
+                    message
+                }
                 MessageRow(
-                    message = message,
+                    message = visibleMessage,
+                    modifier = if (isNewPrompt) Modifier.graphicsLayer {
+                        // Read the animation in the layer so the timeline keeps its measured layout.
+                        val progress = promptProgress.value
+                        alpha = progress
+                        translationY = 22.dp.toPx() * (1f - progress)
+                    } else Modifier,
                     showUsage = showUsage,
                     streaming = isLatest && state.isStreaming,
                     thinkingExpanded = if (message.isThinking) {
@@ -606,7 +653,7 @@ private fun MessageList(
             ) {
                 Icon(
                     imageVector = TcIcons.ChevronDown,
-                    contentDescription = "回到底部",
+                    contentDescription = stringResource(R.string.chat_jump_to_latest),
                     tint = TcTheme.palette.labelSecondary,
                     modifier = Modifier.size(20.dp),
                 )
@@ -627,6 +674,7 @@ private fun MessageList(
 @Composable
 private fun MessageRow(
     message: ChatMessage,
+    modifier: Modifier = Modifier,
     showUsage: Boolean,
     streaming: Boolean,
     thinkingExpanded: Boolean,
@@ -664,7 +712,7 @@ private fun MessageRow(
 
     if (message.isUser) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.End,
         ) {
             // 附件（M4-4）：图片走网格、文件走卡片，都在气泡**上方**右贴边
@@ -688,7 +736,7 @@ private fun MessageRow(
                         ) {
                             Icon(
                                 imageVector = TcIcons.Regenerate,
-                                contentDescription = "重试",
+                                contentDescription = stringResource(R.string.chat_retry),
                                 tint = palette.brandOn,
                                 modifier = Modifier.size(14.dp),
                             )
@@ -711,7 +759,7 @@ private fun MessageRow(
             if (message.hasFailedAttachment) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "文件上传失败，点击重试",
+                    text = stringResource(R.string.chat_upload_failed_tap_to_retry),
                     style = TcTypography.bodySmall,
                     color = palette.warning,
                     modifier = Modifier
@@ -723,7 +771,7 @@ private fun MessageRow(
             message.retryHint?.let { hint ->
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = hint,
+                    text = localizedChatStatus(LocalContext.current, hint),
                     style = TcTypography.bodySmall,
                     color = palette.labelTertiary,
                 )
@@ -739,11 +787,11 @@ private fun MessageRow(
                 anchor = anchor,
                 onDismiss = { menuOpen = false },
                 items = listOf(
-                    TcMenuItem("复制") {
+                    TcMenuItem(stringResource(R.string.chat_copy)) {
                         menuOpen = false
                         onCopyMessage()
                     },
-                    TcMenuItem("编辑消息") {
+                    TcMenuItem(stringResource(R.string.chat_edit_message)) {
                         menuOpen = false
                         onTap()
                     },
@@ -845,7 +893,7 @@ private fun MessageRow(
                     if (footer.showActions) {
                         ActionIcon(
                             icon = if (copied) TcIcons.Check else TcIcons.Copy,
-                            description = if (copied) "已复制" else "复制",
+                            description = if (copied) stringResource(R.string.chat_copied) else stringResource(R.string.chat_copy),
                             tint = if (copied) palette.labelSecondary else palette.labelTertiary,
                             onClick = {
                                 onCopyMessage()
@@ -870,14 +918,14 @@ private fun MessageRow(
                             } else {
                                 ActionIcon(
                                     icon = TcIcons.Speak,
-                                    description = "朗读",
+                                    description = stringResource(R.string.chat_read_aloud),
                                     onClick = onReadAloud,
                                 )
                             }
                         }
                         ActionIcon(
                             icon = TcIcons.Share,
-                            description = "分享",
+                            description = stringResource(R.string.chat_share),
                             onClick = { shareOpen = true },
                         )
                     }
@@ -885,7 +933,7 @@ private fun MessageRow(
                     onRegenerate?.takeIf { footer.showRegenerate }?.let { regenerate ->
                         ActionIcon(
                             icon = TcIcons.Regenerate,
-                            description = "重新生成",
+                            description = stringResource(R.string.chat_regenerate),
                             onClick = regenerate,
                         )
                     }
@@ -902,7 +950,7 @@ private fun MessageRow(
                     Spacer(Modifier.weight(1f))
                     if (onContinue != null) {
                         TcButton(
-                            text = "继续生成",
+                            text = stringResource(R.string.chat_continue),
                             onClick = onContinue,
                             variant = TcButtonVariant.Outline,
                             compact = true,
@@ -921,11 +969,11 @@ private fun MessageRow(
                 anchor = anchor,
                 onDismiss = { menuOpen = false },
                 items = listOf(
-                    TcMenuItem("复制") {
+                    TcMenuItem(stringResource(R.string.chat_copy)) {
                         menuOpen = false
                         onCopyMessage()
                     },
-                    TcMenuItem("选择文本") {
+                    TcMenuItem(stringResource(R.string.chat_select_text)) {
                         menuOpen = false
                         selectOpen = true
                     },
@@ -942,7 +990,7 @@ private fun MessageRow(
         ) {
             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                 Text(
-                    text = "选择文本",
+                    text = stringResource(R.string.chat_select_text),
                     style = TcTypography.titleMedium,
                     color = palette.labelPrimary,
                 )
@@ -996,14 +1044,14 @@ private fun MessageRow(
                     result.onSuccess { shareResult = it }
                         .onFailure { throwable ->
                             android.util.Log.w("ShareCapture", "生成长图失败", throwable)
-                            Toast.makeText(context, "生成长图失败，请重试", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.chat_couldn_t_create_the_image_try_again), Toast.LENGTH_SHORT).show()
                         }
                 }
             },
             onCopyText = {
                 shareOpen = false
                 copyText(context, message.text)
-                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.chat_copied), Toast.LENGTH_SHORT).show()
             },
             onShareText = {
                 shareOpen = false
@@ -1041,7 +1089,7 @@ private fun SourceSheet(
     sheetState: androidx.compose.material3.SheetState,
     onDismiss: () -> Unit,
 ) {
-    ResultSheet(title = "搜索结果", sheetState = sheetState, onDismiss = onDismiss) {
+    ResultSheet(title = stringResource(R.string.chat_search_results), sheetState = sheetState, onDismiss = onDismiss) {
         sources.forEach { source ->
             ResultRow(
                 site = source.site,
@@ -1063,7 +1111,7 @@ private fun ToolResultSheet(
     sheetState: androidx.compose.material3.SheetState,
     onDismiss: () -> Unit,
 ) {
-    ResultSheet(title = step.panelTitle, sheetState = sheetState, onDismiss = onDismiss) {
+    ResultSheet(title = localizedPanelTitle(step), sheetState = sheetState, onDismiss = onDismiss) {
         step.entries.forEach { entry ->
             ResultRow(
                 site = entry.site.ifBlank { entry.title.orEmpty() },
@@ -1221,7 +1269,7 @@ private fun SourceCapsule(
         SourceIcons(sources.distinctBy { it.site }.take(3).mapNotNull { it.iconUrl }, size = 20)
         Spacer(Modifier.width(8.dp))
         Text(
-            text = "${sources.size} 个网页",
+            text = stringResource(R.string.chat_web_result_count, sources.size),
             style = TcTypography.bodySmall,
             color = palette.labelSecondary,
         )
@@ -1352,10 +1400,10 @@ private fun VoiceHoldArea(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = when {
-                    status == VoiceStatus.TRANSCRIBING -> "识别中…"
-                    cancelArmed -> "松开取消"
-                    status == VoiceStatus.RECORDING -> "松开发送"
-                    else -> "按住说话"
+                    status == VoiceStatus.TRANSCRIBING -> stringResource(R.string.chat_transcribing)
+                    cancelArmed -> stringResource(R.string.chat_release_to_cancel)
+                    status == VoiceStatus.RECORDING -> stringResource(R.string.chat_release_to_send)
+                    else -> stringResource(R.string.chat_hold_to_speak)
                 },
                 style = TcTypography.bodyLarge,
                 color = when {
@@ -1366,7 +1414,7 @@ private fun VoiceHoldArea(
             )
             if (status == VoiceStatus.RECORDING && !cancelArmed) {
                 Text(
-                    text = "上滑取消",
+                    text = stringResource(R.string.chat_swipe_up_to_cancel),
                     style = TcTypography.labelMedium,
                     color = palette.labelTertiary,
                     modifier = Modifier.padding(top = 2.dp),
@@ -1470,7 +1518,7 @@ private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
         ) {
             Icon(
                 imageVector = TcIcons.Back,
-                contentDescription = "上一版",
+                contentDescription = stringResource(R.string.chat_previous_version),
                 tint = if (canPrev) palette.labelSecondary else palette.labelTertiary.copy(alpha = 0.35f),
                 modifier = Modifier.size(16.dp),
             )
@@ -1489,7 +1537,7 @@ private fun VersionSwitcher(index: Int, count: Int, onSwitch: (Int) -> Unit) {
         ) {
             Icon(
                 imageVector = TcIcons.ChevronRight,
-                contentDescription = "下一版",
+                contentDescription = stringResource(R.string.chat_next_version),
                 tint = if (canNext) palette.labelSecondary else palette.labelTertiary.copy(alpha = 0.35f),
                 modifier = Modifier.size(16.dp),
             )
@@ -1515,12 +1563,12 @@ private fun ThinkingBlock(
     val palette = TcTheme.palette
 
     val label = when {
-        inProgress -> "正在思考"
+        inProgress -> stringResource(R.string.chat_thinking)
         // 思考阶段被掐断：不假装「已思考完」，直接标已停止
-        stopped -> "已停止"
+        stopped -> stringResource(R.string.chat_stopped)
         else -> {
             val secs = seconds?.let { it.toInt().coerceAtLeast(1) }
-            if (secs != null) "已思考（用时 $secs 秒）" else "已思考"
+            if (secs != null) stringResource(R.string.chat_reasoning_with_time, secs) else stringResource(R.string.chat_reasoning)
         }
     }
 
@@ -1551,7 +1599,7 @@ private fun ThinkingBlock(
             )
             Icon(
                 imageVector = TcIcons.ChevronRight,
-                contentDescription = if (expanded) "收起思维链" else "展开思维链",
+                contentDescription = if (expanded) stringResource(R.string.chat_collapse_reasoning) else stringResource(R.string.chat_expand_reasoning),
                 tint = palette.labelTertiary,
                 modifier = Modifier
                     .size(16.dp)
@@ -1655,7 +1703,7 @@ private fun ToolCard(step: ToolStep, onOpen: (ToolStep) -> Unit) {
             .clip(RoundedCornerShape(8.dp))
             .then(
                 if (step.canOpen) {
-                    Modifier.clickable(onClickLabel = "打开${step.panelTitle}") { onOpen(step) }
+                    Modifier.clickable(onClickLabel = stringResource(R.string.chat_open_named_panel, localizedPanelTitle(step))) { onOpen(step) }
                 } else {
                     Modifier
                 },
@@ -1666,7 +1714,7 @@ private fun ToolCard(step: ToolStep, onOpen: (ToolStep) -> Unit) {
         Icon(icon, null, tint = palette.labelSecondary, modifier = Modifier.size(15.dp))
         Spacer(Modifier.width(6.dp))
         Text(
-            text = step.title,
+            text = localizedToolTitle(step),
             style = TcTypography.bodyMedium,
             color = palette.labelSecondary,
         )
@@ -1783,6 +1831,8 @@ private fun InputCard(
     ) { if (it) 1f else 0f }
     BackHandler(enabled = screenIsActive && showAttachments) { onAttachmentDrawerChange(false) }
     var previewImage by remember { mutableStateOf<DraftAttachment?>(null) }
+    val pendingPrompt = state.imagePromptSend?.takeIf { state.isStreaming && it.messageId == null }
+    val composerDrafts = pendingPrompt?.drafts ?: state.attachments
 
     /** 取消编辑：清空由 ViewModel 做，这里负责「失焦 + 收起输入法」 */
     val cancelEdit: () -> Unit = {
@@ -1826,13 +1876,13 @@ private fun InputCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "正在编辑消息：",
+                    text = stringResource(R.string.chat_editing_message),
                     style = TcTypography.bodySmall,
                     color = palette.brand,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = "取消",
+                    text = stringResource(R.string.chat_cancel),
                     style = TcTypography.bodySmall,
                     color = palette.labelSecondary,
                     modifier = Modifier
@@ -1845,7 +1895,7 @@ private fun InputCard(
         }
 
         // 附件预览行（M4-1）：选中后立刻能删，发送时一起上传
-        if (state.attachments.isNotEmpty()) {
+        if (composerDrafts.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1853,9 +1903,10 @@ private fun InputCard(
                     .padding(bottom = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                state.attachments.forEach { draft ->
+                composerDrafts.forEach { draft ->
                     DraftChip(
                         draft = draft,
+                        enabled = pendingPrompt == null,
                         onRemove = { onRemoveAttachment(draft.id) },
                         onOpen = { if (draft.isImage) previewImage = draft },
                     )
@@ -1865,9 +1916,8 @@ private fun InputCard(
 
         // 图片快捷提问（官方同款）：只要有图片草稿就出一排可横滑的圆角按钮，
         // 点一下就用这句话 + 全部附件直接发出去，省掉一次输入。
-        if (state.attachments.any { it.isImage } &&
-            state.editingMessageId == null &&
-            !state.isStreaming
+        if (pendingPrompt != null ||
+            (composerDrafts.any { it.isImage } && state.editingMessageId == null && !state.isStreaming)
         ) {
             Row(
                 modifier = Modifier
@@ -1876,8 +1926,9 @@ private fun InputCard(
                     .padding(bottom = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                ImageQuickPrompts.forEach { prompt ->
-                    QuickPromptChip(text = prompt, onClick = {
+                ImageQuickPrompts.forEach { promptId ->
+                    val prompt = stringResource(promptId)
+                    QuickPromptChip(text = prompt, enabled = pendingPrompt == null, onClick = {
                         onAttachmentDrawerChange(false)
                         onQuickSend(prompt)
                     })
@@ -1911,7 +1962,7 @@ private fun InputCard(
             ) {
                 if (state.input.isEmpty()) {
                     Text(
-                        text = "发消息或按住说话",
+                        text = stringResource(R.string.chat_message_or_hold_to_speak),
                         style = TcTypography.bodyLarge,
                         color = palette.labelTertiary,
                     )
@@ -1969,7 +2020,7 @@ private fun InputCard(
             if (state.editingMessageId == null && state.canAttach) {
                 CircleIcon(
                     TcIcons.Attach,
-                    if (showAttachments) "关闭附件" else "附件",
+                    if (showAttachments) stringResource(R.string.chat_close_attachments) else stringResource(R.string.chat_attachments),
                     palette.labelSecondary,
                     iconModifier = Modifier.graphicsLayer { rotationZ = attachmentProgress.value * 45f },
                 ) {
@@ -1982,25 +2033,25 @@ private fun InputCard(
                 Spacer(Modifier.width(4.dp))
             }
             when {
-                state.isStreaming -> CircleIcon(TcIcons.Stop, "停止生成", palette.brand, filled = true, onClick = onStop)
+                state.isStreaming -> CircleIcon(TcIcons.Stop, stringResource(R.string.chat_stop_generating), palette.brand, filled = true, onClick = onStop)
                 state.voiceMode -> when (state.voiceStatus) {
                     // 识别中：转圈，点一下取消
                     VoiceStatus.TRANSCRIBING -> CircleIcon(
                         TcIcons.Keyboard,
-                        "取消识别并回到键盘输入",
+                        stringResource(R.string.chat_cancel_transcription_and_return_to_the_keyboard),
                         palette.labelSecondary,
                         onClick = onMicClick,
                     )
                     // 语音模式：键盘图标（再点回文字输入）
-                    else -> CircleIcon(TcIcons.Keyboard, "切换到键盘输入", palette.labelSecondary, onClick = onMicClick)
+                    else -> CircleIcon(TcIcons.Keyboard, stringResource(R.string.chat_switch_to_keyboard), palette.labelSecondary, onClick = onMicClick)
                 }
                 state.input.isNotBlank() || state.attachments.isNotEmpty() ->
-                    CircleIcon(TcIcons.Send, "发送", palette.brand, filled = true) {
+                    CircleIcon(TcIcons.Send, stringResource(R.string.chat_send), palette.brand, filled = true) {
                         onAttachmentDrawerChange(false)
                         onSend()
                     }
                 else -> if (state.supportsVoice) {
-                    CircleIcon(TcIcons.Mic, "语音输入", palette.labelSecondary, onClick = onMicClick)
+                    CircleIcon(TcIcons.Mic, stringResource(R.string.chat_voice_input), palette.labelSecondary, onClick = onMicClick)
                 }
             }
         }
@@ -2069,7 +2120,7 @@ private fun ModelEffortPill(
         (currentModel.capabilities.thinking || currentModel.thinking != ThinkingMode.NONE)
     val supportsEffort = currentModel?.capabilities?.effort == true
     val label = when {
-        current == null -> "已移除"
+        current == null -> stringResource(R.string.chat_removed)
         else -> currentModel?.let { it.displayName.ifBlank { it.id } }?.shortName() ?: current.displayName
     }
 
@@ -2084,7 +2135,7 @@ private fun ModelEffortPill(
     ) {
         Text(
             text = if (thinkingEnabled && supportsEffort) {
-                "$label ${effort.displayName}"
+                "$label ${localizedThinkingEffort(effort)}"
             } else {
                 label
             },
@@ -2109,7 +2160,7 @@ private fun ModelEffortPill(
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    text = "模型与强度",
+                    text = stringResource(R.string.chat_model_and_reasoning),
                     style = TcTypography.titleMedium,
                     color = palette.labelPrimary,
                 )
@@ -2119,7 +2170,7 @@ private fun ModelEffortPill(
                     val sameProvider = provider.id == providerId
                     val keyed = provider.id in keyedProviders
                     Text(
-                        text = provider.displayName + if (!keyed) "  未配置密钥" else "",
+                        text = provider.displayName + if (!keyed) "  " + stringResource(R.string.chat_no_api_key) else "",
                         style = TcTypography.labelMedium,
                         color = if (keyed) palette.labelSecondary else palette.labelTertiary,
                         modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
@@ -2147,8 +2198,8 @@ private fun ModelEffortPill(
                             )
                             Text(
                                 text = when {
-                                    sameProvider && model.id == modelId -> "当前"
-                                    !keyed -> "未配置"
+                                    sameProvider && model.id == modelId -> stringResource(R.string.chat_current)
+                                    !keyed -> stringResource(R.string.chat_not_set_up)
                                     else -> ""
                                 },
                                 style = TcTypography.bodySmall,
@@ -2160,26 +2211,26 @@ private fun ModelEffortPill(
 
                 if (supportsThinking || supportsEffort) {
                     Spacer(Modifier.height(14.dp))
-                    Text("思考强度", style = TcTypography.labelMedium, color = palette.labelSecondary)
+                    Text(stringResource(R.string.chat_reasoning_effort), style = TcTypography.labelMedium, color = palette.labelSecondary)
                     Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.selectableGroup(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        EffortChip(text = "关闭", selected = !thinkingEnabled) {
+                        EffortChip(text = stringResource(R.string.chat_reasoning_off), selected = !thinkingEnabled) {
                             onSetThinking(false, effort)
                         }
                         if (supportsEffort) {
                             ThinkingEffort.entries.forEach { option ->
                                 EffortChip(
-                                    text = option.displayName,
+                                    text = localizedThinkingEffort(option),
                                     selected = thinkingEnabled && option == effort,
                                     onClick = { onSetThinking(true, option) },
                                 )
                             }
                         } else {
                             EffortChip(
-                                text = "开启",
+                                text = stringResource(R.string.chat_reasoning_on),
                                 selected = thinkingEnabled,
                                 onClick = { onSetThinking(true, effort) },
                             )
@@ -2195,7 +2246,7 @@ private fun ModelEffortPill(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "专家模式",
+                        stringResource(R.string.chat_expert_mode),
                         style = TcTypography.bodyMedium,
                         color = palette.labelPrimary,
                         modifier = Modifier.weight(1f),
@@ -2256,7 +2307,7 @@ private fun SearchPill(enabled: Boolean, onClick: () -> Unit) {
     ) {
         Icon(
             imageVector = TcIcons.Globe,
-            contentDescription = if (enabled) "关闭智能搜索" else "开启智能搜索",
+            contentDescription = if (enabled) stringResource(R.string.chat_turn_off_web_search) else stringResource(R.string.chat_turn_on_web_search),
             tint = if (enabled) palette.brand else palette.labelSecondary,
             modifier = Modifier.size(16.dp),
         )
@@ -2421,7 +2472,7 @@ private fun AttachmentThumb(attachment: ChatAttachment, size: Dp, onClick: () ->
             ) {
                 Icon(
                     imageVector = TcIcons.Regenerate,
-                    contentDescription = "文件上传失败",
+                    contentDescription = stringResource(R.string.chat_upload_failed),
                     tint = Color.White,
                     modifier = Modifier.size(20.dp),
                 )
@@ -2466,9 +2517,10 @@ private fun FileAttachmentCard(attachment: ChatAttachment, palette: TcPalette) {
             )
             Text(
                 text = when {
-                    attachment.isMissing -> "原件未导入"
-                    attachment.state == AttachmentState.UPLOADING -> "上传中"
-                    attachment.isFailed -> "上传失败"
+                    attachment.isMissing -> stringResource(R.string.chat_original_file_wasn_t_imported)
+                    attachment.state == AttachmentState.UPLOADING -> stringResource(R.string.chat_uploading)
+                    attachment.isFailed -> stringResource(R.string.chat_upload_failed_2)
+                    attachment.size <= 0 -> stringResource(R.string.chat_unknown_size)
                     else -> attachment.fileDescription
                 },
                 style = TcTypography.bodySmall,
@@ -2483,10 +2535,15 @@ private fun FileAttachmentCard(attachment: ChatAttachment, palette: TcPalette) {
 }
 
 /** 图片快捷提问（官方同款）：点一下直接带着图发出去 */
-private val ImageQuickPrompts = listOf("这是什么", "分析一下", "怎么办", "解释一下")
+private val ImageQuickPrompts = listOf(
+    R.string.chat_prompt_what_is_this,
+    R.string.chat_prompt_analyze,
+    R.string.chat_prompt_what_to_do,
+    R.string.chat_prompt_explain,
+)
 
 @Composable
-private fun QuickPromptChip(text: String, onClick: () -> Unit) {
+private fun QuickPromptChip(text: String, enabled: Boolean, onClick: () -> Unit) {
     val palette = TcTheme.palette
     // 只描线、不填充（同「继续生成」那种轻量按钮）
     Box(
@@ -2494,7 +2551,7 @@ private fun QuickPromptChip(text: String, onClick: () -> Unit) {
             .height(32.dp)
             .clip(RoundedCornerShape(100.dp))
             .border(1.dp, palette.borderL2, RoundedCornerShape(100.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -2518,7 +2575,7 @@ private fun QuickPromptChip(text: String, onClick: () -> Unit) {
 
 /** 输入框上方的草稿缩略图（64dp，右上角删除） */
 @Composable
-private fun DraftChip(draft: DraftAttachment, onRemove: () -> Unit, onOpen: () -> Unit) {
+private fun DraftChip(draft: DraftAttachment, enabled: Boolean, onRemove: () -> Unit, onOpen: () -> Unit) {
     val palette = TcTheme.palette
     val load = rememberBitmapLoad(draft.thumbPath, 192)
     Box(modifier = Modifier.size(56.dp)) {
@@ -2527,7 +2584,7 @@ private fun DraftChip(draft: DraftAttachment, onRemove: () -> Unit, onOpen: () -
                 .size(56.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(palette.bubble)
-                .clickable(onClick = onOpen),
+                .clickable(enabled = enabled, onClick = onOpen),
             contentAlignment = Alignment.Center,
         ) {
             if (draft.isImage && load.bitmap != null) {
@@ -2555,12 +2612,12 @@ private fun DraftChip(draft: DraftAttachment, onRemove: () -> Unit, onOpen: () -
                 .size(18.dp)
                 .clip(CircleShape)
                 .background(palette.labelSecondary)
-                .clickable(onClick = onRemove),
+                .clickable(enabled = enabled, onClick = onRemove),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = TcIcons.Close,
-                contentDescription = "移除附件",
+                contentDescription = stringResource(R.string.chat_remove_attachment),
                 tint = palette.bg,
                 modifier = Modifier.size(10.dp),
             )
@@ -2619,7 +2676,7 @@ private fun AttachmentPreviewDialog(
                 )
                 // 解码真的失败了（文件被删/损坏）才说这一句
                 else -> Text(
-                    text = "图片已不在本机",
+                    text = stringResource(R.string.chat_image_is_no_longer_on_this_device),
                     style = TcTypography.bodySmall,
                     color = Color.White,
                     modifier = Modifier.padding(24.dp),

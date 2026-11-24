@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.tinychat.designsystem.TcIcons
 import io.tinychat.designsystem.TcTheme
@@ -74,12 +75,12 @@ fun DiagnosticsScreen(
             .background(palette.bg),
     ) {
         TcTopBar(
-            title = "诊断信息",
-            leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
+            title = stringResource(R.string.prefs_detail_diagnostics),
+            leading = { TcIconButton(TcIcons.Back, stringResource(R.string.prefs_detail_back), onBack) },
             trailing = {
                 if (items.isNotEmpty()) {
                     TextButton(onClick = { confirmClearAll = true }) {
-                        Text("清除", color = palette.labelSecondary, style = TcTypography.labelLarge)
+                        Text(stringResource(R.string.prefs_detail_clear), color = palette.labelSecondary, style = TcTypography.labelLarge)
                     }
                 }
             },
@@ -124,8 +125,8 @@ fun DiagnosticReportScreen(
 
     Column(Modifier.fillMaxSize().background(palette.bg)) {
         TcTopBar(
-            title = "诊断信息",
-            leading = { TcIconButton(TcIcons.Back, "返回", onBack) },
+            title = stringResource(R.string.prefs_detail_diagnostics),
+            leading = { TcIconButton(TcIcons.Back, stringResource(R.string.prefs_detail_back), onBack) },
         )
         if (body == null) {
             EmptyDiagnostics()
@@ -149,12 +150,12 @@ fun DiagnosticReportScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 TcButton(
-                    text = "复制",
+                    text = stringResource(R.string.prefs_detail_diagnostics_copy),
                     onClick = { copyToClipboard(context, body) },
                     modifier = Modifier.weight(1f),
                 )
                 TcButton(
-                    text = "清除",
+                    text = stringResource(R.string.prefs_detail_clear),
                     onClick = { confirmClear = true },
                     modifier = Modifier.weight(1f),
                     variant = TcButtonVariant.Outline,
@@ -178,7 +179,7 @@ fun DiagnosticReportScreen(
 private fun EmptyDiagnostics() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
-            text = "暂无记录",
+            text = stringResource(R.string.prefs_detail_diagnostics_empty),
             style = TcTypography.bodyMedium,
             color = TcTheme.palette.labelTertiary,
         )
@@ -190,19 +191,19 @@ private fun ClearDiagnosticsDialog(onDismiss: () -> Unit, onClear: () -> Unit) {
     val palette = TcTheme.palette
     TcAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("清除诊断信息？") },
-        text = { Text("清除后无法恢复。") },
+        title = { Text(stringResource(R.string.prefs_detail_diagnostics_clear)) },
+        text = { Text(stringResource(R.string.prefs_detail_diagnostics_clear_warning)) },
         confirmButton = {
-            TextButton(onClick = onClear) { Text("清除", color = palette.danger) }
+            TextButton(onClick = onClear) { Text(stringResource(R.string.prefs_detail_clear), color = palette.danger) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消", color = palette.labelSecondary) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.prefs_detail_cancel), color = palette.labelSecondary) }
         },
     )
 }
 
 private fun copyToClipboard(context: Context, text: String) {
     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-    manager?.setPrimaryClip(ClipData.newPlainText("TinyChat 诊断信息", text))
-    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+    manager?.setPrimaryClip(ClipData.newPlainText(context.getText(R.string.prefs_detail_diagnostics_clip), text))
+    Toast.makeText(context, R.string.prefs_detail_diagnostics_copied, Toast.LENGTH_SHORT).show()
 }

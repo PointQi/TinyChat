@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.paneTitle
@@ -76,7 +77,7 @@ fun TcSideDrawers(
     ) {
         DrawerPane(
             width = sessionsWidth,
-            title = "会话列表",
+            title = stringResource(R.string.side_drawer_history),
             atStart = true,
             revealed = revealed == SidePanel.Sessions,
             hasProgress = { progress() > 0f },
@@ -85,14 +86,13 @@ fun TcSideDrawers(
         )
         DrawerPane(
             width = usageWidth,
-            title = "用量与费用",
+            title = stringResource(R.string.side_drawer_usage),
             atStart = false,
             revealed = revealed == SidePanel.Usage,
             hasProgress = { progress() < 0f },
             modifier = Modifier.align(Alignment.CenterEnd),
             content = usage,
         )
-
         // 只移动和缩放绘制层，列表、输入区和抽屉不跟着每帧重新测量。
         Box(
             Modifier.fillMaxSize().graphicsLayer {
@@ -126,11 +126,13 @@ fun TcSideDrawers(
                     }.clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                        onClickLabel = when (revealed) {
-                            SidePanel.Sessions -> "关闭会话列表"
-                            SidePanel.Usage -> "关闭用量与费用"
-                            SidePanel.None -> "关闭侧栏"
-                        },
+                        onClickLabel = stringResource(
+                            when (revealed) {
+                                SidePanel.Sessions -> R.string.side_drawer_close_history
+                                SidePanel.Usage -> R.string.side_drawer_close_usage
+                                SidePanel.None -> R.string.side_drawer_close
+                            },
+                        ),
                         onClick = onDismiss,
                     ),
                 )

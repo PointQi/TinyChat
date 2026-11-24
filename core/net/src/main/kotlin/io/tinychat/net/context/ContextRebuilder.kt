@@ -20,7 +20,7 @@ import kotlinx.serialization.json.contentOrNull
  * 历史轮次里的一个附件：只带重建请求需要的东西。
  *
  * - `remoteId`：官方 Files API 的 file_id，为 null = 没上传成功（导入的老数据、或上传失败），**不进请求**；
- * - `dataUri`：第三方协议用的内联图片或 PDF；`text` 是已解码的纯文本文件内容。
+ * - `dataUri`：第三方协议用的内联图片或 PDF；`text` 是在本机读取的文件文字。
  * - 若该轮正文也为空、又没有可用的附件，整轮会被丢弃（与「孤立 USER」同处理）。
  */
 data class HistoryAttachment(
@@ -36,12 +36,21 @@ data class HistoryAttachment(
     val usable: Boolean get() = !remoteId.isNullOrBlank() || !dataUri.isNullOrBlank() || text != null
 }
 
+internal fun HistoryAttachment.documentTextBlock(): JsonObject? {
+    val content = text?.takeIf { !isImage && it.isNotBlank() } ?: return null
+    val name = fileName.orEmpty().ifBlank { "附件" }
+    return buildJsonObject {
+        put("type", JsonPrimitive("text"))
+        put("text", JsonPrimitive("[附件 $name]\n$content\n[/附件]\n\n"))
+    }
+}
+
 /**
  * 各协议的附件块。
  *
  * - `DEEPSEEK`：官方 Files API，`{"type":"image","source":{"type":"file","file_id":…}}`；
  * - `OPENAI`：内联 `image_url`、PDF 文件块和文本内容；
- * - `ANTHROPIC`：Base64 `image`，以及 Base64 PDF 或纯文本 `document`。
+ * - `ANTHROPIC`：Base64 `image`、Base64 PDF 和文本内容。
  * 第三方协议的内联附件从本地文件重建。
  */
 enum class ImageFlavor { DEEPSEEK, OPENAI, ANTHROPIC }
@@ -190,7 +199,6 @@ object ContextRebuilder {
     private fun openAiAttachmentBlock(attachment: HistoryAttachment): JsonObject? {
         val uri = attachment.dataUri
         val name = attachment.fileName.orEmpty().ifBlank { "附件" }
-        val text = attachment.text
         return when {
             attachment.isImage && uri != null -> openAiImageBlock(uri)
             uri != null && attachment.mime == "application/pdf" -> buildJsonObject {
@@ -200,11 +208,7 @@ object ContextRebuilder {
                     put("file_data", JsonPrimitive(uri))
                 })
             }
-            text != null -> buildJsonObject {
-                put("type", JsonPrimitive("text"))
-                put("text", JsonPrimitive("[附件 $name]\n$text\n[/附件]\n\n"))
-            }
-            else -> null
+            else -> attachment.documentTextBlock()
         }
     }
 

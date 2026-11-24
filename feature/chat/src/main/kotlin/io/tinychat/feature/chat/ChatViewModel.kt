@@ -1,6 +1,7 @@
 package io.tinychat.feature.chat
 
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -147,6 +148,15 @@ data class DraftAttachment(
     val sizeText: String get() = formatBytes(size)
 }
 
+/** Local handoff from the image suggestion to its newly inserted user message. */
+data class ImagePromptSend(
+    val text: String,
+    val afterMessageId: Long?,
+    val drafts: List<DraftAttachment>,
+    val messageId: Long? = null,
+    val revealedAt: Long = 0L,
+)
+
 internal fun formatBytes(size: Long): String {
     if (size <= 0) return "未知大小"
     if (size < 1024) return "$size B"
@@ -218,6 +228,7 @@ data class ChatUiState(
     val input: String = "",
     /** 输入框里待发送的附件（M4-1/2） */
     val attachments: List<DraftAttachment> = emptyList(),
+    val imagePromptSend: ImagePromptSend? = null,
     val isStreaming: Boolean = false,
     /** 是否已配置 Key（M7-6：Key 改成运行时可变，UI 要跟着重算） */
     val hasApiKey: Boolean = false,
@@ -312,7 +323,7 @@ data class ChatUiState(
     val contextFull: Boolean
         get() = isContextFull(contextUsed, contextWindow)
 
-    /** 兼容协议把可读文本作为消息发出，PDF 需要服务商和模型支持。 */
+    /** 兼容协议可发送从文档提取的文字，官方协议仍使用原生附件能力。 */
     val canAttachFile: Boolean
         get() = when (currentProvider?.protocol) {
             null -> false
@@ -320,6 +331,7 @@ data class ChatUiState(
             ProviderProtocol.OPENAI_CHAT, ProviderProtocol.ANTHROPIC_MESSAGES -> currentModel != null
         }
 
+    /** 当前模型是否支持原生 PDF 附件。 */
     val canAttachPdf: Boolean
         get() = currentModel?.capabilities?.fileUpload == true
 
@@ -528,6 +540,7 @@ class ChatViewModel(
         sessionId = id
         state = state.copy(
             messages = emptyList(),
+            imagePromptSend = null,
             isStreaming = false,
             hasApiKey = false,
             error = null,
@@ -711,8 +724,10 @@ class ChatViewModel(
         if (state.currentProvider?.protocol == ProviderProtocol.DEEPSEEK_MESSAGES) return null
 
         val type = AttachmentStore.inlineDocumentType(name, draft.mime)
-            ?: return "附件「$name」：仅支持 PDF 和纯文本文件"
-        if (type == InlineDocumentType.PDF && !state.canAttachPdf) return "请在模型设置中启用 PDF 文件输入"
+            ?: return "附件「$name」：支持 PDF、DOCX、XLSX、PPTX 和纯文本"
+        if (type == InlineDocumentType.PDF && !AttachmentStore.supportsLocalPdfText && !state.canAttachPdf) {
+            return "此 Android 版本无法在本机读取 PDF，请转为文本或使用支持 PDF 的模型"
+        }
         return if (draft.size > type.maxBytes) "附件「$name」超过 ${type.limit}" else null
     }
 
@@ -744,11 +759,13 @@ class ChatViewModel(
      *
      * 已经是"点一下就走"，所以**覆盖**输入框里还没发的内容（官方也是这个行为）。
      */
-    fun quickSend(text: String) {
+    fun quickSend(text: String) = sendPreset(text, imagePrompt = true)
+
+    private fun sendPreset(text: String, imagePrompt: Boolean = false) {
         if (state.isStreaming) return
         if (text.isBlank()) return
         state = state.copy(input = text)
-        send()
+        send(imagePrompt)
     }
 
     /**
@@ -757,7 +774,9 @@ class ChatViewModel(
      * 发送前有一串本地预检（服务商被删、没 Key、上下文到上限），全部在**清空输入框之前**
      * 返回：拦下来的内容原样留在输入区，用户能改、能复制、能带去新对话。
      */
-    fun send() {
+    fun send() = send(imagePrompt = false)
+
+    private fun send(imagePrompt: Boolean) {
         val text = state.input.trim()
         val drafts = state.attachments
         // 只有附件没有文字也能发（真实 App 就是这样）
@@ -796,12 +815,18 @@ class ChatViewModel(
         val previousSessionId = sessionId
         val sendingDefaults = rememberChatDefaults()
         val expertMode = state.expertMode
+        val pendingImagePrompt = if (imagePrompt && editingId == null && drafts.any { it.isImage }) {
+            ImagePromptSend(text, state.messages.lastOrNull()?.id, drafts)
+        } else {
+            null
+        }
         // 新问题开始 = 停止正在读的上一条（chat-demo 同款行为）
         stopSpeaking()
         autoSpeakPending = state.autoSpeak
         state = state.copy(
             input = "",
             attachments = emptyList(),
+            imagePromptSend = pendingImagePrompt,
             isStreaming = true,
             error = null,
             errorKind = null,
@@ -855,7 +880,10 @@ class ChatViewModel(
                 // 非协议错误（本地异常）：给一句能看懂的话，别再抛原始堆栈文案
                 state = state.copy(error = "生成失败，请重试", errorKind = null)
             } finally {
-                state = state.copy(isStreaming = false)
+                state = state.copy(
+                    isStreaming = false,
+                    imagePromptSend = state.imagePromptSend?.takeUnless { it === pendingImagePrompt },
+                )
             }
         }
     }
@@ -1185,7 +1213,7 @@ class ChatViewModel(
                 if (text.isBlank()) {
                     state = state.copy(hint = "未识别到语音内容")
                 } else {
-                    quickSend(text)
+                    sendPreset(text)
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -1403,17 +1431,31 @@ class ChatViewModel(
                         }
                     }
 
+                    val messages = chain.mapNotNull { entry ->
+                        val (index, count) = versionPointer(branchNodes, entry.message.id)
+                        val failed = failedAfterUser[entry.message.id]
+                        entry.toChatMessage()?.copy(
+                            versionIndex = index,
+                            versionCount = count,
+                            retryTargetId = failed?.message?.id,
+                            retryHint = failed?.message?.let { it.errorKind?.retryHint(it.errorMessage) },
+                        )
+                    }
+                    val prompt = state.imagePromptSend
+                    val sentPrompt = if (prompt != null && prompt.messageId == null) {
+                        // While sending, only the new user turn can follow the previous leaf.
+                        val sentMessage = messages.lastOrNull {
+                            it.isUser && it.id > (prompt.afterMessageId ?: 0L) && it.text == prompt.text
+                        }
+                        sentMessage?.let {
+                            prompt.copy(messageId = it.id, revealedAt = SystemClock.uptimeMillis())
+                        } ?: prompt
+                    } else {
+                        prompt
+                    }
                     state = state.copy(
-                        messages = chain.mapNotNull { entry ->
-                            val (index, count) = versionPointer(branchNodes, entry.message.id)
-                            val failed = failedAfterUser[entry.message.id]
-                            entry.toChatMessage()?.copy(
-                                versionIndex = index,
-                                versionCount = count,
-                                retryTargetId = failed?.message?.id,
-                                retryHint = failed?.message?.let { it.errorKind?.retryHint(it.errorMessage) },
-                            )
-                        },
+                        messages = messages,
+                        imagePromptSend = sentPrompt,
                         title = session?.title,
                     )
                     // 会话合计（M7-2）：流式期间不查，落库稳定后再算

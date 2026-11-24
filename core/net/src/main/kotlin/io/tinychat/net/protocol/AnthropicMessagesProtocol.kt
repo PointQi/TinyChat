@@ -5,6 +5,7 @@ import io.tinychat.model.ProviderProtocol
 import io.tinychat.model.ThinkingEffort
 import io.tinychat.model.ThinkingMode
 import io.tinychat.net.context.HistoryAttachment
+import io.tinychat.net.context.documentTextBlock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -76,24 +77,16 @@ object AnthropicMessagesProtocol {
             (!attachment.isImage && !attachment.text.isNullOrBlank())
 
     internal fun attachmentBlock(attachment: HistoryAttachment): JsonObject? {
-        val uri = attachment.dataUri
-        val mediaType = uri?.let { inlineMediaType(it, attachment.isImage) }
-        val source = when {
-            uri != null && mediaType != null -> buildJsonObject {
+        attachment.documentTextBlock()?.let { return it }
+        val uri = attachment.dataUri ?: return null
+        val mediaType = inlineMediaType(uri, attachment.isImage) ?: return null
+        return buildJsonObject {
+            put("type", if (attachment.isImage) "image" else "document")
+            put("source", buildJsonObject {
                 put("type", "base64")
                 put("media_type", mediaType)
                 put("data", uri.substringAfter(BASE64_MARKER))
-            }
-            !attachment.isImage && !attachment.text.isNullOrBlank() -> buildJsonObject {
-                put("type", "text")
-                put("media_type", "text/plain")
-                put("data", attachment.text)
-            }
-            else -> return null
-        }
-        return buildJsonObject {
-            put("type", if (attachment.isImage) "image" else "document")
-            put("source", source)
+            })
             if (!attachment.isImage) attachment.fileName?.takeIf(String::isNotBlank)?.let { put("title", it) }
         }
     }
